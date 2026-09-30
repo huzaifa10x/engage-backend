@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+      valkey:
+        image: valkey/valkey:8
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: pdo_pgsql, pgsql, redis, pcntl, intl, bcmath
+          coverage: none
+      - name: Create non-superuser app role (RLS must apply)
+        env: { PGPASSWORD: postgres }
+        run: psql -h localhost -U postgres -f docker/postgres/init/01-engage.sql
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build   # tsc --noEmit + vite build (Super Admin)
+      - run: composer install --no-interaction --prefer-dist
+      - run: cp .env.example .env && php artisan key:generate
+      - run: vendor/bin/pint --test
+      - run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+      - run: php artisan test
+        env: { DB_HOST: localhost, REDIS_HOST: localhost }
