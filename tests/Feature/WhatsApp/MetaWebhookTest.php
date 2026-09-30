@@ -84,6 +84,9 @@ final class MetaWebhookTest extends TestCase
         $this->assertSame('processed', $row->process_status);
         $this->assertSame($tenant->id, $row->tenant_id);
 
+        // Only number on the WABA -> access is gone, the business token is shredded.
+        $this->assertTrue($this->tenantContext()->bypass(fn () => DB::table('secrets')->where('purpose', 'meta.business_token')->whereNotNull('destroyed_at')->exists()));
+
         $event = $this->tenantContext()->bypass(fn () => QualityEvent::query()->first());
         $this->assertSame('account_update.partner_removed', $event?->getAttribute('event_type'));
         $this->assertSame('PRIMARY_INACTIVITY', $event?->getAttribute('new_value'));

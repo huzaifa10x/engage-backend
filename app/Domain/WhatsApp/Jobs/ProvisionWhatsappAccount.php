@@ -7,6 +7,7 @@ namespace App\Domain\WhatsApp\Jobs;
 use App\Application\WhatsApp\PhoneNumberSync;
 use App\Application\WhatsApp\WhatsappCredentials;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Enums\SignupStatus;
@@ -100,6 +101,7 @@ final class ProvisionWhatsappAccount implements ShouldQueue
                 throw $e; // retry with backoff; completed steps are skipped next time
             }
             $attempt->fail($e->getMessage(), (string) ($e->metaCode ?? $e->httpStatus));
+            $this->releasePendingNumber($number);
             $audit->record('whatsapp.provisioning_failed', $waba, meta: ['step' => $this->lastStep($attempt)] + $e->context());
 
             return;
@@ -114,9 +116,35 @@ final class ProvisionWhatsappAccount implements ShouldQueue
         ]));
     }
 
+    /**
+     * Called after JobExceptionOccurred has already restored the worker's (empty) tenant
+     * context, so this must run as a platform operation.
+     */
     public function failed(?Throwable $e): void
     {
-        EmbeddedSignupAttempt::query()->find($this->attemptId)?->fail($e?->getMessage() ?? 'Provisioning failed.', 'provisioning_failed');
+        app(TenantContext::class)->bypass(function () use ($e) {
+            $attempt = EmbeddedSignupAttempt::query()->find($this->attemptId);
+            if ($attempt === null || $attempt->status->isTerminal()) {
+                return;
+            }
+            $attempt->fail($e?->getMessage() ?? 'Provisioning failed.', 'provisioning_failed');
+
+            $number = $attempt->phone_number_id !== null
+                ? PhoneNumber::query()->where('phone_number_id', $attempt->phone_number_id)->first()
+                : null;
+            $this->releasePendingNumber($number);
+        });
+    }
+
+    /**
+     * A number that never finished onboarding must not hold a plan slot forever (the counter
+     * includes `pending`). Numbers that were already connected are left untouched.
+     */
+    private function releasePendingNumber(?PhoneNumber $number): void
+    {
+        if ($number !== null && $number->status === PhoneNumberStatus::Pending) {
+            $number->forceFill(['status' => PhoneNumberStatus::Disconnected])->save();
+        }
     }
 
     /** Both SMB App Data syncs, immediately: Meta allows each once, within 24 hours of onboarding. */

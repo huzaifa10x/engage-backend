@@ -196,6 +196,40 @@ final class EmbeddedSignupTest extends TestCase
         $this->assertSame('PHONE_NUMBER_SETUP', $this->tenantContext()->bypass(fn () => EmbeddedSignupAttempt::query()->find($attempt)?->getAttribute('current_step')));
     }
 
+    public function test_a_second_completion_of_the_same_attempt_is_rejected(): void
+    {
+        $this->fakeGraph();
+        $this->actingAsMember($this->owner());
+        $attempt = $this->postJson('/api/v1/whatsapp/signups')->json('data.attempt.id');
+
+        $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())->assertOk();
+        $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())
+            ->assertStatus(410)->assertJsonPath('error.code', 'signup_session_invalid');
+
+        $this->getJson("/api/v1/whatsapp/signups/{$attempt}")->assertJsonPath('data.status', 'completed');
+        Http::assertSentCount(6); // exchanged exactly once
+    }
+
+    public function test_permanent_registration_failure_frees_the_plan_slot(): void
+    {
+        // Registered first so it wins over the generic fakes (e.g. a number with another BSP's PIN).
+        Http::fake(['graph.facebook.com/v25.0/'.self::PHONE.'/register*' => Http::response(['error' => [
+            'message' => 'Two step verification PIN Mismatch', 'code' => 133005, 'fbtrace_id' => 'X1',
+        ]], 400)]);
+        $this->fakeGraph();
+        $this->actingAsMember($this->owner('free'));
+        $attempt = $this->postJson('/api/v1/whatsapp/signups')->json('data.attempt.id');
+
+        $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())
+            ->assertOk()->assertJsonPath('data.status', 'failed')->assertJsonPath('data.error.code', '133005');
+
+        $number = $this->tenantContext()->bypass(fn () => PhoneNumber::query()->where('phone_number_id', self::PHONE)->first());
+        $this->assertSame(PhoneNumberStatus::Disconnected, $number?->status);
+
+        // Slot is free again: the Free plan can start (and complete) another signup.
+        $this->postJson('/api/v1/whatsapp/signups')->assertCreated()->assertJsonPath('data.numbers.used', 0);
+    }
+
     public function test_disconnect_unsubscribes_and_shreds_the_token(): void
     {
         $this->fakeGraph();

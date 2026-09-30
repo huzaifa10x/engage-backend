@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Webhooks\Handlers;
 
+use App\Application\WhatsApp\ManageChannels;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
@@ -21,7 +22,10 @@ use Illuminate\Support\Collection;
  */
 final class AccountUpdateHandler implements WebhookHandler
 {
-    public function __construct(private readonly AuditLogger $audit) {}
+    public function __construct(
+        private readonly AuditLogger $audit,
+        private readonly ManageChannels $channels,
+    ) {}
 
     public function fields(): array
     {
@@ -48,6 +52,8 @@ final class AccountUpdateHandler implements WebhookHandler
                     ])->save();
                 }
                 if ($event === 'PARTNER_REMOVED' && $numbers->count() === $waba->phoneNumbers()->count()) {
+                    // Our access to the WABA is gone: keep no usable credential for it.
+                    $this->channels->revokeToken($waba);
                     $waba->forceFill(['status' => WabaStatus::Disconnected, 'disconnected_at' => now(), 'is_subscribed_to_webhooks' => false])->save();
                 }
                 $this->audit->record('whatsapp.partner_removed', $waba, meta: [

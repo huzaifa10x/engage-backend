@@ -101,6 +101,17 @@ final class EmbeddedSignup
             throw WhatsappException::signupInvalid();
         }
 
+        // Atomic claim: a double-submitted popup callback must not exchange twice. The code is
+        // single-use, so the loser's exchange would fail and mark a SUCCESSFUL attempt failed.
+        $claimed = EmbeddedSignupAttempt::query()->whereKey($attempt->id)
+            ->where('status', SignupStatus::Started)
+            ->update(['status' => SignupStatus::Exchanging->value, 'updated_at' => now()]);
+        if ($claimed === 0) {
+            throw WhatsappException::signupInvalid('This signup is already being completed.');
+        }
+        $attempt->status = SignupStatus::Exchanging;
+        $attempt->syncOriginalAttribute('status');
+
         if (! in_array($event, [SignupEvent::Finish, SignupEvent::FinishOnlyWaba, SignupEvent::FinishBusinessApp], true)) {
             $attempt->fail('Unsupported Embedded Signup completion: '.$data['event'], 'unsupported_event');
             throw WhatsappException::signupInvalid('This signup type is not supported. Start again from Connect WhatsApp.');
@@ -115,7 +126,6 @@ final class EmbeddedSignup
         $phoneNumberId = $event === SignupEvent::FinishOnlyWaba ? null : ($data['phone_number_id'] ?? null);
 
         $attempt->forceFill([
-            'status' => SignupStatus::Exchanging,
             'event' => $event->value,
             'waba_id' => $data['waba_id'],
             'phone_number_id' => $phoneNumberId,
