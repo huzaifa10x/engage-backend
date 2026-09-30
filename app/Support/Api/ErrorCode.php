@@ -32,6 +32,12 @@ enum ErrorCode: string
     case ImpersonationInvalid = 'impersonation_invalid';
     case ImpersonationActive = 'impersonation_active';
 
+    case WhatsappNotConfigured = 'whatsapp_not_configured';
+    case WabaAlreadyConnected = 'waba_already_connected';
+    case SignupSessionInvalid = 'signup_session_invalid';
+    case MetaApiError = 'meta_api_error';
+    case NumberAccessDenied = 'number_access_denied';
+
     case ServerError = 'server_error';
     case ServiceUnavailable = 'service_unavailable';
 }

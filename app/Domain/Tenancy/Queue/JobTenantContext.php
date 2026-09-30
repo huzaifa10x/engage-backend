@@ -27,11 +27,15 @@ final class JobTenantContext
 
     public function hydrated(ContextRepository $data): void
     {
+        // Read the job's context FIRST: restore() below syncs TenantContext back into Laravel
+        // Context (forget('tenant_id')) — the same repository we are hydrating from.
+        $tenantId = $data->get('tenant_id');
+        $userId = $data->get('user_id');
+
         $this->stack[] = ['job' => null, 'state' => $this->context->snapshot()];
 
         $this->context->restore(['tenant' => null, 'membership' => null, 'user' => null, 'bypass' => 0]);
 
-        $tenantId = $data->get('tenant_id');
         if (! is_string($tenantId) || $tenantId === '') {
             return;
         }
@@ -43,7 +47,6 @@ final class JobTenantContext
 
         $this->context->set($tenant);
 
-        $userId = $data->get('user_id');
         if (is_string($userId) && $userId !== '') {
             $this->context->setUser($userId);
         }

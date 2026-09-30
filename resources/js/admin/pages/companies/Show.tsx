@@ -4,6 +4,7 @@ import { Button, Card, Field, Input, Modal, PageHeader, Pill, Select, Table, Tex
 import AdminLayout from '../../layouts/AdminLayout';
 import { date, dateTime, humanize, money, number, relative, statusTone } from '../../lib/format';
 import type { PlanOption, SharedProps } from '../../types';
+import { qualityLabel, qualityTone, tierLabel } from '../../lib/whatsapp';
 
 type Company = {
     id: string; name: string; slug: string; status: string; timezone: string; currency: string;
@@ -18,7 +19,18 @@ type Feature = {
     override: { enabled: boolean | null; limit: number | null; unlimited: boolean; reason: string | null; expires_at: string | null } | null;
     effective: Value & { type: string };
 };
+type WhatsappNumber = {
+    id: string; display_phone_number: string | null; verified_name: string | null; quality_rating: string | null;
+    messaging_limit_tier: string | null; status: string; onboarding_type: string; coexistence_status: string;
+};
+type Waba = {
+    id: string; waba_id: string; name: string | null; business_name: string | null; status: string; ban_state: string | null;
+    account_review_status: string | null; subscribed: boolean; numbers: WhatsappNumber[];
+};
+type Signup = { id: string; flow: string; status: string; event: string | null; current_step: string | null; error: string | null; steps: Record<string, { state: string; error?: string }>; created_at: string };
 type Props = {
+    whatsapp: Waba[];
+    signups: Signup[];
     company: Company;
     subscription: Subscription;
     effectivePlan: { key: string; name: string };
@@ -38,7 +50,7 @@ const describe = (f: Feature, v: Value): string => {
 };
 
 export default function CompanyShow(props: Props) {
-    const { company, subscription, effectivePlan, members, features, audit, subscriptionEvents, planVersions } = props;
+    const { company, subscription, effectivePlan, members, features, audit, subscriptionEvents, planVersions, whatsapp, signups } = props;
     const abilities = usePage<SharedProps>().props.auth.admin?.abilities ?? [];
     const canManage = abilities.includes('companies.manage');
     const canImpersonate = abilities.includes('impersonate');
@@ -133,6 +145,52 @@ export default function CompanyShow(props: Props) {
                     </ul>
                 </Card>
             </div>
+
+            <Card title="WhatsApp" className="mt-4" aside={<Link href="/admin/numbers" className="text-[13px] font-semibold text-brand">All numbers</Link>}>
+                {whatsapp.length === 0 ? (
+                    <p className="px-4 py-6 text-center text-[13.5px] text-muted">No WhatsApp account connected yet.</p>
+                ) : (
+                    whatsapp.map((w) => (
+                        <div key={w.id} className="border-b border-line-2 last:border-0">
+                            <div className="flex flex-wrap items-center gap-2 px-4 pt-3 text-[13.5px]">
+                                <span className="font-semibold">{w.name ?? 'WhatsApp Business Account'}</span>
+                                <span className="font-mono text-[12px] text-muted">WABA {w.waba_id}</span>
+                                <Pill tone={w.status === 'connected' ? 'good' : 'grey'}>{humanize(w.status)}</Pill>
+                                {!w.subscribed && w.status === 'connected' && <Pill tone="warn">Webhooks not subscribed</Pill>}
+                                {w.ban_state && w.ban_state !== 'NONE' && <Pill tone="bad">{humanize(w.ban_state)}</Pill>}
+                                {w.business_name && <span className="text-muted">{w.business_name}</span>}
+                            </div>
+                            <Table head={['Number', 'Quality', 'Limit', 'Onboarding', 'Status']}>
+                                {w.numbers.map((n) => (
+                                    <tr key={n.id}>
+                                        <td><div className="font-mono text-[13px] font-semibold">{n.display_phone_number ?? '—'}</div><div className="text-[12.5px] text-muted">{n.verified_name ?? 'Name pending'}</div></td>
+                                        <td><Pill tone={qualityTone(n.quality_rating)} dot>{qualityLabel(n.quality_rating)}</Pill></td>
+                                        <td className="tabular-nums">{tierLabel(n.messaging_limit_tier)}</td>
+                                        <td>{humanize(n.onboarding_type)}{n.onboarding_type === 'coexistence' && <div className="text-[12px] text-muted">{humanize(n.coexistence_status)}</div>}</td>
+                                        <td><Pill tone={n.status === 'connected' ? 'good' : n.status === 'pending' ? 'info' : 'grey'}>{humanize(n.status)}</Pill></td>
+                                    </tr>
+                                ))}
+                            </Table>
+                        </div>
+                    ))
+                )}
+                {signups.length > 0 && (
+                    <div className="border-t border-line-2 px-4 py-3">
+                        <div className="mb-2 text-[13px] font-semibold text-ink-2">Recent signup attempts</div>
+                        <ul className="space-y-1.5 text-[13px]">
+                            {signups.map((a) => (
+                                <li key={a.id} className="flex flex-wrap items-center gap-2">
+                                    <Pill tone={a.status === 'completed' ? 'good' : a.status === 'failed' ? 'bad' : a.status === 'cancelled' ? 'grey' : 'info'}>{humanize(a.status)}</Pill>
+                                    <span>{humanize(a.flow)} flow</span>
+                                    {a.current_step && <span className="text-muted">left at {humanize(a.current_step)}</span>}
+                                    {a.error && <span className="text-bad">{a.error}</span>}
+                                    <span className="ml-auto text-muted">{dateTime(a.created_at)}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+            </Card>
 
             <Card title={`Members (${members.length})`} className="mt-4">
                 <Table head={['Member', 'Role', 'Last sign-in', 'Status']} empty="This workspace has no members.">

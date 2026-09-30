@@ -118,7 +118,31 @@ final class PlatformMetrics
             ['criterion' => 'Tech Provider onboarding steps complete', 'target' => 'All steps', 'current' => null, 'status' => 'manual'],
             ['criterion' => 'Average daily messages, trailing 7 days', 'target' => '≥ 2,500', 'current' => null, 'status' => 'not_measurable'],
             ['criterion' => 'Active clients (≥ 1 message in 30 days)', 'target' => '≥ 10', 'current' => $activeCompanies.' active companies', 'status' => 'not_measurable'],
-            ['criterion' => 'Lowest quality rating across numbers', 'target' => '≥ 90%', 'current' => null, 'status' => 'not_measurable'],
+            $this->qualityCriterion(),
+        ];
+    }
+
+    /**
+     * Meta rates numbers GREEN / YELLOW / RED, not in percent; the bar is read as "no connected
+     * number below GREEN". Unrated numbers (no traffic yet) do not count against it.
+     *
+     * @return array{criterion: string, target: string, current: ?string, status: string}
+     */
+    private function qualityCriterion(): array
+    {
+        $q = DB::table('phone_numbers')->where('status', 'connected')->selectRaw(
+            'count(*) as total, '.
+            "count(*) filter (where quality_rating = 'GREEN') as green, ".
+            "count(*) filter (where quality_rating in ('YELLOW','RED')) as below"
+        )->first();
+
+        $total = (int) $q->total;
+
+        return [
+            'criterion' => 'Quality rating on every connected number',
+            'target' => 'All GREEN (≥ 90%)',
+            'current' => $total === 0 ? null : sprintf('%d of %d numbers GREEN', (int) $q->green, $total),
+            'status' => $total === 0 ? 'not_measurable' : ((int) $q->below === 0 ? 'met' : 'unmet'),
         ];
     }
 

@@ -7,10 +7,12 @@ use App\Http\Controllers\Admin\Auth\LoginController;
 use App\Http\Controllers\Admin\Auth\TwoFactorController;
 use App\Http\Controllers\Admin\CompanyController;
 use App\Http\Controllers\Admin\ImpersonationController;
+use App\Http\Controllers\Admin\NumberController;
 use App\Http\Controllers\Admin\OverviewController;
 use App\Http\Controllers\Admin\SubscriptionController;
 use App\Http\Controllers\Admin\TeamController;
 use App\Http\Controllers\Admin\UserController;
+use App\Http\Controllers\Admin\WebhookLogController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -48,6 +50,12 @@ Route::middleware(['auth:admin', 'admin.context'])->group(function () {
         Route::post('{tenant}/impersonate', [ImpersonationController::class, 'store'])
             ->middleware(['admin.can:impersonate', 'throttle:10,1'])->name('impersonate');
     });
+
+    Route::get('numbers', [NumberController::class, 'index'])->middleware('admin.can:companies.view')->name('numbers.index');
+    Route::post('numbers/{number}/refresh', [NumberController::class, 'refresh'])->middleware(['admin.can:companies.manage', 'throttle:20,1'])->name('numbers.refresh');
+
+    Route::get('webhooks', [WebhookLogController::class, 'index'])->middleware('admin.can:system.view')->name('webhooks.index');
+    Route::post('webhooks/replay-failed', [WebhookLogController::class, 'replayFailed'])->middleware('admin.can:system.view')->name('webhooks.replay');
 
     Route::get('users', [UserController::class, 'index'])->middleware('admin.can:users.view')->name('users.index');
     Route::patch('users/{user}/status', [UserController::class, 'updateStatus'])->middleware('admin.can:users.manage')->name('users.status');

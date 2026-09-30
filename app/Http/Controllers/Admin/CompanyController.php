@@ -19,6 +19,9 @@ use App\Domain\Plans\Models\TenantEntitlementOverride;
 use App\Domain\Tenancy\Enums\TenantStatus;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\WhatsApp\Models\EmbeddedSignupAttempt;
+use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Domain\WhatsApp\Models\WabaAccount;
 use App\Http\Controllers\Controller;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
@@ -129,7 +132,29 @@ final class CompanyController extends Controller
                 'entity_type' => $a->getAttribute('entity_type'), 'created_at' => $a->getAttribute('created_at')?->toIso8601String(),
             ]);
 
+        $whatsapp = WabaAccount::query()->where('tenant_id', $tenant->id)->with('phoneNumbers')->orderByDesc('connected_at')->get()
+            ->map(fn (WabaAccount $w) => [
+                'id' => $w->id, 'waba_id' => $w->waba_id, 'name' => $w->name, 'business_name' => $w->business_name,
+                'status' => $w->status->value, 'ban_state' => $w->getAttribute('ban_state'),
+                'account_review_status' => $w->getAttribute('account_review_status'), 'subscribed' => $w->is_subscribed_to_webhooks,
+                'numbers' => $w->phoneNumbers->map(fn (PhoneNumber $n) => [
+                    'id' => $n->id, 'display_phone_number' => $n->display_phone_number, 'verified_name' => $n->verified_name,
+                    'quality_rating' => $n->quality_rating, 'messaging_limit_tier' => $n->messaging_limit_tier,
+                    'status' => $n->status->value, 'onboarding_type' => $n->onboarding_type->value,
+                    'coexistence_status' => $n->coexistence_status->value,
+                ])->values(),
+            ]);
+
+        $signups = EmbeddedSignupAttempt::query()->where('tenant_id', $tenant->id)->orderByDesc('created_at')->limit(8)->get()
+            ->map(fn (EmbeddedSignupAttempt $a) => [
+                'id' => $a->id, 'flow' => $a->flow, 'status' => $a->status->value, 'event' => $a->event,
+                'current_step' => $a->getAttribute('current_step'), 'error' => $a->error_message,
+                'steps' => (object) ($a->steps ?? []), 'created_at' => $a->created_at?->toIso8601String(),
+            ]);
+
         return Inertia::render('companies/Show', [
+            'whatsapp' => $whatsapp,
+            'signups' => $signups,
             'company' => [
                 'id' => $tenant->id, 'name' => $tenant->name, 'slug' => $tenant->slug, 'status' => $tenant->status->value,
                 'timezone' => $tenant->timezone, 'currency' => $tenant->currency, 'country' => $tenant->country,

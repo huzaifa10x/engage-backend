@@ -7,4 +7,6 @@ RUN install-php-extensions pdo_pgsql pgsql redis pcntl posix intl zip bcmath opc
  && apt-get update && apt-get install -y --no-install-recommends git unzip postgresql-client \
  && rm -rf /var/lib/apt/lists/*
 
+COPY docker/php/engage.ini /usr/local/etc/php/conf.d/zz-engage.ini
+
 WORKDIR /var/www/html

@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\Usage\TeamSeatsCounter;
 use App\Domain\Plans\Usage\UsageCounterRegistry;
+use App\Domain\Plans\Usage\WhatsappNumbersCounter;
 use App\Domain\Tenancy\Database\PostgresSessionVariables;
 use App\Domain\Tenancy\Queue\JobTenantContext;
 use App\Domain\Tenancy\TenantContext;
@@ -37,7 +38,7 @@ final class TenancyServiceProvider extends ServiceProvider
 
         $this->app->singleton(UsageCounterRegistry::class, fn ($app) => new UsageCounterRegistry([
             $app->make(TeamSeatsCounter::class),
-            // Phase 2+: WhatsappNumbersCounter, ContactsCounter (rollup-backed), ...
+            $app->make(WhatsappNumbersCounter::class),
         ]));
 
         $this->app->singleton(EntitlementService::class);

@@ -44,6 +44,40 @@ final class MonthlyPartitionManager
         return $created;
     }
 
+    /**
+     * DETACH + DROP monthly partitions that end on or before $before (e.g. raw webhooks after
+     * 90 days). Archive first where a table needs cold storage.
+     *
+     * @return list<string> partitions dropped
+     */
+    public function dropOlderThan(string $table, CarbonImmutable $before): array
+    {
+        $this->assertIdentifier($table);
+
+        $children = DB::select(<<<'SQL'
+            SELECT c.relname FROM pg_inherits i
+            JOIN pg_class c ON c.oid = i.inhrelid
+            JOIN pg_class p ON p.oid = i.inhparent
+            WHERE p.relname = ?
+        SQL, [$table]);
+
+        $dropped = [];
+        foreach ($children as $child) {
+            if (preg_match('/^'.preg_quote($table, '/').'_(\d{4})_(\d{2})$/', $child->relname, $m) !== 1) {
+                continue; // default partition or foreign naming
+            }
+
+            $end = CarbonImmutable::create((int) $m[1], (int) $m[2], 1, 0, 0, 0, 'UTC')->addMonth();
+            if ($end->lessThanOrEqualTo($before)) {
+                DB::statement(sprintf('ALTER TABLE %s DETACH PARTITION %s', $table, $child->relname));
+                DB::statement(sprintf('DROP TABLE %s', $child->relname));
+                $dropped[] = $child->relname;
+            }
+        }
+
+        return $dropped;
+    }
+
     /** Rows that landed in the DEFAULT partition mean the scheduler fell behind — alert on this. */
     public function defaultPartitionRowCount(string $table): int
     {

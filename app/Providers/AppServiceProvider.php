@@ -14,6 +14,9 @@ use App\Domain\Platform\Models\ImpersonationSession;
 use App\Domain\Tenancy\Models\Invitation;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\WhatsApp\Models\EmbeddedSignupAttempt;
+use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -44,6 +47,9 @@ class AppServiceProvider extends ServiceProvider
             'plan_version' => PlanVersion::class,
             'subscription' => Subscription::class,
             'impersonation' => ImpersonationSession::class,
+            'waba_account' => WabaAccount::class,
+            'phone_number' => PhoneNumber::class,
+            'signup_attempt' => EmbeddedSignupAttempt::class,
         ]);
 
         // Strict mode minus preventAccessingMissingAttributes: freshly created models only hold the

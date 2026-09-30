@@ -13,6 +13,9 @@ use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
 use App\Http\Controllers\Api\V1\TenantController;
+use App\Http\Controllers\Api\V1\WhatsApp\AccountController as WhatsAppAccountController;
+use App\Http\Controllers\Api\V1\WhatsApp\PhoneNumberController;
+use App\Http\Controllers\Api\V1\WhatsApp\SignupController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -74,4 +77,30 @@ Route::middleware(['auth:sanctum', 'tenant', 'throttle:api'])->group(function ()
 
     Route::get('audit-logs', [AuditLogController::class, 'index'])
         ->middleware('can:'.Permission::AuditView->value)->name('audit-logs.index');
+
+    /*
+    | WhatsApp channels (Phase 2)
+    */
+    Route::prefix('whatsapp')->name('whatsapp.')->group(function () {
+        Route::middleware('can:'.Permission::ChannelsManage->value)->group(function () {
+            Route::post('signups', [SignupController::class, 'store'])->middleware('throttle:10,1')->name('signups.store');
+            Route::get('signups/{attempt}', [SignupController::class, 'show'])->name('signups.show');
+            Route::post('signups/{attempt}/complete', [SignupController::class, 'complete'])->middleware('throttle:10,1')->name('signups.complete');
+            Route::post('signups/{attempt}/cancel', [SignupController::class, 'cancel'])->name('signups.cancel');
+            Route::post('accounts/{account}/refresh', [WhatsAppAccountController::class, 'refresh'])->middleware('throttle:6,1')->name('accounts.refresh');
+            Route::delete('accounts/{account}', [WhatsAppAccountController::class, 'destroy'])->name('accounts.destroy');
+        });
+
+        Route::get('accounts', [WhatsAppAccountController::class, 'index'])
+            ->middleware('can:'.Permission::ChannelsView->value)->name('accounts.index');
+    });
+
+    // Scoped to the member's granted numbers (owners/admins: all).
+    Route::get('phone-numbers', [PhoneNumberController::class, 'index'])->name('phone-numbers.index');
+    Route::get('phone-numbers/{phoneNumber}', [PhoneNumberController::class, 'show'])->name('phone-numbers.show');
+
+    Route::middleware('can:'.Permission::TeamManage->value)->group(function () {
+        Route::get('team/members/{member}/numbers', [PhoneNumberController::class, 'grants'])->name('team.members.numbers');
+        Route::put('team/members/{member}/numbers', [PhoneNumberController::class, 'updateGrants'])->name('team.members.numbers.update');
+    });
 });
