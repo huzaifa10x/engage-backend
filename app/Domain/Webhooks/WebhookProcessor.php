@@ -22,9 +22,8 @@ final class WebhookProcessor
 {
     /** Stored now, processed by a later module (replay once it ships). */
     public const DEFERRED_FIELDS = [
-        'messages', 'smb_message_echoes', 'message_template_status_update', 'message_template_quality_update',
-        'message_template_components_update', 'template_category_update', 'message_echoes', 'calls',
-        'payment_configuration_update', 'flows', 'security', 'user_preferences',
+        'message_template_status_update', 'message_template_quality_update', 'message_template_components_update',
+        'template_category_update', 'calls', 'payment_configuration_update', 'flows', 'security', 'business_username_updates',
     ];
 
     /** @var array<string, WebhookHandler> */

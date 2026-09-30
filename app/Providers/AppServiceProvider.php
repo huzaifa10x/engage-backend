@@ -8,6 +8,9 @@ use App\Domain\Access\Models\Role;
 use App\Domain\Billing\Models\Subscription;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Identity\Models\User;
+use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Models\Message;
 use App\Domain\Plans\Models\Plan;
 use App\Domain\Plans\Models\PlanVersion;
 use App\Domain\Platform\Models\ImpersonationSession;
@@ -50,6 +53,9 @@ class AppServiceProvider extends ServiceProvider
             'waba_account' => WabaAccount::class,
             'phone_number' => PhoneNumber::class,
             'signup_attempt' => EmbeddedSignupAttempt::class,
+            'contact' => Contact::class,
+            'conversation' => Conversation::class,
+            'message' => Message::class,
         ]);
 
         // Strict mode minus preventAccessingMissingAttributes: freshly created models only hold the
@@ -70,6 +76,12 @@ class AppServiceProvider extends ServiceProvider
 
             return Limit::perMinute((int) config('engage.api.rate_limit_per_minute', 300))->by($key);
         });
+
+        // Agents typing in the inbox; campaigns do not go through the HTTP API.
+        RateLimiter::for('messaging', fn (Request $request) => Limit::perMinute(120)->by('m:'.($request->user()?->getAuthIdentifier() ?? $request->ip())));
+
+        // Per business number throughput (Meta: 80 mps default, 20 for coexistence numbers).
+        RateLimiter::for('whatsapp-send', fn (object $job) => Limit::perSecond(max(1, (int) ($job->maxMps ?? 80)))->by('wa-send:'.($job->phoneNumberId ?? 'unknown')));
 
         RateLimiter::for('admin-login', fn (Request $request) => Limit::perMinute(10)->by('admin:'.$request->ip()));
 

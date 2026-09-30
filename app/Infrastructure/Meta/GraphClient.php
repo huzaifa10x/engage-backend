@@ -126,6 +126,113 @@ final class GraphClient
         return (string) ($body['request_id'] ?? '');
     }
 
+    // ── Messaging (Cloud API) ──────────────────────────────────────────────────────────────
+
+    /**
+     * POST /<PHONE_NUMBER_ID>/messages — any message type. $message is the type-specific part
+     * (to|recipient, type, <type>, context); messaging_product / recipient_type are added here.
+     *
+     * @param  array<string, mixed>  $message
+     * @return array{wamid: string, wa_id: ?string, user_id: ?string, message_status: ?string}
+     */
+    public function sendMessage(string $phoneNumberId, array $message, string $token): array
+    {
+        $body = $this->send('POST', "{$phoneNumberId}/messages", $token, [
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+        ] + $message);
+
+        $wamid = $body['messages'][0]['id'] ?? null;
+        if (! is_string($wamid) || $wamid === '') {
+            throw new MetaApiException('Cloud API accepted the request but returned no message ID.', 200);
+        }
+
+        return [
+            'wamid' => $wamid,
+            'wa_id' => $body['contacts'][0]['wa_id'] ?? null,
+            'user_id' => $body['contacts'][0]['user_id'] ?? null,
+            'message_status' => $body['messages'][0]['message_status'] ?? null,
+        ];
+    }
+
+    /** POST /<PHONE_NUMBER_ID>/messages {status: read} — blue ticks for an inbound message. */
+    public function markRead(string $phoneNumberId, string $wamid, string $token): bool
+    {
+        return (bool) ($this->send('POST', "{$phoneNumberId}/messages", $token, [
+            'messaging_product' => 'whatsapp',
+            'status' => 'read',
+            'message_id' => $wamid,
+        ])['success'] ?? false);
+    }
+
+    /**
+     * POST /<PHONE_NUMBER_ID>/media (multipart) — returns the media ID used in send requests.
+     */
+    public function uploadMedia(string $phoneNumberId, string $contents, string $filename, string $mime, string $token): string
+    {
+        $this->assertConfigured();
+
+        try {
+            $response = Http::baseUrl($this->baseUrl)
+                ->acceptJson()
+                ->timeout(max($this->timeout, 60))
+                ->withToken($token)
+                ->withQueryParameters(['appsecret_proof' => hash_hmac('sha256', $token, $this->appSecret)])
+                ->attach('file', $contents, $filename, ['Content-Type' => $mime])
+                ->post("{$this->version}/{$phoneNumberId}/media", ['messaging_product' => 'whatsapp', 'type' => $mime]);
+        } catch (ConnectionException $e) {
+            throw new MetaApiException('Could not reach Meta: '.$e->getMessage(), 503);
+        }
+
+        $body = $response->json();
+        if ($response->failed() || ! isset($body['id'])) {
+            throw MetaApiException::fromResponse($response->status(), is_array($body) ? $body : null);
+        }
+
+        return (string) $body['id'];
+    }
+
+    /**
+     * GET /<MEDIA_ID> — short-lived download URL plus metadata for an inbound media object.
+     *
+     * @return array{url: string, mime_type: ?string, sha256: ?string, file_size: ?int}
+     */
+    public function getMedia(string $mediaId, string $token, ?string $phoneNumberId = null): array
+    {
+        $body = $this->send('GET', $mediaId, $token, array_filter(['phone_number_id' => $phoneNumberId]));
+
+        if (! isset($body['url'])) {
+            throw new MetaApiException('Meta returned no download URL for this media.', 200);
+        }
+
+        return [
+            'url' => (string) $body['url'],
+            'mime_type' => $body['mime_type'] ?? null,
+            'sha256' => $body['sha256'] ?? null,
+            'file_size' => isset($body['file_size']) ? (int) $body['file_size'] : null,
+        ];
+    }
+
+    /** Downloads bytes from a media URL returned by getMedia (requires the business token). */
+    public function downloadMedia(string $url, string $token): string
+    {
+        if (parse_url($url, PHP_URL_SCHEME) !== 'https') {
+            throw new MetaApiException('Refusing to download media over a non-HTTPS URL.', 400);
+        }
+
+        try {
+            $response = Http::timeout(120)->withToken($token)->withUserAgent('10X-Engage/1.0')->get($url);
+        } catch (ConnectionException $e) {
+            throw new MetaApiException('Could not download media: '.$e->getMessage(), 503);
+        }
+
+        if ($response->failed()) {
+            throw MetaApiException::fromResponse($response->status(), $response->json());
+        }
+
+        return $response->body();
+    }
+
     // ── Reads ──────────────────────────────────────────────────────────────────────────────
 
     public const WABA_FIELDS = ['id', 'name', 'currency', 'timezone_id', 'message_template_namespace', 'account_review_status', 'owner_business_info', 'health_status'];

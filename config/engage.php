@@ -63,6 +63,33 @@ return [
     ],
 
     /*
+    | Messaging (Phase 3)
+    */
+    'messaging' => [
+        // Customer service window opened by an inbound message (Meta: 24 hours).
+        'window_hours' => 24,
+        // Case-insensitive, whole-message match (after trimming punctuation). Blueprint: STOP/START.
+        'stop_keywords' => ['stop', 'unsubscribe', 'stopall', 'cancel', 'end', 'quit', 'opt out', 'optout', 'إيقاف', 'الغاء', 'إلغاء'],
+        'start_keywords' => ['start', 'subscribe', 'unstop', 'opt in', 'optin', 'اشتراك'],
+        'media_disk' => env('ENGAGE_MEDIA_DISK', 'local'),
+        // Cloud API limits (bytes) per media type — enforced before upload.
+        'media_limits' => [
+            'image' => ['max' => 5 * 1024 * 1024, 'mimes' => ['image/jpeg', 'image/png']],
+            'video' => ['max' => 16 * 1024 * 1024, 'mimes' => ['video/mp4', 'video/3gpp']],
+            'audio' => ['max' => 16 * 1024 * 1024, 'mimes' => ['audio/aac', 'audio/amr', 'audio/mpeg', 'audio/mp4', 'audio/ogg']],
+            'document' => ['max' => 100 * 1024 * 1024, 'mimes' => [
+                'text/plain', 'application/pdf', 'application/vnd.ms-powerpoint', 'application/msword', 'application/vnd.ms-excel',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ]],
+            'sticker' => ['max' => 500 * 1024, 'mimes' => ['image/webp']],
+        ],
+        // Uploaded media IDs stay valid on Meta for 30 days; re-upload after this.
+        'meta_media_ttl_days' => 29,
+    ],
+
+    /*
     | Secrets (business tokens, registration PINs). Encrypted with a dedicated keyring, not APP_KEY,
     | so the app key can rotate independently. Format: "k1:base64:...,k2:base64:..." — the first
     | key encrypts, all keys decrypt. `php artisan engage:secrets:rotate` re-encrypts.

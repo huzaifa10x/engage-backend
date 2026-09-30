@@ -33,6 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
             ($domain ? $admin->domain($domain) : $admin->prefix('admin'))->group(base_path('routes/admin.php'));
         },
     )
+    ->withBroadcasting(__DIR__.'/../routes/channels.php', ['prefix' => 'api', 'middleware' => ['api', 'auth:sanctum', 'tenant']])
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(AssignRequestId::class);
         $middleware->append(SecurityHeaders::class);

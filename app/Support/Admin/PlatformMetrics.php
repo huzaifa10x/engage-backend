@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Support\Admin;
 
 use App\Domain\Billing\Enums\SubscriptionStatus;
-use App\Domain\Tenancy\Enums\TenantStatus;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -104,20 +103,35 @@ final class PlatformMetrics
     }
 
     /**
-     * Tech Partner eligibility (blueprint "Partner status roadmap"). Messaging volume, active
-     * clients and number quality need the Phase 2+ message pipeline — reported as not yet
-     * measurable rather than guessed.
+     * Tech Partner eligibility (blueprint "Partner status roadmap"), measured from the message
+     * pipeline. "Messages" = Cloud API traffic (customer messages + our sends); coexistence app
+     * echoes and imported history are excluded because Meta does not count them either.
      *
      * @return list<array{criterion: string, target: string, current: ?string, status: string}>
      */
     public function partnerEligibility(): array
     {
-        $activeCompanies = DB::table('tenants')->whereNull('deleted_at')->where('status', TenantStatus::Active->value)->count();
+        $apiTraffic = fn () => DB::table('messages')->whereNotIn('origin', ['app_echo', 'history']);
+
+        $weekly = (int) $apiTraffic()->where('created_at', '>=', now()->subDays(7))->count();
+        $dailyAverage = (int) round($weekly / 7);
+
+        $activeClients = (int) $apiTraffic()->where('created_at', '>=', now()->subDays(30))->distinct()->count('tenant_id');
 
         return [
             ['criterion' => 'Tech Provider onboarding steps complete', 'target' => 'All steps', 'current' => null, 'status' => 'manual'],
-            ['criterion' => 'Average daily messages, trailing 7 days', 'target' => '≥ 2,500', 'current' => null, 'status' => 'not_measurable'],
-            ['criterion' => 'Active clients (≥ 1 message in 30 days)', 'target' => '≥ 10', 'current' => $activeCompanies.' active companies', 'status' => 'not_measurable'],
+            [
+                'criterion' => 'Average daily messages, trailing 7 days',
+                'target' => '≥ 2,500',
+                'current' => number_format($dailyAverage).' per day',
+                'status' => $dailyAverage >= 2500 ? 'met' : 'unmet',
+            ],
+            [
+                'criterion' => 'Active clients (≥ 1 message in 30 days)',
+                'target' => '≥ 10',
+                'current' => $activeClients.' active '.($activeClients === 1 ? 'client' : 'clients'),
+                'status' => $activeClients >= 10 ? 'met' : 'unmet',
+            ],
             $this->qualityCriterion(),
         ];
     }

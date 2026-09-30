@@ -87,6 +87,31 @@ trait InteractsWithWhatsapp
         ]);
     }
 
+    /**
+     * `messages` webhook value for one inbound customer message (text unless overridden).
+     *
+     * @param  array<string, mixed>  $overrides  merged over the message object
+     * @return array<string, mixed>
+     */
+    protected function inboundValue(array $overrides = [], ?string $waId = '971501234567', ?string $bsuid = 'AE.12345678901234567890', string $name = 'Sara Ahmed', string $phoneNumberId = '106540352242922'): array
+    {
+        $message = array_merge(array_filter([
+            'from' => $waId,
+            'from_user_id' => $bsuid,
+            'id' => 'wamid.IN'.bin2hex(random_bytes(6)),
+            'timestamp' => (string) now()->timestamp,
+            'type' => 'text',
+            'text' => ['body' => 'Hi, do you have this in blue?'],
+        ], fn ($v) => $v !== null), $overrides);
+
+        return [
+            'messaging_product' => 'whatsapp',
+            'metadata' => ['display_phone_number' => '971585496310', 'phone_number_id' => $phoneNumberId],
+            'contacts' => [array_filter(['profile' => ['name' => $name], 'wa_id' => $waId, 'user_id' => $bsuid], fn ($v) => $v !== null)],
+            'messages' => [$message],
+        ];
+    }
+
     /** @param array<string, mixed> $value */
     protected function webhookBody(string $field, array $value, string $wabaId = '102290129340398'): string
     {

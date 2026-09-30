@@ -15,7 +15,7 @@ META_COEXISTENCE_ENABLED=false   # keep off until the messaging module ships
 |---|---|
 | WhatsApp › Configuration › Callback URL | `https://<api-host>/api/webhooks/meta` |
 | Verify token | `META_WEBHOOK_VERIFY_TOKEN` |
-| Webhook fields | account_update, messages, message_template_status_update, phone_number_quality_update, phone_number_name_update, business_capability_update, account_review_update, account_alerts (+ history, smb_app_state_sync, smb_message_echoes for coexistence) |
+| Webhook fields | account_update, messages, message_template_status_update, phone_number_quality_update, phone_number_name_update, business_capability_update, account_review_update, account_alerts, user_id_update, user_preferences (+ history, smb_app_state_sync, smb_message_echoes for coexistence) |
 | App settings › Basic › Data Deletion Request URL | `https://<api-host>/api/meta/data-deletion` |
 | Facebook Login for Business › Settings › Deauthorize callback | `https://<api-host>/api/meta/deauthorize` |
 | Client OAuth settings › Allowed domains | the Next.js client domain(s), HTTPS only |
@@ -35,3 +35,27 @@ Reverse proxy body limit ≥ 16 MB (coexistence history chunks).
 - `php artisan engage:webhooks:replay --status=deferred --field=messages` — once a module starts handling a field
 - `php artisan engage:webhooks:prune` — daily 02:30 (raw log 90 days, dedup keys 8 days)
 - `php artisan engage:secrets:key --id=k2` → prepend to ENGAGE_SECRETS_KEYS → deploy → `engage:secrets:key --rotate`
+
+## Messaging API (Phase 3)
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/api/v1/conversations?phone_number_id&status&assigned=me\|unassigned&unread&q&cursor` | inbox.view (scoped to granted numbers) |
+| GET | `/api/v1/conversations/{id}` · `/conversations/{id}/messages?cursor` | inbox.view |
+| PATCH | `/api/v1/conversations/{id}` `{status, assigned_membership_id}` | inbox.view (+ inbox.assign to assign) |
+| POST | `/api/v1/conversations/{id}/read` | inbox.view — clears unread, sends blue ticks |
+| POST | `/api/v1/conversations/{id}/messages` `{type, body, media_id, template, reply_to, content}` | inbox.reply — `Idempotency-Key` header supported |
+| POST | `/api/v1/messages` `{phone_number_id, contact_id \| to, type, …}` | inbox.reply — start a thread (template outside the 24h window) |
+| POST | `/api/v1/media` (multipart `file`) · GET `/api/v1/media/{id}` | inbox.reply · inbox.view |
+| GET/POST/PATCH/DELETE | `/api/v1/contacts[/{id}]`, POST `/contacts/{id}/consent` | contacts.* |
+
+Rules enforced on every send: number connected · contact not opted out (STOP/START keywords are
+automatic) · free-form only inside the 24h customer service window (error `window_closed`) ·
+per-number throughput (80 msg/s, 20 for coexistence numbers).
+
+Contacts are identified by phone (`wa_id`) and/or business-scoped user ID (`bsuid`, Meta 2026):
+users with WhatsApp usernames may arrive without a phone number and are messaged by BSUID.
+
+Realtime: private channel `tenant.{tenantId}.number.{phoneNumberId}`, events `message.created` /
+`message.updated`; auth endpoint `POST /api/broadcasting/auth`. Install Reverb to deliver them
+(`composer require laravel/reverb && php artisan reverb:install`, `BROADCAST_CONNECTION=reverb`).

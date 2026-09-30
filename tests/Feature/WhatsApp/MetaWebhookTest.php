@@ -106,14 +106,14 @@ final class MetaWebhookTest extends TestCase
         Bus::assertDispatched(RefreshPhoneNumber::class);
     }
 
-    public function test_messages_are_deferred_until_the_messaging_module_exists(): void
+    public function test_fields_owned_by_later_modules_are_deferred_and_unknown_fields_ignored(): void
     {
         $this->connectNumber($this->createTenant());
 
-        $this->postWebhook($this->webhookBody('messages', ['messaging_product' => 'whatsapp', 'metadata' => ['phone_number_id' => '106540352242922'], 'messages' => []]))->assertOk();
+        $this->postWebhook($this->webhookBody('message_template_status_update', ['event' => 'APPROVED', 'message_template_name' => 'welcome']))->assertOk();
         $this->postWebhook($this->webhookBody('some_future_field', ['x' => 1]))->assertOk();
 
-        $this->assertSame('deferred', $this->logRows('messages')->first()->process_status);
+        $this->assertSame('deferred', $this->logRows('message_template_status_update')->first()->process_status);
         $this->assertSame('ignored', $this->logRows('some_future_field')->first()->process_status);
     }
 
@@ -128,7 +128,7 @@ final class MetaWebhookTest extends TestCase
 
         $job = $this->tenantContext()->bypass(fn () => CoexistenceSyncJob::query()->where('sync_type', 'history')->first());
         $this->assertSame(55, $job?->progress);
-        $this->assertSame('deferred', $this->logRows('history')->first()->process_status);
+        $this->assertSame('processed', $this->logRows('history')->first()->process_status);
 
         $this->postWebhook($this->webhookBody('history', ['messaging_product' => 'whatsapp', 'metadata' => $meta,
             'history' => [['errors' => [['code' => 2593109, 'title' => 'History sync is turned off by the business from the WhatsApp Business App']]]]]))->assertOk();

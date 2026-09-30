@@ -10,6 +10,10 @@ use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
 use App\Http\Controllers\Api\V1\InvitationController;
 use App\Http\Controllers\Api\V1\MeController;
+use App\Http\Controllers\Api\V1\Messaging\ContactController;
+use App\Http\Controllers\Api\V1\Messaging\ConversationController;
+use App\Http\Controllers\Api\V1\Messaging\MediaController;
+use App\Http\Controllers\Api\V1\Messaging\MessageController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
 use App\Http\Controllers\Api\V1\TenantController;
@@ -102,5 +106,32 @@ Route::middleware(['auth:sanctum', 'tenant', 'throttle:api'])->group(function ()
     Route::middleware('can:'.Permission::TeamManage->value)->group(function () {
         Route::get('team/members/{member}/numbers', [PhoneNumberController::class, 'grants'])->name('team.members.numbers');
         Route::put('team/members/{member}/numbers', [PhoneNumberController::class, 'updateGrants'])->name('team.members.numbers.update');
+    });
+
+    /*
+    | Messaging (Phase 3): contacts, team inbox, sending, media
+    */
+    Route::middleware('can:'.Permission::ContactsView->value)->group(function () {
+        Route::get('contacts', [ContactController::class, 'index'])->name('contacts.index');
+        Route::get('contacts/{contact}', [ContactController::class, 'show'])->name('contacts.show');
+    });
+    Route::post('contacts', [ContactController::class, 'store'])->middleware('can:'.Permission::ContactsCreate->value)->name('contacts.store');
+    Route::patch('contacts/{contact}', [ContactController::class, 'update'])->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.update');
+    Route::post('contacts/{contact}/consent', [ContactController::class, 'consent'])->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.consent');
+    Route::delete('contacts/{contact}', [ContactController::class, 'destroy'])->middleware('can:'.Permission::ContactsDelete->value)->name('contacts.destroy');
+
+    Route::middleware('can:'.Permission::InboxView->value)->group(function () {
+        Route::get('conversations', [ConversationController::class, 'index'])->name('conversations.index');
+        Route::get('conversations/{conversation}', [ConversationController::class, 'show'])->name('conversations.show');
+        Route::patch('conversations/{conversation}', [ConversationController::class, 'update'])->name('conversations.update');
+        Route::post('conversations/{conversation}/read', [ConversationController::class, 'read'])->name('conversations.read');
+        Route::get('conversations/{conversation}/messages', [MessageController::class, 'index'])->name('conversations.messages.index');
+        Route::get('media/{media}', [MediaController::class, 'show'])->name('media.show');
+    });
+
+    Route::middleware(['can:'.Permission::InboxReply->value, 'throttle:messaging'])->group(function () {
+        Route::post('conversations/{conversation}/messages', [MessageController::class, 'store'])->name('conversations.messages.store');
+        Route::post('messages', [MessageController::class, 'start'])->name('messages.start');
+        Route::post('media', [MediaController::class, 'store'])->name('media.store');
     });
 });

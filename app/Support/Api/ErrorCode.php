@@ -38,6 +38,10 @@ enum ErrorCode: string
     case MetaApiError = 'meta_api_error';
     case NumberAccessDenied = 'number_access_denied';
 
+    case WindowClosed = 'window_closed';
+    case ContactOptedOut = 'contact_opted_out';
+    case NumberUnavailable = 'number_unavailable';
+
     case ServerError = 'server_error';
     case ServiceUnavailable = 'service_unavailable';
 }

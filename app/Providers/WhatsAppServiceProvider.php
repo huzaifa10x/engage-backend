@@ -7,6 +7,9 @@ namespace App\Providers;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\Webhooks\Handlers\AccountUpdateHandler;
 use App\Domain\Webhooks\Handlers\CoexistenceSyncHandler;
+use App\Domain\Webhooks\Handlers\ContactUpdatesHandler;
+use App\Domain\Webhooks\Handlers\MessageEchoesHandler;
+use App\Domain\Webhooks\Handlers\MessagesHandler;
 use App\Domain\Webhooks\Handlers\PhoneNumberHealthHandler;
 use App\Domain\Webhooks\Handlers\WabaCapabilityHandler;
 use App\Domain\Webhooks\WebhookProcessor;
@@ -36,6 +39,9 @@ final class WhatsAppServiceProvider extends ServiceProvider
             $app->make(PhoneNumberHealthHandler::class),
             $app->make(WabaCapabilityHandler::class),
             $app->make(CoexistenceSyncHandler::class),
+            $app->make(MessagesHandler::class),
+            $app->make(MessageEchoesHandler::class),
+            $app->make(ContactUpdatesHandler::class),
         ]));
     }
 }
