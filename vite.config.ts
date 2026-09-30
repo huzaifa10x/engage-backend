@@ -17,6 +17,8 @@ export default defineConfig({
         // process listening there (a native `npm run dev`, another project) silently wins.
         origin: 'http://127.0.0.1:5173', // written to public/hot; the browser loads assets from here
         hmr: { host: '127.0.0.1', port: 5173 },
+        // The page is served by Laravel (localhost:8000 / 127.0.0.1:8000); allow it to load modules.
+        cors: { origin: [/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/] },
         watch: { ignored: ['**/storage/framework/views/**'] },
     },
 });
