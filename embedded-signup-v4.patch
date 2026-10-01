@@ -1,0 +1,29 @@
+diff --git a/app/Application/WhatsApp/EmbeddedSignup.php b/app/Application/WhatsApp/EmbeddedSignup.php
+index baa76c4..2c9ed17 100644
+--- a/app/Application/WhatsApp/EmbeddedSignup.php
++++ b/app/Application/WhatsApp/EmbeddedSignup.php
+@@ -70,7 +70,9 @@ public function start(bool $coexistence): array
+             'status' => SignupStatus::Started,
+         ]);
+ 
+-        $extras = ['setup' => new \stdClass];
++        // Embedded Signup v4 must be requested explicitly (Meta's generated launch code sends
++        // extras.version = "v4"); without it the popup may fall back to an older flow.
++        $extras = ['version' => 'v4', 'setup' => new \stdClass];
+         if ($coexistence) {
+             $extras['featureType'] = 'whatsapp_business_app_onboarding';
+             $extras['sessionInfoVersion'] = '3';
+diff --git a/tests/Feature/WhatsApp/EmbeddedSignupTest.php b/tests/Feature/WhatsApp/EmbeddedSignupTest.php
+index d0acb86..2f6b501 100644
+--- a/tests/Feature/WhatsApp/EmbeddedSignupTest.php
++++ b/tests/Feature/WhatsApp/EmbeddedSignupTest.php
+@@ -61,7 +61,8 @@ public function test_owner_connects_a_number_end_to_end(): void
+             ->assertCreated()
+             ->assertJsonPath('data.launch.config_id', '555000')
+             ->assertJsonPath('data.launch.graph_version', 'v25.0')
+-            ->assertJsonPath('data.launch.login_options.response_type', 'code');
++            ->assertJsonPath('data.launch.login_options.response_type', 'code')
++            ->assertJsonPath('data.launch.login_options.extras.version', 'v4');
+ 
+         $attempt = $start->json('data.attempt.id');
+ 
