@@ -35,7 +35,7 @@ main() {
     if [[ "$target" == backend || "$target" == all ]]; then
         log "Building backend image"
         "${compose[@]}" build app
-        "${compose[@]}" up -d postgres valkey
+        "${compose[@]}" up -d --wait postgres valkey   # waits until both healthchecks pass
         log "Running migrations"
         "${compose[@]}" run --rm --no-deps app php artisan migrate --force
         "${compose[@]}" run --rm --no-deps app php artisan engage:partitions
