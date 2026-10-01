@@ -1,0 +1,34 @@
+# Edge proxy: automatic HTTPS (Let's Encrypt) for one domain, routed by path.
+#   /api /sanctum /admin /horizon /build /up  → Laravel
+#   /app/*                                    → Reverb WebSockets (Pusher protocol)
+#   everything else                           → Next.js client
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	request_body {
+		max_size 110MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	@laravel path /api/* /sanctum/* /admin /admin/* /horizon /horizon/* /build/* /vendor/* /up
+	handle @laravel {
+		reverse_proxy app:8000
+	}
+
+	@sockets path /app/*
+	handle @sockets {
+		reverse_proxy reverb:8080
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

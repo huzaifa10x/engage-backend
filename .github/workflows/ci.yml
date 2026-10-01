@@ -1,7 +1,7 @@
 name: CI
 
+# Pull requests only — pushes to main are tested by deploy.yml before deploying.
 on:
-  push: { branches: [main] }
   pull_request:
 
 jobs:

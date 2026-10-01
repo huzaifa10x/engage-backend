@@ -1,0 +1,105 @@
+# Production stack on one Oracle Cloud VM. Run through deploy/deploy.sh.
+# Values like ${DOMAIN} come from deploy/.env (created by deploy/init-env.sh, never committed).
+name: engage
+
+x-backend: &backend
+  image: engage-backend:latest
+  pull_policy: never # built locally by deploy.sh
+  restart: unless-stopped
+  volumes:
+    - ../.env:/app/.env:ro
+    - storage:/app/storage
+  depends_on:
+    postgres: { condition: service_healthy }
+    valkey: { condition: service_healthy }
+  logging: &logging
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  app:
+    <<: *backend
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  horizon:
+    <<: *backend
+    command: ["sh", "-c", "php artisan optimize && exec php artisan horizon"]
+    stop_grace_period: 60s
+
+  scheduler:
+    <<: *backend
+    command: ["sh", "-c", "php artisan optimize && exec php artisan schedule:work"]
+
+  reverb:
+    <<: *backend
+    command: ["sh", "-c", "php artisan optimize && exec php artisan reverb:start --host=0.0.0.0 --port=8080"]
+
+  web:
+    image: engage-web:latest
+    pull_policy: never
+    build:
+      context: ../../web
+      args:
+        NEXT_PUBLIC_REVERB_KEY: ${REVERB_APP_KEY}
+        NEXT_PUBLIC_REVERB_HOST: ${DOMAIN}
+        NEXT_PUBLIC_REVERB_PORT: "443"
+        NEXT_PUBLIC_REVERB_SCHEME: https
+    environment:
+      BACKEND_URL: http://app:8000
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging: *logging
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      ENGAGE_DB_PASSWORD: ${ENGAGE_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-engage.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    shm_size: 256mb
+    logging: *logging
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes: [valkeydata:/data]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+
+volumes:
+  storage:
+  pgdata:
+  valkeydata:
+  caddy_data:
+  caddy_config:

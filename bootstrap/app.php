@@ -35,6 +35,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withBroadcasting(__DIR__.'/../routes/channels.php', ['prefix' => 'api', 'middleware' => ['api', 'auth:sanctum', 'tenant']])
     ->withMiddleware(function (Middleware $middleware): void {
+        // Behind Caddy in production: trust X-Forwarded-* so Laravel knows the request was HTTPS.
+        // Only the edge proxy can reach the app container, so trusting the forwarder is safe.
+        $middleware->trustProxies(at: '*');
+
         $middleware->prepend(AssignRequestId::class);
         $middleware->append(SecurityHeaders::class);
 
