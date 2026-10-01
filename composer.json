@@ -5,12 +5,13 @@
     "description": "10X Engage — multi-tenant WhatsApp SaaS platform (Laravel API, Super Admin, workers).",
     "license": "proprietary",
     "require": {
+        "php": "^8.4",
         "ext-pdo_pgsql": "*",
         "ext-redis": "*",
-        "php": "^8.4",
         "inertiajs/inertia-laravel": "^3.0",
         "laravel/framework": "^13.17",
         "laravel/horizon": "^5.30",
+        "laravel/reverb": "^1.12",
         "laravel/sanctum": "^4.2",
         "laravel/tinker": "^3.0"
     },
