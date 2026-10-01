@@ -38,9 +38,13 @@ main() {
         "${compose[@]}" up -d --wait postgres valkey   # waits until both healthchecks pass
         log "Running migrations"
         "${compose[@]}" run --rm --no-deps app php artisan migrate --force
+        # Reference data (system roles, plan catalog). Idempotent; demo accounts are local-only.
+        "${compose[@]}" run --rm --no-deps app php artisan db:seed --force
         "${compose[@]}" run --rm --no-deps app php artisan engage:partitions
         log "Starting backend services"
-        "${compose[@]}" up -d app horizon scheduler reverb
+        # Always recreate: .env is a mounted file, so editing it does not change the container
+        # definition, and Laravel only re-reads it (php artisan optimize) when a container starts.
+        "${compose[@]}" up -d --force-recreate app horizon scheduler reverb
     fi
 
     if [[ "$target" == web || "$target" == all ]]; then
