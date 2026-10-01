@@ -34,28 +34,16 @@ class Contact extends Model
 {
     use BelongsToTenant, HasUuids, SoftDeletes;
 
-    protected $fillable = [
-        'tenant_id',
-        'wa_id',
-        'bsuid',
-        'parent_bsuid',
-        'username',
-        'profile_name',
-        'name',
-        'email',
-        'custom_fields',
-        'source',
-        'consent_state',
-        'opted_in_at',
-        'opted_out_at',
-        'marketing_opted_out',
-        'last_inbound_at',
-    ];
-
+    /** Mirror the column defaults so freshly created models are complete without a refetch. */
     protected $attributes = [
         'source' => 'inbound',
         'consent_state' => 'unknown',
         'marketing_opted_out' => false,
+    ];
+
+    protected $fillable = [
+        'tenant_id', 'wa_id', 'bsuid', 'parent_bsuid', 'username', 'profile_name', 'name', 'email', 'custom_fields', 'source',
+        'consent_state', 'opted_in_at', 'opted_out_at', 'marketing_opted_out', 'last_inbound_at',
     ];
 
     protected function casts(): array
@@ -72,7 +60,7 @@ class Contact extends Model
 
     public function displayName(): string
     {
-        return $this->name ?? $this->profile_name ?? $this->username ?? ($this->wa_id ? '+' . $this->wa_id : 'WhatsApp user');
+        return $this->name ?? $this->profile_name ?? $this->username ?? ($this->wa_id ? '+'.$this->wa_id : 'WhatsApp user');
     }
 
     public function isOptedOut(): bool

@@ -35,24 +35,14 @@ class Conversation extends Model
 {
     use BelongsToTenant, HasUuids;
 
-    protected $fillable = [
-        'tenant_id',
-        'phone_number_id',
-        'contact_id',
-        'status',
-        'assigned_membership_id',
-        'unread_count',
-        'last_message_at',
-        'last_message_preview',
-        'last_message_direction',
-        'last_inbound_at',
-        'window_expires_at',
-        'closed_at',
-    ];
-
     protected $attributes = [
         'status' => 'open',
         'unread_count' => 0,
+    ];
+
+    protected $fillable = [
+        'tenant_id', 'phone_number_id', 'contact_id', 'status', 'assigned_membership_id', 'unread_count', 'last_message_at',
+        'last_message_preview', 'last_message_direction', 'last_inbound_at', 'window_expires_at', 'closed_at',
     ];
 
     protected function casts(): array

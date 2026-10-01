@@ -33,25 +33,13 @@ class Media extends Model
 
     protected $table = 'media';
 
-    protected $fillable = [
-        'tenant_id',
-        'direction',
-        'meta_media_id',
-        'mime_type',
-        'sha256',
-        'file_size',
-        'filename',
-        'disk',
-        'path',
-        'status',
-        'error',
-        'uploaded_to_phone_number_id',
-        'meta_media_expires_at',
-        'created_by_membership_id',
-    ];
-
     protected $attributes = [
         'status' => 'pending',
+    ];
+
+    protected $fillable = [
+        'tenant_id', 'direction', 'meta_media_id', 'mime_type', 'sha256', 'file_size', 'filename', 'disk', 'path', 'status',
+        'error', 'uploaded_to_phone_number_id', 'meta_media_expires_at', 'created_by_membership_id',
     ];
 
     protected function casts(): array
