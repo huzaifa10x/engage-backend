@@ -32,9 +32,10 @@ RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist --no-in
 COPY . .
 COPY --from=assets /app/public/build ./public/build
 
-RUN composer dump-autoload --optimize --classmap-authoritative --no-dev \
-    && php artisan package:discover --ansi \
-    && mkdir -p storage/app/private storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+# Runtime directories first: package discovery writes to bootstrap/cache, and these folders
+# are not guaranteed to exist in git.
+RUN mkdir -p storage/app/private storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
+    && composer dump-autoload --optimize --classmap-authoritative --no-dev
 
 ENV SERVER_NAME=":8000"
 EXPOSE 8000
