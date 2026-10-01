@@ -60,9 +60,18 @@ main() {
     local domain
     domain="$(grep -E '^DOMAIN=' "$root/backend/deploy/.env" | cut -d= -f2-)"
 
-    # 1. Laravel answers inside Docker.
-    if ! "${compose[@]}" exec -T app php -r "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"; then
-        echo "❌ Laravel is not answering. Recent logs:"
+    # 1. Laravel answers inside Docker. A freshly started container first builds its caches
+    #    (php artisan optimize), so allow up to 2 minutes before calling it a failure.
+    local laravel_up=0
+    for _ in $(seq 1 24); do
+        if "${compose[@]}" exec -T app php -r "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);" 2>/dev/null; then
+            laravel_up=1
+            break
+        fi
+        sleep 5
+    done
+    if [[ $laravel_up -eq 0 ]]; then
+        echo "❌ Laravel is not answering after 2 minutes. Recent logs:"
         "${compose[@]}" logs --tail=60 app
         return 1
     fi
