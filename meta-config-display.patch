@@ -1,0 +1,48 @@
+diff --git a/app/Http/Controllers/Admin/WebhookLogController.php b/app/Http/Controllers/Admin/WebhookLogController.php
+index 6559a63..19006ce 100644
+--- a/app/Http/Controllers/Admin/WebhookLogController.php
++++ b/app/Http/Controllers/Admin/WebhookLogController.php
+@@ -61,7 +61,14 @@ public function index(Request $request): Response
+             'configured' => [
+                 'app' => filled(config('engage.meta.app_id')) && filled(config('engage.meta.app_secret')),
+                 'verify_token' => filled(config('engage.meta.webhook_verify_token')),
+-                'callback_url' => url('/api/webhooks/meta'),
++                'missing' => array_keys(array_filter([
++                    'META_APP_ID' => blank(config('engage.meta.app_id')),
++                    'META_APP_SECRET' => blank(config('engage.meta.app_secret')),
++                    'META_ES_CONFIG_ID' => blank(config('engage.meta.embedded_signup_config_id')),
++                    'META_WEBHOOK_VERIFY_TOKEN' => blank(config('engage.meta.webhook_verify_token')),
++                ])),
++                // Meta calls the client domain (APP_URL), never the admin domain this page is served on.
++                'callback_url' => rtrim((string) config('app.url'), '/').'/api/webhooks/meta',
+             ],
+         ]);
+     }
+diff --git a/resources/js/admin/pages/webhooks/Index.tsx b/resources/js/admin/pages/webhooks/Index.tsx
+index 37a8d7c..e36d3ba 100644
+--- a/resources/js/admin/pages/webhooks/Index.tsx
++++ b/resources/js/admin/pages/webhooks/Index.tsx
+@@ -14,7 +14,7 @@ type Props = {
+     stats: Record<'total' | 'pending' | 'processed' | 'ignored' | 'deferred' | 'failed', number>;
+     fields: { field: string; count: number }[];
+     filters: { field?: string; status?: string; waba_id?: string };
+-    configured: { app: boolean; verify_token: boolean; callback_url: string };
++    configured: { app: boolean; verify_token: boolean; missing: string[]; callback_url: string };
+ };
+ 
+ const statusTone: Record<string, Tone> = { processed: 'good', deferred: 'info', ignored: 'grey', pending: 'warn', failed: 'bad' };
+@@ -31,10 +31,11 @@ export default function WebhooksIndex({ rows, stats, fields, filters, configured
+                 actions={stats.failed > 0 ? <Button onClick={() => router.post('/admin/webhooks/replay-failed', {}, { preserveScroll: true })}>Retry failed events</Button> : undefined}
+             />
+ 
+-            {(!configured.app || !configured.verify_token) && (
++            {configured.missing.length > 0 && (
+                 <div className="mb-4 rounded-card border border-warn/30 bg-warn-bg px-4 py-3 text-[13.5px] text-warn">
+-                    Meta is not fully configured on this environment. Set META_APP_ID, META_APP_SECRET and META_WEBHOOK_VERIFY_TOKEN, then use{' '}
+-                    <span className="font-mono">{configured.callback_url}</span> as the callback URL in the App Dashboard.
++                    Meta is not fully configured on this environment. Missing in the server&apos;s .env:{' '}
++                    <span className="font-mono">{configured.missing.join(', ')}</span>. Webhook callback URL for the App Dashboard:{' '}
++                    <span className="font-mono">{configured.callback_url}</span>
+                 </div>
+             )}
+ 
