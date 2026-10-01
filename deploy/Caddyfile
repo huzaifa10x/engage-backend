@@ -1,24 +1,27 @@
-# Edge proxy: automatic HTTPS (Let's Encrypt) for one domain, routed by path.
-#   /api /sanctum /admin /horizon /build /up  → Laravel
-#   /app/*                                    → Reverb WebSockets (Pusher protocol)
-#   everything else                           → Next.js client
+# Edge proxy: automatic HTTPS (Let's Encrypt) for both domains.
+#
+#   {$DOMAIN}        client portal: /api /sanctum /up → Laravel, /app/* → Reverb, rest → Next.js
+#   {$ADMIN_DOMAIN}  Super Admin + Horizon: everything → Laravel (/ redirects to /admin)
 {
 	email {$ACME_EMAIL}
 }
 
-{$DOMAIN} {
+(common) {
 	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+}
+
+{$DOMAIN} {
+	import common
 
 	request_body {
 		max_size 110MB
 	}
 
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		-Server
-	}
-
-	@laravel path /api/* /sanctum/* /admin /admin/* /horizon /horizon/* /build/* /vendor/* /up
+	@laravel path /api/* /sanctum/* /up
 	handle @laravel {
 		reverse_proxy app:8000
 	}
@@ -30,5 +33,15 @@
 
 	handle {
 		reverse_proxy web:3000
+	}
+}
+
+{$ADMIN_DOMAIN} {
+	import common
+
+	redir / /admin 302
+
+	handle {
+		reverse_proxy app:8000
 	}
 }

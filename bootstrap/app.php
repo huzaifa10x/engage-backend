@@ -27,10 +27,12 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
         apiPrefix: 'api',
         then: function () {
-            // Super Admin: /admin locally, or its own subdomain (ADMIN_DOMAIN) in production.
-            $admin = Route::middleware(['web', AdminInertia::class])->name('admin.');
+            // Super Admin always lives under /admin (the panel's links rely on it). In production
+            // ADMIN_DOMAIN also pins it to its own host, so it is unreachable on the client domain
+            // and gets its own session cookie.
+            $admin = Route::middleware(['web', AdminInertia::class])->name('admin.')->prefix('admin');
             $domain = config('engage.admin_domain');
-            ($domain ? $admin->domain($domain) : $admin->prefix('admin'))->group(base_path('routes/admin.php'));
+            ($domain ? $admin->domain($domain) : $admin)->group(base_path('routes/admin.php'));
         },
     )
     ->withBroadcasting(__DIR__.'/../routes/channels.php', ['prefix' => 'api', 'middleware' => ['api', 'auth:sanctum', 'tenant']])

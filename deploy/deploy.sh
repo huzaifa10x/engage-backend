@@ -57,8 +57,9 @@ main() {
     "${compose[@]}" up -d caddy
 
     log "Health check"
-    local domain
+    local domain admin_domain
     domain="$(grep -E '^DOMAIN=' "$root/backend/deploy/.env" | cut -d= -f2-)"
+    admin_domain="$(grep -E '^ADMIN_DOMAIN=' "$root/backend/deploy/.env" | cut -d= -f2-)"
 
     # 1. Laravel answers inside Docker. A freshly started container first builds its caches
     #    (php artisan optimize), so allow up to 2 minutes before calling it a failure.
@@ -80,16 +81,17 @@ main() {
     # 2. Full path through Caddy + HTTPS certificate, resolved to this machine (an Oracle VM
     #    usually cannot reach its own public IP, so we do not go out to the internet and back).
     for _ in $(seq 1 24); do
-        if curl -fsS -o /dev/null --max-time 5 --resolve "$domain:443:127.0.0.1" "https://$domain/up"; then
-            echo "  ✓ HTTPS certificate issued and proxy working"
-            log "✅ Live: https://$domain"
+        if curl -fsS -o /dev/null --max-time 5 --resolve "$domain:443:127.0.0.1" "https://$domain/up" \
+            && { [[ -z "$admin_domain" ]] || curl -fsS -o /dev/null --max-time 5 --resolve "$admin_domain:443:127.0.0.1" "https://$admin_domain/up"; }; then
+            echo "  ✓ HTTPS certificates issued and proxy working"
+            log "✅ Live: https://$domain${admin_domain:+  ·  Super Admin: https://$admin_domain}"
             docker image prune -f >/dev/null
             return 0
         fi
         sleep 5
     done
 
-    echo "❌ HTTPS is not ready yet. Laravel runs, but no certificate could be issued for $domain."
+    echo "❌ HTTPS is not ready yet. Laravel runs, but no certificate could be issued for $domain${admin_domain:+ / $admin_domain}."
     echo "   Almost always: ports 80/443 are not open in the Oracle Security List, or DNS does not"
     echo "   point to this server. Certificate errors from Caddy:"
     "${compose[@]}" logs --tail=200 caddy 2>&1 | grep -iE "error|challenge|acme|timeout|refused" | tail -15 || true

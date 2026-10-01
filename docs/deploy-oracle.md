@@ -45,8 +45,10 @@ they pass, deploys to the server automatically.
 3. **Security rules → Add Ingress Rules**:
    - Source CIDR `0.0.0.0/0`, IP Protocol **TCP**, Destination port range **80,443** → **Add**.
 
-### A3. Point the domain at the server
-At your DNS provider for `10xdigital.ae`, add an **A record**: name **`engage`** → value **the public IP**.
+### A3. Point the domains at the server
+At your DNS provider for `10xdigital.ae`, add two **A records** → value **the public IP**:
+- **`engage`** (client portal) and **`engage-admin`** (Super Admin).
+On Cloudflare keep them **DNS only** (grey cloud) so the server can get its HTTPS certificates.
 Check from your Mac after a few minutes: `ping engage.10xdigital.ae` should show the server IP.
 
 > No DNS access yet? Use `<ip-with-dashes>.sslip.io` as the domain (e.g. `152-70-1-2.sslip.io`);
@@ -117,8 +119,9 @@ It finishes with **✅ Live: https://engage.10xdigital.ae**.
 ```bash
 dc exec app php artisan engage:admin:create waqar@10xdigital.ae --name="Waqar"
 ```
-Open `https://engage.10xdigital.ae/admin` (you will set up the authenticator app on first login).
-The customer app is `https://engage.10xdigital.ae`.
+Open `https://engage-admin.10xdigital.ae` (you will set up the authenticator app on first login).
+The customer portal is `https://engage.10xdigital.ae` — customers sign up at `/register`.
+Super Admin and customer accounts are separate: an admin login does not work on the portal.
 
 **Back up the secrets** — copy these two files into your password manager:
 ```bash

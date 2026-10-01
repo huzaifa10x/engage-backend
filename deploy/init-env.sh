@@ -15,9 +15,10 @@ if [[ -f "$LARAVEL_ENV" || -f "$COMPOSE_ENV" ]]; then
     exit 0
 fi
 
-read -rp "Domain for the app (e.g. engage.10xdigital.ae): " DOMAIN
+read -rp "Client portal domain (e.g. engage.10xdigital.ae): " DOMAIN
+read -rp "Super Admin domain (e.g. engage-admin.10xdigital.ae): " ADMIN_DOMAIN
 read -rp "Email for HTTPS certificate notices: " ACME_EMAIL
-[[ -n "$DOMAIN" && -n "$ACME_EMAIL" ]] || { echo "Domain and email are required."; exit 1; }
+[[ -n "$DOMAIN" && -n "$ADMIN_DOMAIN" && -n "$ACME_EMAIL" ]] || { echo "Both domains and the email are required."; exit 1; }
 
 rand() { openssl rand -hex "$1"; }
 APP_KEY="base64:$(openssl rand -base64 32)"
@@ -32,6 +33,7 @@ umask 077
 
 cat > "$COMPOSE_ENV" <<ENV
 DOMAIN=$DOMAIN
+ADMIN_DOMAIN=$ADMIN_DOMAIN
 ACME_EMAIL=$ACME_EMAIL
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 ENGAGE_DB_PASSWORD=$ENGAGE_DB_PASSWORD
@@ -49,7 +51,7 @@ APP_LOCALE=en
 APP_FALLBACK_LOCALE=en
 
 FRONTEND_URL=https://$DOMAIN
-ADMIN_DOMAIN=
+ADMIN_DOMAIN=$ADMIN_DOMAIN
 SANCTUM_STATEFUL_DOMAINS=$DOMAIN
 SESSION_DOMAIN=null
 CORS_ALLOWED_ORIGINS=https://$DOMAIN
