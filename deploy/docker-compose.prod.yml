@@ -53,6 +53,7 @@ services:
     environment:
       BACKEND_URL: http://app:8000
     restart: unless-stopped
+    healthcheck: { disable: true }
     logging: *logging
 
   caddy:
