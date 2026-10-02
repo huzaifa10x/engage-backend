@@ -27,7 +27,8 @@ final class SignupAttemptResource extends JsonResource
                 'code' => $this->error_code,
                 'message' => $this->error_message,
                 // Present only when the number is still registered with another application.
-                ...array_filter(['apps' => $this->session_payload['conflicting_apps'] ?? null]),
+                ...array_filter(['apps' => $this->session_payload['conflicting_apps'] ?? null], fn ($v) => $v !== null),
+                ...array_filter(['same_app' => $this->session_payload['conflict_same_app'] ?? null], fn ($v) => $v !== null),
             ] : null,
             'created_at' => $this->created_at?->toIso8601String(),
             'finished_at' => $this->finished_at?->toIso8601String(),

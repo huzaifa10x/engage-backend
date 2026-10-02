@@ -28,7 +28,7 @@ use Throwable;
 /**
  * The server-side onboarding calls after the code exchange. Every step is idempotent and
  * recorded on the attempt, so a retry resumes where the last run stopped:
- *   fetch_waba → subscribe_webhooks → register_number (skipped for coexistence / no number)
+ *   fetch_waba → subscribe_webhooks → verify_subscription → register_number (skipped for coexistence / no number)
  *   → fetch_number → coexistence_sync (contacts, then history — each allowed once, within 24h)
  *
  * Runs in the tenant's context (restored from Laravel Context by JobTenantContext).
@@ -71,7 +71,17 @@ final class ProvisionWhatsappAccount implements ShouldQueue
             });
 
             $this->step($attempt, 'subscribe_webhooks', function () use ($graph, $waba, $token) {
-                $graph->subscribeApp($waba->waba_id, $token);
+                if (! $graph->subscribeApp($waba->waba_id, $token)) {
+                    throw new MetaApiException('Meta did not confirm the webhook subscription.', 503);
+                }
+            });
+
+            // Never trust the POST alone: our app must actually be listed on the WABA.
+            $this->step($attempt, 'verify_subscription', function () use ($graph, $waba, $token) {
+                $subscribed = array_column($graph->listSubscribedApps($waba->waba_id, $token), 'id');
+                if (! in_array($graph->appId(), $subscribed, true)) {
+                    throw new MetaApiException('The webhook subscription is not active on this WhatsApp Business Account yet.', 503);
+                }
                 $waba->forceFill(['is_subscribed_to_webhooks' => true])->save();
             });
 
@@ -88,7 +98,14 @@ final class ProvisionWhatsappAccount implements ShouldQueue
                 }
 
                 $this->step($attempt, 'fetch_number', function () use ($graph, $number, $token, $sync) {
-                    $sync->applyPhoneNumber($number, $graph->getPhoneNumber($number->phone_number_id, $token));
+                    $node = $graph->getPhoneNumber($number->phone_number_id, $token);
+                    $sync->applyPhoneNumber($number, $node);
+
+                    // Only a number Meta reports as live on the Cloud API counts as connected.
+                    $platform = $node['platform_type'] ?? null;
+                    if (! $number->isCoexistence() && $platform !== null && $platform !== 'CLOUD_API') {
+                        throw new MetaApiException('The number is not active on the WhatsApp Cloud API yet.', 503);
+                    }
                     $number->forceFill(['status' => PhoneNumberStatus::Connected])->save();
                 });
 

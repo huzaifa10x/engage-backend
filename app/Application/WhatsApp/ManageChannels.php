@@ -65,13 +65,17 @@ final class ManageChannels
      */
     public function disconnect(WabaAccount $waba, string $reason): void
     {
+        // Stays true when the unsubscribe call fails: our app is then still subscribed at Meta, and
+        // a later reconnect must not mistake that for another environment owning the account.
+        $stillSubscribed = false;
         try {
             $this->graph->unsubscribeApp($waba->waba_id, $this->credentials->tokenFor($waba));
         } catch (\Throwable $e) {
+            $stillSubscribed = (bool) $waba->is_subscribed_to_webhooks;
             Log::warning('Unsubscribe during disconnect failed; continuing.', ['waba_id' => $waba->waba_id, 'error' => $e->getMessage()]);
         }
 
-        DB::transaction(function () use ($waba, $reason) {
+        DB::transaction(function () use ($waba, $reason, $stillSubscribed) {
             $numbers = $waba->phoneNumbers()->get();
             foreach ($numbers as $number) {
                 $number->forceFill([
@@ -81,7 +85,7 @@ final class ManageChannels
             }
 
             $this->revokeToken($waba);
-            $waba->forceFill(['status' => WabaStatus::Disconnected, 'disconnected_at' => now(), 'is_subscribed_to_webhooks' => false])->save();
+            $waba->forceFill(['status' => WabaStatus::Disconnected, 'disconnected_at' => now(), 'is_subscribed_to_webhooks' => $stillSubscribed])->save();
 
             $this->audit->record('whatsapp.disconnected', $waba, meta: [
                 'reason' => $reason,

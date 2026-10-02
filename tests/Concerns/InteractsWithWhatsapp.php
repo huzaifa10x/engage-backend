@@ -66,8 +66,19 @@ trait InteractsWithWhatsapp
         $granted = $grantedWabas ?? [$wabaId];
 
         // GET lists the apps subscribed to the WABA; POST / DELETE (un)subscribe ours.
-        $listed = ['data' => array_map(fn (array $app) => ['whatsapp_business_api_data' => $app], $subscribedApps)];
-        $subscriptions = fn (Request $request) => Http::response($request->method() === 'GET' ? $listed : ['success' => true]);
+        $apps = $subscribedApps;
+        $subscriptions = function (Request $request) use (&$apps) {
+            if ($request->method() === 'GET') {
+                return Http::response(['data' => array_map(fn (array $app) => ['whatsapp_business_api_data' => $app], $apps)]);
+            }
+
+            $apps = array_values(array_filter($apps, fn (array $app) => $app['id'] !== '1234567890'));
+            if ($request->method() === 'POST') {
+                $apps[] = ['id' => '1234567890', 'name' => '10X Engage'];
+            }
+
+            return Http::response(['success' => true]);
+        };
 
         Http::preventStrayRequests();
         Http::fake([

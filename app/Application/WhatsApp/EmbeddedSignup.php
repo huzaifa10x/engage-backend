@@ -106,11 +106,11 @@ final class EmbeddedSignup
         // single-use, so the loser's exchange would fail and mark a SUCCESSFUL attempt failed.
         $claimed = EmbeddedSignupAttempt::query()->whereKey($attempt->id)
             ->where('status', SignupStatus::Started)
-            ->update(['status' => SignupStatus::Exchanging->value, 'updated_at' => now()]);
+            ->update(['status' => SignupStatus::Captured->value, 'updated_at' => now()]);
         if ($claimed === 0) {
             throw WhatsappException::signupInvalid('This signup is already being completed.');
         }
-        $attempt->status = SignupStatus::Exchanging;
+        $attempt->status = SignupStatus::Captured;
         $attempt->syncOriginalAttribute('status');
 
         if (! in_array($event, [SignupEvent::Finish, SignupEvent::FinishOnlyWaba, SignupEvent::FinishBusinessApp], true)) {
@@ -139,7 +139,9 @@ final class EmbeddedSignup
             ]),
         ])->save();
 
+        // The popup finishing is NOT onboarding: so far the IDs are only captured (signup_captured).
         // 1. Exchange the code now — it expires 30 seconds after the popup closes.
+        $attempt->forceFill(['status' => SignupStatus::Exchanging])->save();
         try {
             $token = $this->graph->exchangeCode($data['code']);
             $attempt->markStep('exchange_code', 'done');
@@ -280,28 +282,48 @@ final class EmbeddedSignup
             throw WhatsappException::meta('We could not check whether this number is already connected to another application. Please try again.', $e->metaCode, $e->fbtraceId);
         }
 
-        $ours = array_merge([$this->graph->appId()], array_map('strval', (array) config('engage.meta.allowed_other_app_ids', [])));
-        $others = array_values(array_filter($apps, fn (array $app) => ! in_array($app['id'], $ours, true)));
+        $attempt->forceFill(['session_payload' => ($attempt->session_payload ?? []) + ['subscribed_apps' => $apps]])->save();
 
-        if ($others === []) {
+        $allowed = array_merge([$this->graph->appId()], array_map('strval', (array) config('engage.meta.allowed_other_app_ids', [])));
+        $conflicts = array_values(array_filter($apps, fn (array $app) => ! in_array($app['id'], $allowed, true)));
+        $sameApp = false;
+
+        // Our own Meta app is already subscribed, but this installation has never connected the
+        // account: another 10X Engage environment sharing the app (production / staging) owns it.
+        if ($conflicts === [] && config('engage.meta.block_other_environments', true) && ! $this->knownHere($wabaId)) {
+            $conflicts = array_values(array_filter($apps, fn (array $app) => $app['id'] === $this->graph->appId()));
+            $sameApp = $conflicts !== [];
+        }
+
+        if ($conflicts === []) {
             $attempt->markStep('check_other_apps', 'done');
 
             return;
         }
 
-        $message = WhatsappException::subscribedElsewhereMessage($others);
+        $message = WhatsappException::subscribedElsewhereMessage($conflicts, $sameApp);
         $attempt->markStep('check_other_apps', 'failed', $message);
-        $attempt->forceFill(['session_payload' => ($attempt->getAttribute('session_payload') ?? []) + ['conflicting_apps' => $others]]);
+        $attempt->forceFill(['session_payload' => ['conflicting_apps' => $conflicts, 'conflict_same_app' => $sameApp] + ($attempt->session_payload ?? [])]);
         $attempt->fail($message, ErrorCode::NumberSubscribedElsewhere->value);
 
         $this->audit->record('whatsapp.signup_blocked', $attempt, meta: [
             'reason' => ErrorCode::NumberSubscribedElsewhere->value,
             'waba_id' => $wabaId,
             'phone_number_id' => $attempt->phone_number_id,
-            'apps' => $others,
+            'apps' => $conflicts,
+            'same_app' => $sameApp,
         ]);
 
-        throw WhatsappException::subscribedToAnotherApp($others);
+        throw WhatsappException::subscribedToAnotherApp($conflicts, $sameApp);
+    }
+
+    /** Has THIS installation connected the WABA (and so may legitimately hold our app's subscription)? */
+    private function knownHere(string $wabaId): bool
+    {
+        /** @var ?WabaAccount $waba */
+        $waba = $this->context->bypass(fn () => WabaAccount::query()->where('waba_id', $wabaId)->first());
+
+        return $waba !== null && ($waba->status === WabaStatus::Connected || $waba->is_subscribed_to_webhooks);
     }
 
     /** @param array<string, mixed> $debug */

@@ -27,22 +27,27 @@ final class WhatsappException extends DomainException
     }
 
     /**
-     * The WABA (and so the number) is still subscribed to another provider's app.
+     * The WABA (and so the number) is still subscribed to another provider's app — or to our own
+     * app from another 10X Engage environment ($sameApp).
      *
      * @param  list<array{id: string, name: ?string, link: ?string}>  $apps
      */
-    public static function subscribedToAnotherApp(array $apps): self
+    public static function subscribedToAnotherApp(array $apps, bool $sameApp = false): self
     {
-        return new self(self::subscribedElsewhereMessage($apps), ErrorCode::NumberSubscribedElsewhere, 409, ['apps' => $apps]);
+        return new self(self::subscribedElsewhereMessage($apps, $sameApp), ErrorCode::NumberSubscribedElsewhere, 409, ['apps' => $apps, 'same_app' => $sameApp]);
     }
 
     /** @param list<array{id: string, name: ?string, link: ?string}> $apps */
-    public static function subscribedElsewhereMessage(array $apps): string
+    public static function subscribedElsewhereMessage(array $apps, bool $sameApp = false): string
     {
         $names = array_values(array_filter(array_map(fn (array $app) => $app['name'], $apps)));
-        $where = $names === [] ? 'another application' : 'another application ('.implode(', ', $names).')';
+        $suffix = $names === [] ? '' : ' ('.implode(', ', $names).')';
 
-        return "This WhatsApp number is already registered with {$where}. Disconnect it from that application first, then connect it to 10X Engage again.";
+        if ($sameApp) {
+            return "This WhatsApp number is already connected to another 10X Engage environment{$suffix}. Disconnect it there first, then connect it here again.";
+        }
+
+        return "This WhatsApp number is already registered with another application{$suffix}. Disconnect it from that application first, then connect it to 10X Engage again.";
     }
 
     public static function signupInvalid(string $message = 'This signup session has expired. Start again from Connect WhatsApp.'): self

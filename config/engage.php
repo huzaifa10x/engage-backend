@@ -56,6 +56,9 @@ return [
         // (GET /<WABA_ID>/subscribed_apps). Comma-separated Meta app IDs listed in
         // META_ALLOWED_OTHER_APP_IDS are tolerated (e.g. a second app of your own).
         'block_other_subscribed_apps' => (bool) env('META_BLOCK_OTHER_SUBSCRIBED_APPS', true),
+        // Same Meta app, different installation (production vs staging): refuse a WABA our app is
+        // already subscribed to when this installation has never connected it.
+        'block_other_environments' => (bool) env('META_BLOCK_OTHER_ENVIRONMENTS', true),
         'allowed_other_app_ids' => array_values(array_filter(array_map('trim', explode(',', (string) env('META_ALLOWED_OTHER_APP_IDS', ''))))),
         // LOCAL ONLY: answer Graph calls in-process (sending works offline, no Meta account).
         // Ignored outside APP_ENV=local. See App\Infrastructure\Meta\Fake\FakeMeta.

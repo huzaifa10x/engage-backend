@@ -77,6 +77,7 @@ final class EmbeddedSignupTest extends TestCase
 
         $waba = $this->tenantContext()->bypass(fn () => WabaAccount::query()->where('waba_id', self::WABA)->first());
         $this->assertTrue($waba?->is_subscribed_to_webhooks);
+        $this->getJson("/api/v1/whatsapp/signups/{$attempt}")->assertOk()->assertJsonPath('data.steps.verify_subscription.state', 'done');
         $this->assertSame('Nova Fitness LLC', $waba?->business_name);
 
         // Token is only in the secret store, encrypted.
@@ -132,18 +133,45 @@ final class EmbeddedSignupTest extends TestCase
         $this->getJson('/api/v1/phone-numbers')->assertOk()->assertJsonCount(0, 'data');
     }
 
-    public function test_our_own_app_already_subscribed_does_not_block_onboarding(): void
+    public function test_number_connected_by_another_environment_of_our_app_is_blocked(): void
     {
-        // Re-running signup for a WABA our app is already subscribed to must keep working.
+        // Production and staging share one Meta app: the app is subscribed, but not by us.
         $this->fakeGraph(subscribedApps: [['id' => '1234567890', 'name' => '10X Engage']]);
         $this->actingAsMember($this->owner());
 
         $attempt = $this->postJson('/api/v1/whatsapp/signups')->json('data.attempt.id');
 
         $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())
+            ->assertStatus(409)
+            ->assertJsonPath('error.code', 'number_subscribed_elsewhere')
+            ->assertJsonPath('error.details.same_app', true)
+            ->assertJsonPath('error.details.apps.0.name', '10X Engage');
+
+        $this->assertFalse($this->tenantContext()->bypass(fn () => WabaAccount::query()->exists()));
+        $this->assertFalse($this->tenantContext()->bypass(fn () => PhoneNumber::query()->exists()));
+        Http::assertNotSent(fn (Request $r) => $r->method() === 'POST' && str_contains($r->url(), '/subscribed_apps'));
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/register'));
+
+        $this->getJson("/api/v1/whatsapp/signups/{$attempt}")->assertOk()
+            ->assertJsonPath('data.status', 'failed')
+            ->assertJsonPath('data.error.same_app', true);
+    }
+
+    public function test_rerunning_signup_for_a_number_connected_here_still_works(): void
+    {
+        // Our app is subscribed because THIS installation connected the account (token refresh).
+        $this->fakeGraph(subscribedApps: [['id' => '1234567890', 'name' => '10X Engage']]);
+        $owner = $this->owner();
+        $this->connectNumber($this->tenant, self::WABA, self::PHONE);
+        $this->actingAsMember($owner);
+
+        $attempt = $this->postJson('/api/v1/whatsapp/signups')->json('data.attempt.id');
+
+        $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())
             ->assertOk()
             ->assertJsonPath('data.status', 'completed')
-            ->assertJsonPath('data.steps.check_other_apps.state', 'done');
+            ->assertJsonPath('data.steps.check_other_apps.state', 'done')
+            ->assertJsonPath('data.steps.verify_subscription.state', 'done');
     }
 
     public function test_allow_listed_apps_do_not_block_onboarding(): void
