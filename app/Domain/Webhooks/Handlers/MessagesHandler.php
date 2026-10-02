@@ -85,7 +85,11 @@ final class MessagesHandler implements WebhookHandler
         return ProcessResult::Processed;
     }
 
-    /** system message `user_changed_user_id` / `user_changed_number`: new identifiers for the same person. @param array<string, mixed> $system */
+    /**
+     * System message `user_changed_user_id` / `user_changed_number`: new identifiers for the same person.
+     *
+     * @param  array<string, mixed>  $system
+     */
     private function applyIdentityChange(Contact $contact, array $system): void
     {
         $newWaId = isset($system['wa_id']) ? (string) $system['wa_id'] : null;

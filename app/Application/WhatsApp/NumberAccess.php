@@ -11,6 +11,7 @@ use App\Domain\WhatsApp\Exceptions\WhatsappException;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Support\Api\ErrorCode;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -47,8 +48,10 @@ final class NumberAccess
     }
 
     /**
-     * @param  Builder<PhoneNumber>  $query
-     * @return Builder<PhoneNumber>
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $query
+     * @return Builder<TModel>
      */
     public function scope(Builder $query, TenantMembership $membership, string $column = 'id'): Builder
     {

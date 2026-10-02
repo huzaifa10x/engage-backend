@@ -72,7 +72,10 @@ final class DemoDataTest extends TestCase
         });
 
         // Sync queue: the three steps run back to back (delays are ignored).
-        $this->tenantContext()->run($tenant, fn () => SimulateFakeDelivery::dispatch('wamid.LOCALTEST1'));
+        // A statement, not an arrow function: the job must be pushed while the tenant context is still set.
+        $this->tenantContext()->run($tenant, function (): void {
+            SimulateFakeDelivery::dispatch('wamid.LOCALTEST1');
+        });
 
         $this->tenantContext()->run($tenant, function () use ($message) {
             $fresh = Message::query()->findOrFail($message->id);

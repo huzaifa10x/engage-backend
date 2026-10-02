@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\V1\Messaging\MediaController;
 use App\Http\Controllers\Api\V1\Messaging\MessageController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
+use App\Http\Controllers\Api\V1\Templates\TemplateController;
 use App\Http\Controllers\Api\V1\TenantController;
 use App\Http\Controllers\Api\V1\WhatsApp\AccountController as WhatsAppAccountController;
 use App\Http\Controllers\Api\V1\WhatsApp\PhoneNumberController;
@@ -107,6 +108,21 @@ Route::middleware(['auth:sanctum', 'tenant', 'throttle:api'])->group(function ()
         Route::get('team/members/{member}/numbers', [PhoneNumberController::class, 'grants'])->name('team.members.numbers');
         Route::put('team/members/{member}/numbers', [PhoneNumberController::class, 'updateGrants'])->name('team.members.numbers.update');
     });
+
+    /*
+    | Message templates (Phase 4): mirrored from Meta per WhatsApp Business Account
+    */
+    Route::middleware('can:'.Permission::TemplatesView->value)->group(function () {
+        Route::get('templates', [TemplateController::class, 'index'])->name('templates.index');
+        Route::get('templates/{template}', [TemplateController::class, 'show'])->name('templates.show');
+        Route::post('templates/sync', [TemplateController::class, 'sync'])->middleware('throttle:12,1')->name('templates.sync');
+    });
+    Route::post('templates', [TemplateController::class, 'store'])
+        ->middleware(['can:'.Permission::TemplatesSubmit->value, 'throttle:30,1'])->name('templates.store');
+    Route::patch('templates/{template}', [TemplateController::class, 'update'])
+        ->middleware(['can:'.Permission::TemplatesSubmit->value, 'throttle:30,1'])->name('templates.update');
+    Route::delete('templates/{template}', [TemplateController::class, 'destroy'])
+        ->middleware('can:'.Permission::TemplatesCreate->value)->name('templates.destroy');
 
     /*
     | Messaging (Phase 3): contacts, team inbox, sending, media

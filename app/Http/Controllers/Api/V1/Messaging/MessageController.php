@@ -92,10 +92,18 @@ final class MessageController extends Controller
             'content.emoji' => ['required_if:type,reaction', 'nullable', 'string', 'max:16'],
             'content.preview_url' => ['nullable', 'boolean'],
             'content.filename' => ['nullable', 'string', 'max:240'],
+            'content.voice' => ['nullable', 'boolean'],
             'template' => ['required_if:type,template', 'nullable', 'array'],
             'template.name' => ['required_if:type,template', 'nullable', 'string', 'max:512'],
             'template.language' => ['required_if:type,template', 'nullable', 'string', 'max:15'],
             'template.components' => ['nullable', 'array'],
+            'template.variables' => ['nullable', 'array'],
+            'template.variables.header' => ['nullable', 'array', 'max:1'],
+            'template.variables.header.*' => ['nullable', 'string', 'max:60'],
+            'template.variables.body' => ['nullable', 'array', 'max:50'],
+            'template.variables.body.*' => ['nullable', 'string', 'max:1024'],
+            'template.variables.buttons' => ['nullable', 'array', 'max:10'],
+            'template.variables.buttons.*' => ['nullable', 'string', 'max:2000'],
         ]);
     }
 

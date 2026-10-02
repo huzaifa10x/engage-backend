@@ -262,7 +262,8 @@ final class EmbeddedSignupTest extends TestCase
         $this->assertNotNull($number?->app_sync_expires_at);
 
         Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/register'));
-        Http::assertSentCount(7); // exchange, debug, waba, subscribe, number, 2 × smb_app_data
+        // exchange, debug, subscribed-apps check, waba, subscribe, verify subscription, number, 2 × smb_app_data, template sync
+        Http::assertSentCount(10);
         $this->assertSame(2, $this->tenantContext()->bypass(fn () => CoexistenceSyncJob::query()->whereNotNull('request_id')->count()));
     }
 
@@ -288,7 +289,8 @@ final class EmbeddedSignupTest extends TestCase
             ->assertStatus(410)->assertJsonPath('error.code', 'signup_session_invalid');
 
         $this->getJson("/api/v1/whatsapp/signups/{$attempt}")->assertJsonPath('data.status', 'completed');
-        Http::assertSentCount(6); // exchanged exactly once
+        Http::assertSentCount(9); // exchanged exactly once (the second completion sends nothing)
+        $this->assertCount(1, Http::recorded(fn (Request $r) => str_contains($r->url(), '/oauth/access_token')));
     }
 
     public function test_permanent_registration_failure_frees_the_plan_slot(): void

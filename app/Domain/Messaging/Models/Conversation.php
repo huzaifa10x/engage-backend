@@ -28,6 +28,7 @@ use Illuminate\Support\Carbon;
  * @property ?Carbon $last_message_at
  * @property ?Carbon $last_inbound_at
  * @property ?Carbon $window_expires_at
+ * @property ?Carbon $closed_at
  * @property ?Contact $contact
  * @property ?PhoneNumber $phoneNumber
  */

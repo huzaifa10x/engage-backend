@@ -11,6 +11,7 @@ use App\Domain\Webhooks\Handlers\ContactUpdatesHandler;
 use App\Domain\Webhooks\Handlers\MessageEchoesHandler;
 use App\Domain\Webhooks\Handlers\MessagesHandler;
 use App\Domain\Webhooks\Handlers\PhoneNumberHealthHandler;
+use App\Domain\Webhooks\Handlers\TemplateUpdatesHandler;
 use App\Domain\Webhooks\Handlers\WabaCapabilityHandler;
 use App\Domain\Webhooks\WebhookProcessor;
 use App\Infrastructure\Meta\Fake\FakeMeta;
@@ -43,6 +44,7 @@ final class WhatsAppServiceProvider extends ServiceProvider
             $app->make(MessagesHandler::class),
             $app->make(MessageEchoesHandler::class),
             $app->make(ContactUpdatesHandler::class),
+            $app->make(TemplateUpdatesHandler::class),
         ]));
     }
 

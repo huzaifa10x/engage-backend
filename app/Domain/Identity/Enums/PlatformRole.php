@@ -27,7 +27,7 @@ enum PlatformRole: string
     {
         return match ($this) {
             self::SuperAdmin => AdminAbility::cases(),
-            self::Operations => array_values(array_filter(AdminAbility::cases(), fn ($a) => $a !== AdminAbility::TeamManage)),
+            self::Operations => collect(AdminAbility::cases())->reject(fn (AdminAbility $a) => $a === AdminAbility::TeamManage)->values()->all(),
             self::Support => [AdminAbility::CompaniesView, AdminAbility::Impersonate, AdminAbility::UsersView, AdminAbility::AuditView, AdminAbility::SystemView],
             self::Finance => [AdminAbility::CompaniesView, AdminAbility::BillingView, AdminAbility::AuditView],
         };

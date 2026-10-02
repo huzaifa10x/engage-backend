@@ -63,7 +63,7 @@ final class CompanyController extends Controller
                 'name' => $t->name,
                 'slug' => $t->slug,
                 'status' => $t->status->value,
-                'plan' => $t->liveSubscription?->planVersion?->plan?->name ?? 'Free',
+                'plan' => $t->liveSubscription->planVersion->plan->name ?? 'Free',
                 'subscription_status' => $t->liveSubscription?->status->value,
                 'members' => $t->getAttribute('memberships_count'),
                 'created_at' => $t->created_at?->toIso8601String(),
@@ -110,7 +110,7 @@ final class CompanyController extends Controller
                 'label' => $key->label(),
                 'type' => $key->type()->value,
                 'unit' => $key->unit(),
-                'plan' => ['enabled' => (bool) $plan?->enabled, 'limit' => $plan?->limit_value, 'config' => (object) ($plan?->config ?? [])],
+                'plan' => ['enabled' => (bool) $plan?->enabled, 'limit' => $plan?->limit_value, 'config' => (object) ($plan->config ?? [])],
                 'override' => $override ? [
                     'enabled' => $override->enabled,
                     'limit' => $override->limit_value,

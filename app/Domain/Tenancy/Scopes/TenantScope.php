@@ -13,6 +13,8 @@ use Illuminate\Database\Eloquent\Scope;
 /**
  * Fail-closed tenant filter. A tenant-owned model queried with no active tenant (and outside an
  * explicit bypass) throws instead of silently returning every tenant's rows.
+ *
+ * @implements Scope<Model>
  */
 final class TenantScope implements Scope
 {

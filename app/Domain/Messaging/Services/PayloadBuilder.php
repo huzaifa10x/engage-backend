@@ -29,12 +29,13 @@ final class PayloadBuilder
             'text' => ['body' => (string) $message->body, 'preview_url' => (bool) ($content['preview_url'] ?? true)],
             'image', 'video' => array_filter(['id' => $metaMediaId, 'caption' => $message->body]),
             'document' => array_filter(['id' => $metaMediaId, 'caption' => $message->body, 'filename' => $content['filename'] ?? $message->media?->filename]),
-            'audio', 'sticker' => ['id' => $metaMediaId],
+            'audio' => array_filter(['id' => $metaMediaId, 'voice' => ($content['voice'] ?? false) === true ? true : null]),
+            'sticker' => ['id' => $metaMediaId],
             'reaction' => ['message_id' => (string) ($content['message_id'] ?? ''), 'emoji' => (string) ($content['emoji'] ?? '')],
             'template' => array_filter([
                 'name' => $message->template['name'] ?? null,
                 'language' => ['code' => $message->template['language'] ?? 'en'],
-                'components' => $message->template['components'] ?? null,
+                'components' => $this->templateComponents($message, $metaMediaId) ?: null,
             ]),
             'location' => $content,
             'interactive' => $content,
@@ -46,5 +47,24 @@ final class PayloadBuilder
         }
 
         return $payload;
+    }
+
+    /**
+     * Stored components, plus the media header (image / video / document) once the file has a
+     * Meta media ID for the sending number.
+     *
+     * @return list<mixed>
+     */
+    private function templateComponents(Message $message, ?string $metaMediaId): array
+    {
+        $components = array_values((array) ($message->template['components'] ?? []));
+        $type = $message->template['header_media'] ?? null;
+
+        if (is_string($type) && $metaMediaId !== null) {
+            $object = array_filter(['id' => $metaMediaId, 'filename' => $type === 'document' ? $message->media?->filename : null]);
+            array_unshift($components, ['type' => 'header', 'parameters' => [['type' => $type, $type => $object]]]);
+        }
+
+        return $components;
     }
 }

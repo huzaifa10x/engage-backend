@@ -164,7 +164,11 @@ final class MessageRecorder
         MessageStored::dispatch($original, false);
     }
 
-    /** History messages: `from` is the business number when the business sent it. @param array<string, mixed> $raw */
+    /**
+     * History messages: `from` is the business number when the business sent it.
+     *
+     * @param  array<string, mixed>  $raw
+     */
     private function isFromBusiness(array $raw, PhoneNumber $number): bool
     {
         $from = preg_replace('/\D+/', '', (string) ($raw['from'] ?? ''));

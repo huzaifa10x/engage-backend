@@ -55,7 +55,7 @@ final class MeController extends Controller
             'user' => UserResource::make($user),
             'memberships' => MembershipResource::collection($memberships),
             'active_tenant_id' => $active?->tenant_id,
-            'permissions' => $active?->role?->permissions ?? [],
+            'permissions' => $active->role->permissions ?? [],
             'impersonation' => $session === null ? null : [
                 'admin_name' => $session->admin?->name,
                 'reason' => $session->reason,

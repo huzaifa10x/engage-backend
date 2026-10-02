@@ -36,6 +36,17 @@ final class MessagingException extends DomainException
         return new self('The attachment is not available.', ErrorCode::ValidationFailed, 422);
     }
 
+    /** The template is missing, not approved, or its variables / header do not match. */
+    public static function templateUnavailable(string $message): self
+    {
+        return new self($message, ErrorCode::TemplateUnavailable, 422);
+    }
+
+    public static function mediaMismatch(string $expected): self
+    {
+        return new self("This attachment cannot be sent as {$expected}. Choose a supported {$expected} file.", ErrorCode::ValidationFailed, 422);
+    }
+
     public static function noRecipient(): self
     {
         return new self('This contact has no WhatsApp phone number or user ID to message.', ErrorCode::ValidationFailed, 422);

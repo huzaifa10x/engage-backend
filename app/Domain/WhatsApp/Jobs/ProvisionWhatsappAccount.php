@@ -7,6 +7,7 @@ namespace App\Domain\WhatsApp\Jobs;
 use App\Application\WhatsApp\PhoneNumberSync;
 use App\Application\WhatsApp\WhatsappCredentials;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Templates\Jobs\SyncMessageTemplates;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
@@ -23,6 +24,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
@@ -125,6 +127,15 @@ final class ProvisionWhatsappAccount implements ShouldQueue
         }
 
         $attempt->forceFill(['status' => SignupStatus::Completed, 'finished_at' => now()])->save();
+
+        // Templates that already exist on the account become available straight away. Never
+        // allowed to affect onboarding: the scheduled sync picks them up otherwise.
+        try {
+            SyncMessageTemplates::dispatch($waba->id);
+        } catch (Throwable $e) {
+            Log::warning('Could not start the template sync after onboarding.', ['waba_id' => $waba->waba_id, 'error' => $e->getMessage()]);
+        }
+
         $audit->record('whatsapp.number_connected', $number ?? $waba, after: array_filter([
             'waba_id' => $waba->waba_id,
             'phone_number_id' => $number?->phone_number_id,

@@ -258,6 +258,91 @@ final class GraphClient
         return $response->body();
     }
 
+    // ── Message templates ──────────────────────────────────────────────────────────────────
+
+    public const TEMPLATE_FIELDS = ['id', 'name', 'language', 'status', 'category', 'components', 'quality_score', 'rejected_reason', 'parameter_format'];
+
+    /**
+     * GET /<WABA_ID>/message_templates — every template of the WABA (all pages).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function listTemplates(string $wabaId, string $token): array
+    {
+        $templates = [];
+        $query = ['fields' => implode(',', self::TEMPLATE_FIELDS), 'limit' => 100];
+        $minimal = false;
+
+        // Bounded: 100 pages × 100 = far above Meta's per-WABA template limit.
+        for ($page = 0; $page < 100; $page++) {
+            try {
+                $body = $this->send('GET', "{$wabaId}/message_templates", $token, $query);
+            } catch (MetaApiException $e) {
+                if (! $e->isUnknownField() || $minimal) {
+                    throw $e;
+                }
+                // An older Graph version without quality_score / parameter_format: ask for less.
+                $minimal = true;
+                $query['fields'] = 'id,name,language,status,category,components';
+
+                continue;
+            }
+
+            foreach ((array) ($body['data'] ?? []) as $row) {
+                if (is_array($row) && isset($row['name'])) {
+                    $templates[] = $row;
+                }
+            }
+
+            $after = $body['paging']['cursors']['after'] ?? null;
+            if (! isset($body['paging']['next']) || ! is_string($after) || $after === '') {
+                break;
+            }
+            $query['after'] = $after;
+        }
+
+        return $templates;
+    }
+
+    /**
+     * POST /<WABA_ID>/message_templates — create and submit a template for review.
+     *
+     * @param  array<string, mixed>  $template  name, language, category, components
+     * @return array{id: string, status: ?string, category: ?string}
+     */
+    public function createTemplate(string $wabaId, array $template, string $token): array
+    {
+        $body = $this->send('POST', "{$wabaId}/message_templates", $token, $template);
+
+        if (! isset($body['id'])) {
+            throw new MetaApiException('Meta accepted the template but returned no template ID.', 200);
+        }
+
+        return [
+            'id' => (string) $body['id'],
+            'status' => isset($body['status']) ? (string) $body['status'] : null,
+            'category' => isset($body['category']) ? (string) $body['category'] : null,
+        ];
+    }
+
+    /**
+     * POST /<TEMPLATE_ID> — edit a template (components and/or category); it goes back to review.
+     *
+     * @param  array<string, mixed>  $changes
+     */
+    public function updateTemplate(string $templateId, array $changes, string $token): bool
+    {
+        return (bool) ($this->send('POST', $templateId, $token, $changes)['success'] ?? false);
+    }
+
+    /** DELETE /<WABA_ID>/message_templates?name=…[&hsm_id=…] — hsm_id limits it to one language. */
+    public function deleteTemplate(string $wabaId, string $name, ?string $templateId, string $token): bool
+    {
+        $query = array_filter(['name' => $name, 'hsm_id' => $templateId]);
+
+        return (bool) ($this->send('DELETE', "{$wabaId}/message_templates", $token, [], $query)['success'] ?? false);
+    }
+
     // ── Reads ──────────────────────────────────────────────────────────────────────────────
 
     public const WABA_FIELDS = ['id', 'name', 'currency', 'timezone_id', 'message_template_namespace', 'account_review_status', 'owner_business_info', 'health_status'];
@@ -317,11 +402,15 @@ final class GraphClient
 
     /**
      * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $query  extra query-string parameters (DELETE filters)
      * @return array<string, mixed>
      */
-    private function send(string $method, string $path, ?string $token, array $data = []): array
+    private function send(string $method, string $path, ?string $token, array $data = [], array $query = []): array
     {
         $request = $this->request($token);
+        if ($query !== []) {
+            $request = $request->withQueryParameters($query);
+        }
         $url = "{$this->version}/{$path}";
 
         try {

@@ -14,6 +14,7 @@ use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\ConversationTracker;
+use App\Domain\Templates\Services\TemplateMessage;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -28,7 +29,9 @@ final class SendMessage
 {
     private const FREE_FORM = ['text', 'image', 'video', 'audio', 'document', 'sticker', 'reaction', 'location', 'interactive'];
 
-    public function __construct(private readonly ConversationTracker $conversations) {}
+    private const MEDIA_TYPES = ['image', 'video', 'audio', 'document', 'sticker'];
+
+    public function __construct(private readonly ConversationTracker $conversations, private readonly TemplateMessage $templates) {}
 
     /**
      * @param  array{type: string, body?: ?string, media_id?: ?string, template?: ?array<string, mixed>, reply_to?: ?string, content?: ?array<string, mixed>}  $data
@@ -64,6 +67,25 @@ final class SendMessage
                 throw MessagingException::mediaNotReady();
             }
         }
+        if (in_array($data['type'], self::MEDIA_TYPES, true)) {
+            // The file decides the message type (an .mp3 is audio, a .pdf a document), never the client.
+            if ($media === null) {
+                throw MessagingException::mediaNotReady();
+            }
+            if (Media::whatsappTypeFor((string) $media->mime_type) !== $data['type']) {
+                throw MessagingException::mediaMismatch($data['type'] === 'image' ? 'an image' : 'a '.$data['type']);
+            }
+        }
+
+        // Templates: must be approved on this number's WhatsApp account, with matching variables.
+        if ($data['type'] === 'template') {
+            $prepared = $this->templates->prepare($number, (array) ($data['template'] ?? []), $media);
+            $data['template'] = $prepared['template'];
+            $data['body'] = $prepared['body'];
+            if (! isset($prepared['template']['header_media'])) {
+                $media = null; // an attachment is only meaningful for a media header
+            }
+        }
 
         $message = DB::transaction(function () use ($conversation, $number, $contact, $data, $origin, $sender, $idempotencyKey, $media) {
             $content = (array) ($data['content'] ?? []);
@@ -72,6 +94,10 @@ final class SendMessage
             }
             if ($media !== null && $data['type'] === 'document') {
                 $content['filename'] = $content['filename'] ?? $media->filename;
+            }
+            // Voice notes (push-to-talk bubble) must be OGG/Opus; anything else is a plain audio file.
+            if ($data['type'] === 'audio') {
+                $content['voice'] = ($content['voice'] ?? false) === true && $media?->mime_type === 'audio/ogg';
             }
 
             $message = Message::query()->create([
@@ -106,7 +132,11 @@ final class SendMessage
         return $message;
     }
 
-    /** Start (or continue) a thread with a contact from a given number — typically a template. */
+    /**
+     * Start (or continue) a thread with a contact from a given number — typically a template.
+     *
+     * @param  array{type: string, body?: ?string, media_id?: ?string, template?: ?array<string, mixed>, reply_to?: ?string, content?: ?array<string, mixed>}  $data
+     */
     public function toContact(PhoneNumber $number, Contact $contact, array $data, MessageOrigin $origin, ?TenantMembership $sender = null, ?string $idempotencyKey = null): Message
     {
         return $this->toConversation($this->conversations->forContact($number, $contact), $data, $origin, $sender, $idempotencyKey);

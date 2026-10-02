@@ -24,11 +24,20 @@ final class MediaController extends Controller
     {
         $request->validate(['file' => ['required', 'file', 'max:'.(100 * 1024)]]);
         $file = $request->file('file');
-        $mime = (string) $file->getMimeType();
+        if (! $file->isValid()) {
+            throw ValidationException::withMessages(['file' => 'The file could not be uploaded. It may be larger than the server allows.']);
+        }
+        $mime = Media::canonicalMime((string) $file->getMimeType(), $file->getClientMimeType(), $file->getClientOriginalExtension());
         $type = Media::whatsappTypeFor($mime);
 
         if ($type === null) {
-            throw ValidationException::withMessages(['file' => "WhatsApp does not support {$mime} files."]);
+            throw ValidationException::withMessages(['file' => match (true) {
+                str_contains($mime, 'webm') => 'WhatsApp does not accept WebM recordings. Send audio as OGG (Opus), MP3, M4A, AAC or AMR, and video as MP4.',
+                str_starts_with($mime, 'audio/') => "WhatsApp does not accept {$mime} audio. Use OGG (Opus), MP3, M4A, AAC or AMR.",
+                str_starts_with($mime, 'video/') => "WhatsApp does not accept {$mime} video. Use MP4 (H.264 video with AAC audio) or 3GP.",
+                str_starts_with($mime, 'image/') => "WhatsApp does not accept {$mime} images. Use JPEG or PNG (WebP for stickers).",
+                default => "WhatsApp does not accept {$mime} files. Send a PDF, Word, Excel, PowerPoint or text document instead.",
+            }]);
         }
         $max = (int) config("engage.messaging.media_limits.{$type}.max");
         if ($file->getSize() > $max) {

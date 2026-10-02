@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\Usage\MessageTemplatesCounter;
 use App\Domain\Plans\Usage\TeamSeatsCounter;
 use App\Domain\Plans\Usage\UsageCounterRegistry;
 use App\Domain\Plans\Usage\WhatsappNumbersCounter;
@@ -39,6 +40,7 @@ final class TenancyServiceProvider extends ServiceProvider
         $this->app->singleton(UsageCounterRegistry::class, fn ($app) => new UsageCounterRegistry([
             $app->make(TeamSeatsCounter::class),
             $app->make(WhatsappNumbersCounter::class),
+            $app->make(MessageTemplatesCounter::class),
         ]));
 
         $this->app->singleton(EntitlementService::class);

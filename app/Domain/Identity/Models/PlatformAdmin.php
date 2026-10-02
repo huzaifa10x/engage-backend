@@ -55,6 +55,10 @@ class PlatformAdmin extends Authenticatable
         return Attribute::make(set: fn (string $value) => mb_strtolower(trim($value)));
     }
 
+    /**
+     * @param  iterable<mixed>|\BackedEnum|string  $abilities
+     * @param  array<mixed>|mixed  $arguments
+     */
     public function can($abilities, $arguments = []): bool
     {
         if ($abilities instanceof AdminAbility) {

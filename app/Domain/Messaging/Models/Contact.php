@@ -68,7 +68,11 @@ class Contact extends Model
         return $this->consent_state === ConsentState::OptedOut;
     }
 
-    /** Cloud API addressing: phone takes precedence; BSUID when the phone is unknown. */
+    /**
+     * Cloud API addressing: phone takes precedence; BSUID when the phone is unknown.
+     *
+     * @return array<string, string>
+     */
     public function recipient(): array
     {
         return $this->wa_id !== null ? ['to' => $this->wa_id] : ['recipient' => (string) $this->bsuid];

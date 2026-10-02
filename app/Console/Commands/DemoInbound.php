@@ -24,7 +24,7 @@ use Illuminate\Support\Str;
 final class DemoInbound extends Command
 {
     protected $signature = 'engage:demo:inbound
-        {text=Hi! Is this still available? : Message text}
+        {text=Hi, is this still available : Message text}
         {--from=971501112233 : Customer phone (digits)}
         {--name=Test Customer : Customer profile name}
         {--workspace=owner@engage.test : Email of a user whose active workspace receives it}';

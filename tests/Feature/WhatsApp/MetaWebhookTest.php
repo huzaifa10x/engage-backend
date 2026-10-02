@@ -110,10 +110,10 @@ final class MetaWebhookTest extends TestCase
     {
         $this->connectNumber($this->createTenant());
 
-        $this->postWebhook($this->webhookBody('message_template_status_update', ['event' => 'APPROVED', 'message_template_name' => 'welcome']))->assertOk();
+        $this->postWebhook($this->webhookBody('calls', ['calls' => [['id' => 'wacid.1', 'event' => 'connect']]]))->assertOk();
         $this->postWebhook($this->webhookBody('some_future_field', ['x' => 1]))->assertOk();
 
-        $this->assertSame('deferred', $this->logRows('message_template_status_update')->first()->process_status);
+        $this->assertSame('deferred', $this->logRows('calls')->first()->process_status);
         $this->assertSame('ignored', $this->logRows('some_future_field')->first()->process_status);
     }
 

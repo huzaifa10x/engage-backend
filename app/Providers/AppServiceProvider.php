@@ -14,6 +14,7 @@ use App\Domain\Messaging\Models\Message;
 use App\Domain\Plans\Models\Plan;
 use App\Domain\Plans\Models\PlanVersion;
 use App\Domain\Platform\Models\ImpersonationSession;
+use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\Models\Invitation;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -56,6 +57,7 @@ class AppServiceProvider extends ServiceProvider
             'contact' => Contact::class,
             'conversation' => Conversation::class,
             'message' => Message::class,
+            'message_template' => MessageTemplate::class,
         ]);
 
         // Strict mode minus preventAccessingMissingAttributes: freshly created models only hold the

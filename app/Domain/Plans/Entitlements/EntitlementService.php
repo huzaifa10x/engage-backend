@@ -124,7 +124,7 @@ final class EntitlementService
             ->latest('created_at')
             ->first();
 
-        $version = $subscription?->planVersion ?? $this->fallbackVersion();
+        $version = $subscription->planVersion ?? $this->fallbackVersion();
 
         $planFeatures = PlanVersionFeature::query()
             ->where('plan_version_id', $version->getKey())
@@ -151,7 +151,7 @@ final class EntitlementService
 
             $enabled = $row !== null && $row->enabled;
             $limit = $row?->limit_value;
-            $config = $row?->config ?? [];
+            $config = $row->config ?? [];
 
             if ($override !== null) {
                 $enabled = $override->enabled ?? $enabled;

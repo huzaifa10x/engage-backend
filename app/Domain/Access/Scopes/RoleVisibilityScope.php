@@ -9,7 +9,11 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Scope;
 
-/** System roles are visible to everyone; custom roles only inside their own tenant. */
+/**
+ * System roles are visible to everyone; custom roles only inside their own tenant.
+ *
+ * @implements Scope<Model>
+ */
 final class RoleVisibilityScope implements Scope
 {
     public function apply(Builder $builder, Model $model): void
