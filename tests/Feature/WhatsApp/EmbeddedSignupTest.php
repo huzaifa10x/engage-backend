@@ -105,6 +105,59 @@ final class EmbeddedSignupTest extends TestCase
         $this->assertFalse($this->tenantContext()->bypass(fn () => WabaAccount::query()->exists()));
     }
 
+    public function test_number_subscribed_to_another_app_is_blocked_with_the_app_name(): void
+    {
+        $this->fakeGraph(subscribedApps: [['id' => '777000111', 'name' => 'AiSensy', 'link' => 'https://www.facebook.com/games/?app_id=777000111']]);
+        $this->actingAsMember($this->owner());
+
+        $attempt = $this->postJson('/api/v1/whatsapp/signups')->json('data.attempt.id');
+
+        $response = $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())
+            ->assertStatus(409)
+            ->assertJsonPath('error.code', 'number_subscribed_elsewhere')
+            ->assertJsonPath('error.details.apps.0.name', 'AiSensy');
+        $this->assertStringContainsString('AiSensy', (string) $response->json('error.message'));
+
+        // Nothing was stored, subscribed or registered.
+        $this->assertFalse($this->tenantContext()->bypass(fn () => WabaAccount::query()->exists()));
+        $this->assertFalse($this->tenantContext()->bypass(fn () => PhoneNumber::query()->exists()));
+        $this->assertFalse($this->tenantContext()->bypass(fn () => MetaAccessToken::query()->exists()));
+        Http::assertNotSent(fn (Request $r) => $r->method() === 'POST' && str_contains($r->url(), '/subscribed_apps'));
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/register'));
+
+        $this->getJson("/api/v1/whatsapp/signups/{$attempt}")->assertOk()
+            ->assertJsonPath('data.status', 'failed')
+            ->assertJsonPath('data.error.code', 'number_subscribed_elsewhere')
+            ->assertJsonPath('data.error.apps.0.name', 'AiSensy');
+        $this->getJson('/api/v1/phone-numbers')->assertOk()->assertJsonCount(0, 'data');
+    }
+
+    public function test_our_own_app_already_subscribed_does_not_block_onboarding(): void
+    {
+        // Re-running signup for a WABA our app is already subscribed to must keep working.
+        $this->fakeGraph(subscribedApps: [['id' => '1234567890', 'name' => '10X Engage']]);
+        $this->actingAsMember($this->owner());
+
+        $attempt = $this->postJson('/api/v1/whatsapp/signups')->json('data.attempt.id');
+
+        $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())
+            ->assertOk()
+            ->assertJsonPath('data.status', 'completed')
+            ->assertJsonPath('data.steps.check_other_apps.state', 'done');
+    }
+
+    public function test_allow_listed_apps_do_not_block_onboarding(): void
+    {
+        config(['engage.meta.allowed_other_app_ids' => ['777000111']]);
+        $this->fakeGraph(subscribedApps: [['id' => '777000111', 'name' => 'Our second app']]);
+        $this->actingAsMember($this->owner());
+
+        $attempt = $this->postJson('/api/v1/whatsapp/signups')->json('data.attempt.id');
+
+        $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())
+            ->assertOk()->assertJsonPath('data.status', 'completed');
+    }
+
     public function test_a_waba_cannot_join_a_second_workspace(): void
     {
         $this->fakeGraph();

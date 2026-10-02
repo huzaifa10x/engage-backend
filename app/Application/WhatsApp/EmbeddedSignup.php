@@ -24,6 +24,7 @@ use App\Domain\WhatsApp\Models\WabaAccount;
 use App\Infrastructure\Meta\GraphClient;
 use App\Infrastructure\Meta\MetaApiException;
 use App\Infrastructure\Secrets\SecretStore;
+use App\Support\Api\ErrorCode;
 use App\Support\Exceptions\DomainException;
 use Illuminate\Support\Facades\DB;
 
@@ -155,7 +156,11 @@ final class EmbeddedSignup
             throw WhatsappException::signupInvalid('The WhatsApp account you selected was not shared with 10X Engage. Start again and select it in the popup.');
         }
 
-        // 3. Persist token, WABA and number atomically (plan limit enforced under a lock).
+        // 3. The WABA must not still be subscribed to another provider's app. Checked server-side
+        //    BEFORE anything is stored or subscribed, so a blocked number is never "onboarded".
+        $this->assertNotSubscribedElsewhere($attempt, $data['waba_id'], $token);
+
+        // 4. Persist token, WABA and number atomically (plan limit enforced under a lock).
         //    Failures are recorded AFTER the rollback, otherwise the rollback would undo them.
         try {
             $waba = $this->entitlements->withinLimit($tenant, FeatureKey::WhatsappNumbers, $this->newNumberSlots($phoneNumberId),
@@ -258,6 +263,45 @@ final class EmbeddedSignup
         }
 
         return $waba;
+    }
+
+    private function assertNotSubscribedElsewhere(EmbeddedSignupAttempt $attempt, string $wabaId, string $token): void
+    {
+        if (! config('engage.meta.block_other_subscribed_apps', true)) {
+            return;
+        }
+
+        try {
+            $apps = $this->graph->listSubscribedApps($wabaId, $token);
+        } catch (MetaApiException $e) {
+            // Fail closed: without an answer from Meta we cannot know the number is free.
+            $attempt->markStep('check_other_apps', 'failed', $e->getMessage());
+            $attempt->fail($e->getMessage(), (string) ($e->metaCode ?? $e->httpStatus));
+            throw WhatsappException::meta('We could not check whether this number is already connected to another application. Please try again.', $e->metaCode, $e->fbtraceId);
+        }
+
+        $ours = array_merge([$this->graph->appId()], array_map('strval', (array) config('engage.meta.allowed_other_app_ids', [])));
+        $others = array_values(array_filter($apps, fn (array $app) => ! in_array($app['id'], $ours, true)));
+
+        if ($others === []) {
+            $attempt->markStep('check_other_apps', 'done');
+
+            return;
+        }
+
+        $message = WhatsappException::subscribedElsewhereMessage($others);
+        $attempt->markStep('check_other_apps', 'failed', $message);
+        $attempt->forceFill(['session_payload' => ($attempt->getAttribute('session_payload') ?? []) + ['conflicting_apps' => $others]]);
+        $attempt->fail($message, ErrorCode::NumberSubscribedElsewhere->value);
+
+        $this->audit->record('whatsapp.signup_blocked', $attempt, meta: [
+            'reason' => ErrorCode::NumberSubscribedElsewhere->value,
+            'waba_id' => $wabaId,
+            'phone_number_id' => $attempt->phone_number_id,
+            'apps' => $others,
+        ]);
+
+        throw WhatsappException::subscribedToAnotherApp($others);
     }
 
     /** @param array<string, mixed> $debug */

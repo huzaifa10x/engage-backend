@@ -13,6 +13,7 @@ use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use App\Infrastructure\Meta\GraphClient;
 use App\Infrastructure\Secrets\SecretStore;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\TestResponse;
 
@@ -53,11 +54,20 @@ trait InteractsWithWhatsapp
         });
     }
 
-    /** Fakes the Graph endpoints of Embedded Signup onboarding (Tech Provider path). */
-    protected function fakeGraph(string $wabaId = '102290129340398', string $phoneNumberId = '106540352242922', ?array $grantedWabas = null): void
+    /**
+     * Fakes the Graph endpoints of Embedded Signup onboarding (Tech Provider path).
+     *
+     * @param  list<string>|null  $grantedWabas
+     * @param  list<array{id: string, name?: string, link?: string}>  $subscribedApps  apps already subscribed to the WABA
+     */
+    protected function fakeGraph(string $wabaId = '102290129340398', string $phoneNumberId = '106540352242922', ?array $grantedWabas = null, array $subscribedApps = []): void
     {
         $v = 'graph.facebook.com/v25.0';
         $granted = $grantedWabas ?? [$wabaId];
+
+        // GET lists the apps subscribed to the WABA; POST / DELETE (un)subscribe ours.
+        $listed = ['data' => array_map(fn (array $app) => ['whatsapp_business_api_data' => $app], $subscribedApps)];
+        $subscriptions = fn (Request $request) => Http::response($request->method() === 'GET' ? $listed : ['success' => true]);
 
         Http::preventStrayRequests();
         Http::fake([
@@ -70,7 +80,7 @@ trait InteractsWithWhatsapp
                     ['scope' => 'whatsapp_business_messaging', 'target_ids' => $granted],
                 ],
             ]]),
-            "{$v}/{$wabaId}/subscribed_apps*" => Http::response(['success' => true]),
+            "{$v}/{$wabaId}/subscribed_apps*" => $subscriptions,
             "{$v}/{$phoneNumberId}/register*" => Http::response(['success' => true]),
             "{$v}/{$phoneNumberId}/smb_app_data*" => Http::response(['messaging_product' => 'whatsapp', 'request_id' => 'req-'.uniqid()]),
             "{$v}/{$phoneNumberId}*" => Http::response([

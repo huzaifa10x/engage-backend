@@ -52,6 +52,11 @@ return [
         // Coexistence (WhatsApp Business app numbers) stays off until the messaging pipeline can
         // ingest history / smb_message_echoes (the 24-hour sync window cannot be retried).
         'coexistence_enabled' => (bool) env('META_COEXISTENCE_ENABLED', false),
+        // Onboarding stops when the WABA is still subscribed to another provider's app
+        // (GET /<WABA_ID>/subscribed_apps). Comma-separated Meta app IDs listed in
+        // META_ALLOWED_OTHER_APP_IDS are tolerated (e.g. a second app of your own).
+        'block_other_subscribed_apps' => (bool) env('META_BLOCK_OTHER_SUBSCRIBED_APPS', true),
+        'allowed_other_app_ids' => array_values(array_filter(array_map('trim', explode(',', (string) env('META_ALLOWED_OTHER_APP_IDS', ''))))),
         // LOCAL ONLY: answer Graph calls in-process (sending works offline, no Meta account).
         // Ignored outside APP_ENV=local. See App\Infrastructure\Meta\Fake\FakeMeta.
         'fake' => (bool) env('META_FAKE', false),

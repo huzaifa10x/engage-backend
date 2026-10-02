@@ -37,6 +37,7 @@ enum ErrorCode: string
     case SignupSessionInvalid = 'signup_session_invalid';
     case MetaApiError = 'meta_api_error';
     case NumberAccessDenied = 'number_access_denied';
+    case NumberSubscribedElsewhere = 'number_subscribed_elsewhere';
 
     case WindowClosed = 'window_closed';
     case ContactOptedOut = 'contact_opted_out';

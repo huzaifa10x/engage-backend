@@ -26,6 +26,25 @@ final class WhatsappException extends DomainException
         return new self('This WhatsApp Business Account is already connected to another 10X Engage workspace.', ErrorCode::WabaAlreadyConnected, 409);
     }
 
+    /**
+     * The WABA (and so the number) is still subscribed to another provider's app.
+     *
+     * @param  list<array{id: string, name: ?string, link: ?string}>  $apps
+     */
+    public static function subscribedToAnotherApp(array $apps): self
+    {
+        return new self(self::subscribedElsewhereMessage($apps), ErrorCode::NumberSubscribedElsewhere, 409, ['apps' => $apps]);
+    }
+
+    /** @param list<array{id: string, name: ?string, link: ?string}> $apps */
+    public static function subscribedElsewhereMessage(array $apps): string
+    {
+        $names = array_values(array_filter(array_map(fn (array $app) => $app['name'], $apps)));
+        $where = $names === [] ? 'another application' : 'another application ('.implode(', ', $names).')';
+
+        return "This WhatsApp number is already registered with {$where}. Disconnect it from that application first, then connect it to 10X Engage again.";
+    }
+
     public static function signupInvalid(string $message = 'This signup session has expired. Start again from Connect WhatsApp.'): self
     {
         return new self($message, ErrorCode::SignupSessionInvalid, 410);

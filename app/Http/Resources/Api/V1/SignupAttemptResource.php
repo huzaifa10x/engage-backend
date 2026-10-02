@@ -23,7 +23,12 @@ final class SignupAttemptResource extends JsonResource
             'phone_number_id' => $this->phone_number_id,
             'waba_account_id' => $this->waba_account_id,
             'steps' => (object) ($this->steps ?? []),
-            'error' => $this->error_message ? ['code' => $this->error_code, 'message' => $this->error_message] : null,
+            'error' => $this->error_message ? [
+                'code' => $this->error_code,
+                'message' => $this->error_message,
+                // Present only when the number is still registered with another application.
+                ...array_filter(['apps' => $this->session_payload['conflicting_apps'] ?? null]),
+            ] : null,
             'created_at' => $this->created_at?->toIso8601String(),
             'finished_at' => $this->finished_at?->toIso8601String(),
         ];

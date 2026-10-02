@@ -26,6 +26,7 @@ use Illuminate\Support\Carbon;
  * @property ?string $error_code
  * @property ?string $error_message
  * @property ?array<string, mixed> $steps
+ * @property ?array<string, mixed> $session_payload
  * @property ?Carbon $finished_at
  * @property ?Carbon $created_at
  */

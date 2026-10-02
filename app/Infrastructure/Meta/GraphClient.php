@@ -90,6 +90,31 @@ final class GraphClient
         return (bool) ($this->send('POST', "{$wabaId}/subscribed_apps", $token)['success'] ?? false);
     }
 
+    /**
+     * GET /<WABA_ID>/subscribed_apps — every app currently subscribed to this WABA's webhooks.
+     *
+     * @return list<array{id: string, name: ?string, link: ?string}>
+     */
+    public function listSubscribedApps(string $wabaId, string $token): array
+    {
+        $body = $this->send('GET', "{$wabaId}/subscribed_apps", $token);
+
+        $apps = [];
+        foreach ((array) ($body['data'] ?? []) as $row) {
+            $app = is_array($row) ? ($row['whatsapp_business_api_data'] ?? null) : null;
+            if (! is_array($app) || ! isset($app['id'])) {
+                continue;
+            }
+            $apps[] = [
+                'id' => (string) $app['id'],
+                'name' => isset($app['name']) && $app['name'] !== '' ? (string) $app['name'] : null,
+                'link' => isset($app['link']) && $app['link'] !== '' ? (string) $app['link'] : null,
+            ];
+        }
+
+        return $apps;
+    }
+
     /** DELETE /<WABA_ID>/subscribed_apps */
     public function unsubscribeApp(string $wabaId, string $token): bool
     {
