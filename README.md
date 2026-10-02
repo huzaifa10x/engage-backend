@@ -1,5 +1,15 @@
 # 10X Engage — Backend
 
+## Local development (start here)
+
+```bash
+./dev setup     # once per computer
+./dev start     # every day
+```
+
+Full guide: [docs/local-development.md](docs/local-development.md) — prerequisites, demo logins, fake Meta mode.
+
+
 Multi-tenant WhatsApp Cloud API SaaS. **Laravel 13 (PHP 8.4)** modular monolith: the sole backend for
 the Next.js client (`/api/v1`), the Inertia React Super Admin (web routes, `admin` guard), and all
 workers (Horizon). PostgreSQL 17 + Valkey 8.

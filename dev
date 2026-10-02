@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#  10X Engage — local development. One command for everything; no Docker knowledge needed.
+#
+#    ./dev setup     first time on a machine (safe to re-run)
+#    ./dev start     start everything and open the app        (Ctrl+C stops the frontend only)
+#    ./dev stop      stop the backend
+#    ./dev status    what is running + addresses
+#    ./dev update    pull the latest code for both repos and apply it
+#    ./dev reset     wipe the local database and reload demo data
+#    ./dev logs      backend logs (./dev logs horizon | reverb | postgres …)
+#    ./dev inbound   simulate a customer WhatsApp message  (./dev inbound "Hello!")
+#    ./dev test      run the backend test suite
+#    ./dev artisan   run any artisan command               (./dev artisan route:list)
+#
+#  Expected layout (both repos side by side):
+#    engage/
+#      engage-backend/   ← this repo (Laravel API + Super Admin, runs in Docker)
+#      engage-web/       ← Next.js client (runs with Node on your machine)
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WEB="${ENGAGE_WEB_DIR:-$(cd "$ROOT/.." && pwd)/engage-web}"
+cd "$ROOT"
+
+# Fixed local values — identical on every machine, never used in production.
+LOCAL_REVERB_KEY="engage-local-key"
+LOCAL_REVERB_SECRET="engage-local-secret"
+
+bold() { printf '\033[1m%s\033[0m\n' "$*"; }
+step() { printf '\n\033[1;34m▸ %s\033[0m\n' "$*"; }
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+fail() { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+dc() { docker compose "$@"; }
+artisan() { dc exec -T app php artisan "$@"; }
+
+need_docker() {
+    command -v docker >/dev/null || fail "Docker is not installed. Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+    docker info >/dev/null 2>&1 || fail "Docker is installed but not running. Open Docker Desktop, wait for 'Engine running', then try again."
+    docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is missing. Update Docker Desktop."
+}
+
+need_node() {
+    command -v node >/dev/null || fail "Node.js is not installed. Install Node 22 LTS: https://nodejs.org/"
+    local major
+    major="$(node -p 'process.versions.node.split(".")[0]')"
+    [[ "$major" -ge 20 ]] || fail "Node $major is too old. Install Node 22 LTS: https://nodejs.org/"
+}
+
+has_web() { [[ -f "$WEB/package.json" ]]; }
+
+wait_for_backend() {
+    printf '  waiting for the API'
+    for _ in $(seq 1 90); do
+        if curl -fsS -o /dev/null http://localhost:8000/up 2>/dev/null; then
+            printf '\n'; ok "API is up"
+            return 0
+        fi
+        printf '.'; sleep 2
+    done
+    printf '\n'
+    dc logs --tail=40 app
+    fail "The API did not start. The logs above usually say why; ./dev logs shows more."
+}
+
+set_env() { # set_env FILE KEY VALUE — replace or append
+    if grep -q "^$2=" "$1"; then
+        sed -i.bak "s|^$2=.*|$2=$3|" "$1" && rm -f "$1.bak"
+    else
+        printf '%s=%s\n' "$2" "$3" >> "$1"
+    fi
+}
+
+backend_env() {
+    if [[ -f .env ]]; then
+        ok ".env already exists (kept as is)"
+    else
+        cp .env.example .env
+        ok "created .env from .env.example"
+    fi
+    # Local-only values. Safe to re-apply; real Meta credentials only ever live on the server.
+    set_env .env APP_ENV local
+    set_env .env APP_DEBUG true
+    set_env .env APP_URL http://localhost:8000
+    set_env .env FRONTEND_URL http://localhost:3000
+    set_env .env MAIL_MAILER smtp
+    set_env .env MAIL_HOST mailpit
+    set_env .env MAIL_PORT 1025
+    set_env .env BROADCAST_CONNECTION reverb
+    set_env .env REVERB_APP_KEY "$LOCAL_REVERB_KEY"
+    set_env .env REVERB_APP_SECRET "$LOCAL_REVERB_SECRET"
+    grep -Eq '^META_APP_ID=.+' .env || set_env .env META_APP_ID local-fake-app
+    grep -Eq '^META_APP_SECRET=.+' .env || set_env .env META_APP_SECRET local-fake-secret
+    grep -q '^META_FAKE=' .env || set_env .env META_FAKE true
+}
+
+web_env() {
+    has_web || return 0
+    local f="$WEB/.env.local"
+    [[ -f "$f" ]] || { : > "$f"; ok "created engage-web/.env.local"; }
+    set_env "$f" BACKEND_URL http://127.0.0.1:8000
+    set_env "$f" NEXT_PUBLIC_REVERB_KEY "$LOCAL_REVERB_KEY"
+    set_env "$f" NEXT_PUBLIC_REVERB_HOST localhost
+    set_env "$f" NEXT_PUBLIC_REVERB_PORT 8080
+    set_env "$f" NEXT_PUBLIC_REVERB_SCHEME http
+}
+
+summary() {
+    printf '\n'
+    bold "  10X Engage is running locally"
+    printf '\n'
+    printf '  Client portal   http://localhost:3000      owner@engage.test / Password123!\n'
+    printf '  Super Admin     http://localhost:8000/admin  admin@engage.test / Password123!  (authenticator app on first login)\n'
+    printf '  Emails          http://localhost:8025      (every email the app sends lands here)\n'
+    printf '  Queues          http://localhost:8000/horizon\n'
+    printf '  Database        localhost:54320  db engage  user engage  password engage\n'
+    printf '\n'
+    printf '  Fake Meta mode: sending messages works offline; try  ./dev inbound "Hello!"\n'
+}
+
+cmd_setup() {
+    step "Checking your computer"
+    need_docker; ok "Docker is running"
+    need_node; ok "Node $(node -v)"
+    if has_web; then ok "engage-web found at $WEB"; else warn "engage-web not found next to this repo (expected $WEB) — backend only"; fi
+
+    step "Configuring"
+    backend_env
+    web_env
+
+    step "Building the backend (first time takes a few minutes)"
+    dc build app
+    dc up -d --wait postgres valkey
+    ok "database ready"
+
+    step "Installing backend packages"
+    dc run --rm --no-deps app composer install --no-interaction --no-progress
+    grep -Eq '^APP_KEY=.+' .env || { dc run --rm --no-deps app php artisan key:generate --force; ok "app key generated"; }
+
+    step "Preparing the database (demo data)"
+    dc run --rm --no-deps app php artisan migrate --force
+    dc run --rm --no-deps app php artisan db:seed --force
+    ok "migrated and seeded"
+
+    step "Starting the backend"
+    dc up -d
+    wait_for_backend
+
+    if has_web; then
+        step "Installing frontend packages"
+        (cd "$WEB" && npm ci --no-audit --no-fund)
+        ok "engage-web ready"
+    fi
+
+    printf '\n'; bold "✅ Setup complete. Next time just run:  ./dev start"
+    summary
+}
+
+cmd_start() {
+    need_docker
+    [[ -f .env && -d vendor ]] || fail "Not set up yet on this machine. Run:  ./dev setup"
+    step "Starting the backend"
+    dc up -d
+    wait_for_backend
+    summary
+    if has_web && [[ "${1:-}" != "--backend" ]]; then
+        need_node
+        [[ -d "$WEB/node_modules" ]] || (cd "$WEB" && npm ci --no-audit --no-fund)
+        step "Starting the frontend (Ctrl+C to stop it; the backend keeps running — ./dev stop)"
+        cd "$WEB" && exec npm run dev
+    fi
+}
+
+cmd_stop() {
+    need_docker
+    step "Stopping the backend"
+    dc stop
+    ok "stopped (your data is kept)"
+}
+
+cmd_status() {
+    need_docker
+    dc ps --format 'table {{.Service}}\t{{.Status}}'
+    if curl -fsS -o /dev/null http://localhost:8000/up 2>/dev/null; then ok "API answering on http://localhost:8000"; else warn "API not answering — ./dev start"; fi
+    if curl -fsS -o /dev/null http://localhost:3000 2>/dev/null; then ok "Client portal on http://localhost:3000"; else warn "Frontend not running — ./dev start"; fi
+}
+
+cmd_update() {
+    need_docker
+    step "Pulling the latest code"
+    git pull --ff-only
+    if has_web; then (cd "$WEB" && git pull --ff-only); fi
+    backend_env >/dev/null
+    web_env
+    step "Applying it"
+    dc build app
+    dc up -d --wait postgres valkey
+    dc run --rm --no-deps app composer install --no-interaction --no-progress
+    dc run --rm --no-deps app php artisan migrate --force
+    dc run --rm --no-deps app php artisan db:seed --force
+    dc up -d --force-recreate app horizon scheduler reverb vite
+    if has_web; then (cd "$WEB" && npm ci --no-audit --no-fund); fi
+    wait_for_backend
+    bold "✅ Up to date. Run ./dev start if the frontend is not running."
+}
+
+cmd_reset() {
+    need_docker
+    printf 'This deletes ALL local data and reloads the demo data. Continue? [y/N] '
+    read -r answer
+    [[ "$answer" =~ ^[Yy]$ ]] || { echo "Cancelled."; return 0; }
+    step "Resetting the database"
+    dc up -d --wait postgres valkey
+    dc run --rm --no-deps app php artisan migrate:fresh --seed --force
+    dc exec -T valkey valkey-cli FLUSHALL >/dev/null
+    dc up -d --force-recreate app horizon
+    wait_for_backend
+    bold "✅ Fresh demo data loaded."
+    summary
+}
+
+cmd_help() {
+    sed -n '3,15p' "$0" | sed 's/^#//'
+}
+
+case "${1:-help}" in
+    setup) cmd_setup ;;
+    start) shift; cmd_start "$@" ;;
+    stop) cmd_stop ;;
+    restart) cmd_stop; shift; cmd_start "$@" ;;
+    status) cmd_status ;;
+    update) cmd_update ;;
+    reset) cmd_reset ;;
+    logs) shift; need_docker; dc logs -f --tail=100 "${@:-app}" ;;
+    inbound) shift; need_docker; artisan engage:demo:inbound "$@" ;;
+    test) shift; need_docker; dc exec -T app php artisan test "$@" ;;
+    artisan) shift; need_docker; dc exec app php artisan "$@" ;;
+    help | -h | --help) cmd_help ;;
+    *) echo "Unknown command: $1"; cmd_help; exit 1 ;;
+esac

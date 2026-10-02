@@ -13,6 +13,7 @@ use App\Domain\Webhooks\Handlers\MessagesHandler;
 use App\Domain\Webhooks\Handlers\PhoneNumberHealthHandler;
 use App\Domain\Webhooks\Handlers\WabaCapabilityHandler;
 use App\Domain\Webhooks\WebhookProcessor;
+use App\Infrastructure\Meta\Fake\FakeMeta;
 use App\Infrastructure\Meta\GraphClient;
 use App\Infrastructure\Secrets\DatabaseSecretStore;
 use App\Infrastructure\Secrets\Keyring;
@@ -43,5 +44,12 @@ final class WhatsAppServiceProvider extends ServiceProvider
             $app->make(MessageEchoesHandler::class),
             $app->make(ContactUpdatesHandler::class),
         ]));
+    }
+
+    public function boot(): void
+    {
+        if (FakeMeta::enabled()) {
+            FakeMeta::register();
+        }
     }
 }

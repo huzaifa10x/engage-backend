@@ -32,6 +32,9 @@ final class DatabaseSeeder extends Seeder
             ]);
         }
 
+        // Connected demo number, contacts and conversations for UI work (idempotent).
+        $this->call(DemoWorkspaceSeeder::class);
+
         PlatformAdmin::query()->firstOrCreate(['email' => 'admin@engage.test'], [
             'name' => 'Platform Admin',
             'password' => 'Password123!',

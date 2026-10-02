@@ -52,6 +52,9 @@ return [
         // Coexistence (WhatsApp Business app numbers) stays off until the messaging pipeline can
         // ingest history / smb_message_echoes (the 24-hour sync window cannot be retried).
         'coexistence_enabled' => (bool) env('META_COEXISTENCE_ENABLED', false),
+        // LOCAL ONLY: answer Graph calls in-process (sending works offline, no Meta account).
+        // Ignored outside APP_ENV=local. See App\Infrastructure\Meta\Fake\FakeMeta.
+        'fake' => (bool) env('META_FAKE', false),
         'timeout' => (int) env('META_HTTP_TIMEOUT', 20),
         // Coexistence history chunks can describe thousands of messages.
         'webhook_max_body_kb' => (int) env('META_WEBHOOK_MAX_BODY_KB', 8192),
