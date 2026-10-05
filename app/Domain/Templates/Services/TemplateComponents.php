@@ -13,16 +13,34 @@ use Illuminate\Validation\ValidationException;
  */
 final class TemplateComponents
 {
+    public const MEDIA_FORMATS = ['IMAGE', 'VIDEO', 'DOCUMENT'];
+
+    /** What Meta accepts as the sample of a media header, and the size limit in MB. */
+    public const MEDIA_RULES = [
+        'IMAGE' => ['mimes' => ['image/jpeg', 'image/png'], 'max_mb' => 5, 'label' => 'a JPG or PNG image up to 5 MB'],
+        'VIDEO' => ['mimes' => ['video/mp4'], 'max_mb' => 16, 'label' => 'an MP4 video up to 16 MB'],
+        'DOCUMENT' => ['mimes' => ['application/pdf'], 'max_mb' => 100, 'label' => 'a PDF document up to 100 MB'],
+    ];
+
     /**
-     * @param  array<string, mixed>  $data  header {text, example}, body, body_examples[], footer, buttons[]
+     * @param  array<string, mixed>  $data  header {format, text, example, handle}, body, body_examples[], footer, buttons[]
      * @return list<array<string, mixed>>
      */
     public function build(array $data): array
     {
         $components = [];
 
+        $format = strtoupper((string) ($data['header']['format'] ?? 'TEXT'));
         $headerText = trim((string) ($data['header']['text'] ?? ''));
-        if ($headerText !== '') {
+
+        if (in_array($format, self::MEDIA_FORMATS, true)) {
+            // The sample file was uploaded to Meta beforehand; only its handle goes in the template.
+            $handle = trim((string) ($data['header']['handle'] ?? ''));
+            if ($handle === '') {
+                throw ValidationException::withMessages(['header.media_id' => 'Attach a sample '.strtolower($format).' for the header.']);
+            }
+            $components[] = ['type' => 'HEADER', 'format' => $format, 'example' => ['header_handle' => [$handle]]];
+        } elseif ($headerText !== '') {
             $vars = MessageTemplate::placeholders($headerText);
             if (count($vars) > 1 || ($vars !== [] && $vars !== ['1'])) {
                 throw ValidationException::withMessages(['header.text' => 'The header can contain one variable only, written as {{1}}.']);

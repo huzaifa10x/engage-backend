@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Templates;
 
 use App\Application\Templates\ManageTemplates;
 use App\Application\Templates\TemplateSync;
+use App\Domain\Templates\Enums\TemplateStatus;
 use App\Domain\Templates\Exceptions\TemplateException;
 use App\Domain\Templates\Jobs\SyncMessageTemplates;
 use App\Domain\Templates\Models\MessageTemplate;
@@ -43,11 +44,17 @@ final class TemplateController extends Controller
             ->when($data['waba_account_id'] ?? null, fn ($query, string $id) => $query->whereKey($id))
             ->get();
 
+        // Templates waiting for Meta's review are re-checked often, so a decision shows up within
+        // seconds even if a webhook is missed; everything else is refreshed every couple of minutes.
+        $reviewing = MessageTemplate::query()->whereIn('waba_account_id', $accounts->modelKeys())
+            ->where('status', TemplateStatus::PENDING)->pluck('waba_account_id')->unique()->all();
+
         $synced = [];
         foreach ($accounts as $account) {
             $at = $sync->lastSyncedAt($account);
             $synced[$account->id] = $at;
-            if ($at === null || Carbon::parse($at)->lt(now()->subMinutes(10))) {
+            $maxAge = in_array($account->id, $reviewing, true) ? 20 : 120;
+            if ($at === null || Carbon::parse($at)->lt(now()->subSeconds($maxAge))) {
                 try {
                     SyncMessageTemplates::dispatch($account->id);
                 } catch (Throwable $e) {
@@ -134,6 +141,8 @@ final class TemplateController extends Controller
         return [
             'category' => ['required', Rule::in(self::CATEGORIES)],
             'header' => ['nullable', 'array'],
+            'header.format' => ['nullable', Rule::in(['TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT'])],
+            'header.media_id' => ['nullable', 'uuid'],
             'header.text' => ['nullable', 'string', 'max:60'],
             'header.example' => ['nullable', 'string', 'max:60'],
             'body' => ['required', 'string', 'max:1024'],

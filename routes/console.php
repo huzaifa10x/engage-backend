@@ -9,5 +9,5 @@ Schedule::command('engage:subscriptions:expire-trials')->everyFifteenMinutes()->
 Schedule::command('horizon:snapshot')->everyFiveMinutes();
 Schedule::command('queue:prune-failed --hours=336')->daily()->onOneServer();
 // Safety net behind the template webhooks (statuses, edits and deletions made on Meta).
-Schedule::command('engage:templates:sync')->everyFifteenMinutes()->onOneServer()->withoutOverlapping();
+Schedule::command('engage:templates:sync')->everyFiveMinutes()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:webhooks:prune')->dailyAt('02:30')->onOneServer()->withoutOverlapping();

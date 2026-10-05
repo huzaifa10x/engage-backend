@@ -6,6 +6,8 @@ namespace App\Application\Templates;
 
 use App\Application\WhatsApp\WhatsappCredentials;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Messaging\Models\Media;
+use App\Domain\Messaging\Services\MediaStorage;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Templates\Enums\TemplateStatus;
@@ -35,6 +37,7 @@ final class ManageTemplates
         private readonly EntitlementService $entitlements,
         private readonly TenantContext $context,
         private readonly AuditLogger $audit,
+        private readonly MediaStorage $storage,
     ) {}
 
     /** @param array<string, mixed> $data validated form: name, language, category, header, body, body_examples, footer, buttons */
@@ -49,6 +52,7 @@ final class ManageTemplates
             throw ValidationException::withMessages(['name' => 'A template with this name and language already exists on this WhatsApp account.']);
         }
 
+        $data = $this->withHeaderHandle($data, $token);
         $components = $this->components->build($data);
 
         return $this->entitlements->withinLimit($this->context->tenant(), FeatureKey::MessageTemplates, 1, function () use ($waba, $token, $name, $language, $data, $components) {
@@ -97,7 +101,7 @@ final class ManageTemplates
         $waba = WabaAccount::query()->findOrFail($template->waba_account_id);
         $token = $this->tokenFor($waba);
 
-        $components = $this->components->build($data);
+        $components = $this->components->build($this->withHeaderHandle($data, $token));
         $changes = ['components' => $components];
         // Meta does not allow changing the category of an approved template.
         if ($template->status !== TemplateStatus::APPROVED && ! empty($data['category'])) {
@@ -138,6 +142,47 @@ final class ManageTemplates
         $template->delete();
 
         $this->audit->record('template.deleted', $template, meta: ['name' => $template->name, 'language' => $template->language]);
+    }
+
+    /**
+     * Media header: send the attached sample file to Meta (Resumable Upload API) and put the
+     * returned handle into the form data. Text / no header: returned unchanged.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function withHeaderHandle(array $data, string $token): array
+    {
+        $format = strtoupper((string) ($data['header']['format'] ?? 'TEXT'));
+        if (! in_array($format, TemplateComponents::MEDIA_FORMATS, true)) {
+            return $data;
+        }
+
+        $rules = TemplateComponents::MEDIA_RULES[$format];
+        $mediaId = (string) ($data['header']['media_id'] ?? '');
+        /** @var ?Media $media */
+        $media = $mediaId === '' ? null : Media::query()->find($mediaId); // tenant-scoped
+        if ($media === null || $media->path === null) {
+            throw ValidationException::withMessages(['header.media_id' => 'Attach a sample '.strtolower($format).' for the header.']);
+        }
+        if (! in_array($media->mime_type, $rules['mimes'], true) || (int) $media->file_size > $rules['max_mb'] * 1024 * 1024) {
+            throw ValidationException::withMessages(['header.media_id' => "The header {$this->lower($format)} must be {$rules['label']}."]);
+        }
+
+        try {
+            $handle = $this->graph->uploadTemplateSample($this->storage->get($media), $media->filename ?? 'sample', (string) $media->mime_type, $token);
+        } catch (MetaApiException $e) {
+            throw TemplateException::meta($e, 'upload the header file for');
+        }
+
+        $data['header'] = ['format' => $format, 'handle' => $handle];
+
+        return $data;
+    }
+
+    private function lower(string $format): string
+    {
+        return strtolower($format);
     }
 
     private function tokenFor(WabaAccount $waba): string

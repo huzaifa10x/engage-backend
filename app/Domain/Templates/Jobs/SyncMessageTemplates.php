@@ -26,7 +26,7 @@ final class SyncMessageTemplates implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 3;
 
-    public int $uniqueFor = 60;
+    public int $uniqueFor = 15;
 
     public function __construct(public readonly string $wabaAccountId)
     {

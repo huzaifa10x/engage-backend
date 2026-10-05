@@ -8,13 +8,17 @@ use App\Domain\Access\SystemRole;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Templates\Events\TemplatesChanged;
 use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
 
@@ -154,6 +158,58 @@ final class TemplatesTest extends TestCase
         $this->assertStringContainsString('There is already English (US) content', (string) $response->json('error.message'));
 
         $this->assertSame(0, $this->tenantContext()->bypass(fn () => MessageTemplate::query()->count()));
+    }
+
+    public function test_a_media_header_uploads_the_sample_to_meta_and_submits_its_handle(): void
+    {
+        Storage::fake('local');
+        $this->actingAsMember($this->owner);
+        Http::fake([
+            'graph.facebook.com/v25.0/1234567890/uploads*' => Http::response(['id' => 'upload:MTphdHRhY2htZW50']),
+            'graph.facebook.com/v25.0/upload:MTphdHRhY2htZW50*' => Http::response(['h' => '4:aGVhZGVy:handle']),
+            self::LIST => Http::response(['id' => '777002', 'status' => 'PENDING', 'category' => 'MARKETING']),
+        ]);
+
+        $png = (string) base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
+        $mediaId = $this->post('/api/v1/media', ['file' => UploadedFile::fake()->createWithContent('offer.png', $png)], ['Accept' => 'application/json'])
+            ->assertCreated()->json('data.id');
+
+        $form = ['waba_account_id' => $this->number->waba_account_id, 'name' => 'summer_offer', 'language' => 'en', 'category' => 'MARKETING', 'body' => 'Our summer offer is here.'];
+
+        // A media header without a file is refused before anything is sent to Meta.
+        $this->postJson('/api/v1/templates', $form + ['header' => ['format' => 'IMAGE']])
+            ->assertStatus(422)->assertJsonPath('error.details.fields', fn (array $fields) => isset($fields['header.media_id']));
+        // ... and so is the wrong kind of file for the chosen header.
+        $this->postJson('/api/v1/templates', $form + ['header' => ['format' => 'VIDEO', 'media_id' => $mediaId]])->assertStatus(422);
+
+        $this->postJson('/api/v1/templates', $form + ['header' => ['format' => 'IMAGE', 'media_id' => $mediaId]])
+            ->assertCreated()->assertJsonPath('data.variables.header_format', 'IMAGE');
+
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/1234567890/uploads') && str_contains($r->url(), 'file_type=image%2Fpng') && str_contains($r->url(), 'file_length='.strlen($png)));
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/upload:') && $r->hasHeader('Authorization', 'OAuth EAA-existing-token') && $r->hasHeader('file_offset', '0') && $r->body() === $png);
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/message_templates')
+            && $r['components'][0] === ['type' => 'HEADER', 'format' => 'IMAGE', 'example' => ['header_handle' => ['4:aGVhZGVy:handle']]]);
+    }
+
+    public function test_template_changes_are_broadcast_to_the_workspace_in_real_time(): void
+    {
+        $this->actingAsMember($this->owner);
+        $this->fakeList([$this->node('promo_june', 'PENDING', '900002')]);
+        $this->sync();
+
+        Event::fake([TemplatesChanged::class]);
+
+        // A sync that changes nothing stays silent …
+        $this->sync();
+        Event::assertNotDispatched(TemplatesChanged::class);
+
+        // … Meta's approval webhook is announced on the workspace's private channel.
+        $this->postWebhook($this->webhookBody('message_template_status_update', [
+            'event' => 'APPROVED', 'message_template_id' => 900002, 'message_template_name' => 'promo_june', 'message_template_language' => 'en_US',
+        ]))->assertOk();
+
+        Event::assertDispatched(TemplatesChanged::class, fn (TemplatesChanged $e) => $e->status === 'APPROVED'
+            && $e->broadcastOn()[0]->name === "private-tenant.{$this->tenant->id}.templates" && $e->broadcastAs() === 'templates.changed');
     }
 
     public function test_deleting_a_template_removes_it_on_meta_first(): void

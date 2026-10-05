@@ -79,8 +79,14 @@ final class TemplateSync
             'category' => isset($node['category']) ? strtoupper((string) $node['category']) : null,
             'quality_score' => is_array($quality) ? ($quality['score'] ?? null) : (is_string($quality) ? $quality : null),
             'parameter_format' => isset($node['parameter_format']) ? strtoupper((string) $node['parameter_format']) : null,
-            'components' => is_array($node['components'] ?? null) ? array_values($node['components']) : null,
         ], fn ($value) => $value !== null));
+
+        // jsonb does not keep key order, so compare by value: an unchanged template must not be
+        // rewritten (and re-announced to clients) on every sync.
+        $components = is_array($node['components'] ?? null) ? array_values($node['components']) : null;
+        if ($components !== null && self::canonical($components) !== self::canonical($template->components ?? [])) {
+            $template->components = $components;
+        }
 
         $template->status = TemplateStatus::normalize(isset($node['status']) ? (string) $node['status'] : null);
         $reason = isset($node['rejected_reason']) ? strtoupper((string) $node['rejected_reason']) : null;
@@ -93,6 +99,19 @@ final class TemplateSync
         $template->save();
 
         return $template;
+    }
+
+    /** Key-order independent form of a JSON value. */
+    private static function canonical(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        return array_map(self::canonical(...), $value);
     }
 
     /** When this WABA's templates were last fully synced (null = never / expired). */

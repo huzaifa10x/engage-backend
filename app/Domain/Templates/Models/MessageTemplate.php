@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Templates\Models;
 
 use App\Domain\Templates\Enums\TemplateStatus;
+use App\Domain\Templates\Events\TemplatesChanged;
 use App\Domain\Tenancy\Concerns\BelongsToTenant;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -45,6 +46,22 @@ class MessageTemplate extends Model
         'tenant_id', 'waba_account_id', 'meta_template_id', 'name', 'language', 'category', 'status', 'quality_score',
         'rejected_reason', 'parameter_format', 'components', 'created_by_membership_id', 'last_synced_at',
     ];
+
+    /** Fields whose change is visible to clients (a sync that only refreshes last_synced_at is not). */
+    private const BROADCAST_ON = ['status', 'components', 'category', 'quality_score', 'rejected_reason', 'deleted_at', 'meta_template_id'];
+
+    protected static function booted(): void
+    {
+        $announce = function (self $template): void {
+            if ($template->wasRecentlyCreated || $template->wasChanged(self::BROADCAST_ON) || ! $template->exists) {
+                TemplatesChanged::dispatch($template->tenant_id, $template->id, $template->name, $template->status);
+            }
+        };
+
+        static::saved($announce);
+        static::deleted($announce);
+        static::restored($announce);
+    }
 
     protected function casts(): array
     {

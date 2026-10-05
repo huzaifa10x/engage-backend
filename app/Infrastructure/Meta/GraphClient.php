@@ -305,6 +305,44 @@ final class GraphClient
     }
 
     /**
+     * Resumable Upload API: uploads the sample file for a template's media header and returns the
+     * file handle Meta expects in `example.header_handle`.
+     *   1. POST /<APP_ID>/uploads?file_name&file_length&file_type  → upload session id
+     *   2. POST /<SESSION_ID> (Authorization: OAuth <token>, file_offset: 0, raw bytes) → handle
+     */
+    public function uploadTemplateSample(string $contents, string $filename, string $mime, string $token): string
+    {
+        $session = $this->send('POST', "{$this->appId}/uploads", $token, [], [
+            'file_name' => $filename,
+            'file_length' => strlen($contents),
+            'file_type' => $mime,
+        ]);
+        $sessionId = $session['id'] ?? null;
+        if (! is_string($sessionId) || $sessionId === '') {
+            throw new MetaApiException('Meta did not start the file upload for the template header.', 200);
+        }
+
+        try {
+            $response = Http::baseUrl($this->baseUrl)
+                ->acceptJson()
+                ->timeout(max($this->timeout, 120))
+                ->withHeaders(['Authorization' => 'OAuth '.$token, 'file_offset' => '0'])
+                ->withQueryParameters(['appsecret_proof' => hash_hmac('sha256', $token, $this->appSecret)])
+                ->withBody($contents, 'application/octet-stream')
+                ->post("{$this->version}/{$sessionId}");
+        } catch (ConnectionException $e) {
+            throw new MetaApiException('Could not reach Meta: '.$e->getMessage(), 503);
+        }
+
+        $body = $response->json();
+        if ($response->failed() || ! is_array($body) || empty($body['h'])) {
+            throw MetaApiException::fromResponse($response->status(), is_array($body) ? $body : null);
+        }
+
+        return (string) $body['h'];
+    }
+
+    /**
      * POST /<WABA_ID>/message_templates — create and submit a template for review.
      *
      * @param  array<string, mixed>  $template  name, language, category, components
