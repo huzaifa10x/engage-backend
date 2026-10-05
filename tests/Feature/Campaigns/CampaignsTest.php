@@ -36,6 +36,8 @@ final class CampaignsTest extends TestCase
         parent::setUp();
         $this->configureMeta();
         $this->tenant = $this->createTenant();
+        // Quiet hours are on by default; these tests must not depend on the time of day.
+        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['settings' => ['compliance' => ['quiet_hours_enabled' => false]]])->save());
         $this->subscribe($this->tenant, 'pro');
         $this->owner = $this->addMember($this->tenant);
         $this->number = $this->connectNumber($this->tenant);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Webhooks\Handlers;
 
+use App\Application\Campaigns\ManageCampaigns;
 use App\Domain\Webhooks\Jobs\RefreshPhoneNumber;
 use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
@@ -60,6 +61,11 @@ final class PhoneNumberHealthHandler implements WebhookHandler
 
         if ($number !== null && $change->field === 'phone_number_quality_update') {
             RefreshPhoneNumber::dispatch($number->id)->delay(now()->addSeconds(30));
+
+            // Meta flagged the number: stop running campaigns on it before quality falls further.
+            if (strtoupper((string) ($v['event'] ?? '')) === 'FLAGGED') {
+                app(ManageCampaigns::class)->autoPauseForNumber($number, 'Paused automatically: Meta flagged this number for low quality');
+            }
         }
 
         return ProcessResult::Processed;

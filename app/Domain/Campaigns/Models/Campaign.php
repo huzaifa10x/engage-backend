@@ -28,7 +28,7 @@ use Illuminate\Support\Carbon;
  * @property ?array{header?: list<string>, body?: list<string>, buttons?: array<string, string>} $variables
  * @property ?string $media_id
  * @property ?string $segment_id
- * @property ?array{match: string, rules: list<array<string, mixed>>, name: ?string} $audience
+ * @property ?array{match: string, rules: list<array<string, mixed>>, name: ?string, tag?: ?string} $audience
  * @property CampaignStatus $status
  * @property ?Carbon $scheduled_at
  * @property ?Carbon $started_at
@@ -36,6 +36,13 @@ use Illuminate\Support\Carbon;
  * @property int $matched_count
  * @property int $eligible_count
  * @property ?string $failure_reason
+ * @property ?string $notes
+ * @property ?string $objective
+ * @property ?string $audience_tag
+ * @property ?int $batch_per_hour
+ * @property ?Carbon $next_batch_at
+ * @property ?Carbon $paused_at
+ * @property ?string $pause_reason
  * @property ?string $created_by_membership_id
  * @property ?Carbon $created_at
  * @property ?Carbon $updated_at
@@ -50,6 +57,7 @@ class Campaign extends Model
         'tenant_id', 'name', 'phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category',
         'variables', 'media_id', 'segment_id', 'audience', 'status', 'scheduled_at', 'started_at', 'completed_at',
         'matched_count', 'eligible_count', 'failure_reason', 'created_by_membership_id',
+        'notes', 'objective', 'audience_tag', 'batch_per_hour', 'next_batch_at', 'paused_at', 'pause_reason',
     ];
 
     protected function casts(): array
@@ -61,6 +69,8 @@ class Campaign extends Model
             'scheduled_at' => 'datetime',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
+            'next_batch_at' => 'datetime',
+            'paused_at' => 'datetime',
         ];
     }
 

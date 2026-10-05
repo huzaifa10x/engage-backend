@@ -167,15 +167,20 @@ Route::middleware(['auth:sanctum', 'tenant', 'throttle:api'])->group(function ()
         Route::get('campaigns/audience', [CampaignController::class, 'audience'])->name('campaigns.audience');
         Route::get('campaigns/{campaign}', [CampaignController::class, 'show'])->name('campaigns.show');
         Route::get('campaigns/{campaign}/recipients', [CampaignController::class, 'recipients'])->name('campaigns.recipients');
+        Route::get('campaigns/{campaign}/export', [CampaignController::class, 'export'])->middleware('throttle:20,1')->name('campaigns.export');
+        Route::post('campaigns/preview', [CampaignController::class, 'preview'])->name('campaigns.preview');
     });
     Route::middleware('can:'.Permission::CampaignsCreate->value)->group(function () {
         Route::post('campaigns', [CampaignController::class, 'store'])->name('campaigns.store');
         Route::patch('campaigns/{campaign}', [CampaignController::class, 'update'])->name('campaigns.update');
         Route::delete('campaigns/{campaign}', [CampaignController::class, 'destroy'])->name('campaigns.destroy');
+        Route::post('campaigns/{campaign}/duplicate', [CampaignController::class, 'duplicate'])->name('campaigns.duplicate');
     });
     Route::middleware(['can:'.Permission::CampaignsSend->value, 'throttle:30,1'])->group(function () {
         Route::post('campaigns/{campaign}/launch', [CampaignController::class, 'launch'])->name('campaigns.launch');
         Route::post('campaigns/{campaign}/cancel', [CampaignController::class, 'cancel'])->name('campaigns.cancel');
+        Route::post('campaigns/{campaign}/pause', [CampaignController::class, 'pause'])->name('campaigns.pause');
+        Route::post('campaigns/{campaign}/resume', [CampaignController::class, 'resume'])->name('campaigns.resume');
     });
     Route::get('analytics/overview', [AnalyticsController::class, 'overview'])
         ->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.overview');

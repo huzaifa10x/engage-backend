@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\Domain\Campaigns\Jobs;
 
+use App\Application\Campaigns\ManageCampaigns;
 use App\Application\Messaging\SendMessage;
 use App\Domain\Campaigns\Enums\CampaignStatus;
 use App\Domain\Campaigns\Models\Campaign;
 use App\Domain\Campaigns\Models\CampaignRecipient;
 use App\Domain\Campaigns\Services\Personalizer;
+use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Messaging\Enums\MessageOrigin;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Support\Exceptions\DomainException;
 use App\Support\Queue\QueueName;
@@ -40,7 +43,7 @@ final class SendCampaignBatch implements ShouldQueue
         $this->onQueue(QueueName::Default->value);
     }
 
-    public function handle(SendMessage $send, Personalizer $personalizer): void
+    public function handle(SendMessage $send, Personalizer $personalizer, ManageCampaigns $campaigns, TenantContext $context): void
     {
         $campaign = Campaign::query()->find($this->campaignId);
         if ($campaign === null || $campaign->status !== CampaignStatus::Sending) {
@@ -53,11 +56,41 @@ final class SendCampaignBatch implements ShouldQueue
             return;
         }
 
+        $marketing = strtoupper((string) $campaign->template_category) === 'MARKETING';
+
+        // Quality protection: never keep pushing marketing through a number Meta rates Red.
+        if ($marketing && strtoupper((string) $number->quality_rating) === 'RED') {
+            $campaigns->pause($campaign, 'Paused automatically: the number\'s quality rating dropped to Red');
+
+            return;
+        }
+
+        // Quiet hours (workspace time zone): wait, then carry on by itself.
+        $tenant = $context->tenant();
+        $quietUntil = $marketing ? ComplianceSettings::for($tenant)->quietUntil(now(), $tenant->timezone ?: 'UTC') : null;
+        if ($quietUntil !== null) {
+            // The every-minute scheduler (engage:campaigns:dispatch) continues it at that time.
+            $campaign->forceFill(['next_batch_at' => $quietUntil])->save();
+
+            return;
+        }
+
+        // Drip: at most batch_per_hour messages per run, then wait an hour.
+        $limit = $campaign->batch_per_hour !== null ? max(1, $campaign->batch_per_hour) : self::BATCH;
         $recipients = CampaignRecipient::query()->with('contact')->where('campaign_id', $campaign->id)
-            ->where('status', 'pending')->orderBy('id')->limit(self::BATCH)->get();
+            ->where('status', 'pending')->orderBy('id')->limit(min($limit, 2000))->get();
+        $capped = $marketing ? $campaigns->cappedContactIds($recipients->pluck('contact_id')->all(), $campaign->id) : [];
+        if ($campaign->next_batch_at !== null) {
+            $campaign->forceFill(['next_batch_at' => null])->save();
+        }
 
         foreach ($recipients as $recipient) {
             $contact = $recipient->contact;
+            if (isset($capped[$recipient->contact_id])) {
+                $recipient->forceFill(['status' => 'skipped', 'reason' => 'Frequency cap reached'])->save();
+
+                continue;
+            }
             // Consent can change between preparation and sending (a STOP reply): check again.
             $blocker = $contact === null || $contact->trashed() ? 'Contact was deleted' : $contact->campaignBlocker($campaign->template_category);
             if ($blocker !== null || $contact === null) {
@@ -92,8 +125,13 @@ final class SendCampaignBatch implements ShouldQueue
             }
         }
 
-        if ($recipients->count() === self::BATCH) {
-            self::dispatch($campaign->id);
+        $remaining = CampaignRecipient::query()->where('campaign_id', $campaign->id)->where('status', 'pending')->exists();
+        if ($remaining) {
+            if ($campaign->batch_per_hour !== null) {
+                Campaign::query()->whereKey($campaign->id)->where('status', CampaignStatus::Sending->value)->update(['next_batch_at' => now()->addHour()]);
+            } else {
+                self::dispatch($campaign->id);
+            }
 
             return;
         }

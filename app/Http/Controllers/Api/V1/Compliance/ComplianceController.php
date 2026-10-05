@@ -89,6 +89,10 @@ final class ComplianceController extends Controller
             'retention_enabled' => ['sometimes', 'boolean'],
             'message_retention_days' => ['sometimes', 'integer', 'min:'.ComplianceSettings::MIN_MESSAGE_DAYS, 'max:3650'],
             'media_retention_days' => ['sometimes', 'integer', 'min:'.ComplianceSettings::MIN_MEDIA_DAYS, 'max:3650'],
+            'marketing_frequency_cap' => ['sometimes', 'integer', 'min:0', 'max:50'],
+            'quiet_hours_enabled' => ['sometimes', 'boolean'],
+            'quiet_hours_start' => ['sometimes', 'date_format:H:i'],
+            'quiet_hours_end' => ['sometimes', 'date_format:H:i'],
         ]);
         if (isset($data['opt_out_keywords'])) {
             $data['opt_out_keywords'] = ComplianceSettings::keywords($data['opt_out_keywords'], ComplianceSettings::LOCKED_OPT_OUT);

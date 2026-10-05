@@ -44,12 +44,14 @@ final class LaunchCampaign implements ShouldQueue
 
         $matched = 0;
         $eligible = 0;
-        $campaigns->audienceQuery($campaign->audience)->chunkById(1000, function ($contacts) use ($campaign, &$matched, &$eligible): void {
+        $marketing = strtoupper((string) $campaign->template_category) === 'MARKETING';
+        $campaigns->audienceQuery($campaign->audience)->chunkById(1000, function ($contacts) use ($campaign, $campaigns, $marketing, &$matched, &$eligible): void {
             $rows = [];
             $now = now();
+            $capped = $marketing ? $campaigns->cappedContactIds($contacts->modelKeys(), $campaign->id) : [];
             /** @var Contact $contact */
             foreach ($contacts as $contact) {
-                $blocker = $contact->campaignBlocker($campaign->template_category);
+                $blocker = $contact->campaignBlocker($campaign->template_category) ?? (isset($capped[$contact->id]) ? 'Frequency cap reached' : null);
                 $matched++;
                 $eligible += $blocker === null ? 1 : 0;
                 $rows[] = [
