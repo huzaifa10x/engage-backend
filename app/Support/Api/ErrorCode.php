@@ -26,6 +26,7 @@ enum ErrorCode: string
 
     case PlanLimitReached = 'plan_limit_reached';
     case FeatureNotAvailable = 'feature_not_available';
+    case BillingError = 'billing_error';
 
     case InvitationInvalid = 'invitation_invalid';
     case LastOwner = 'last_owner';

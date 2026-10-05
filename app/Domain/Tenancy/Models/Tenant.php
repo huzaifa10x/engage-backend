@@ -29,6 +29,9 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string $currency
  * @property ?string $country
  * @property ?string $billing_email
+ * @property ?string $legal_name
+ * @property ?string $tax_trn
+ * @property ?string $stripe_customer_id
  * @property array<string, mixed>|null $settings
  */
 class Tenant extends Model
@@ -38,7 +41,7 @@ class Tenant extends Model
 
     protected $fillable = [
         'name', 'slug', 'status', 'timezone', 'locale', 'currency', 'country',
-        'billing_email', 'settings', 'created_by_user_id',
+        'billing_email', 'settings', 'created_by_user_id', 'legal_name', 'tax_trn', 'stripe_customer_id',
     ];
 
     protected function casts(): array

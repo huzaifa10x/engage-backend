@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Billing\StripeWebhookController;
 use App\Http\Controllers\Meta\DataDeletionController;
 use App\Http\Controllers\Meta\WebhookController;
 use Illuminate\Support\Facades\Route;
@@ -18,6 +19,8 @@ Route::prefix('v1')->name('api.v1.')->group(base_path('routes/api/v1.php'));
 Route::prefix('webhooks')->name('webhooks.')->group(function () {
     Route::get('meta', [WebhookController::class, 'verify'])->name('meta.verify');
     Route::post('meta', [WebhookController::class, 'receive'])->name('meta.receive');
+    // Stripe → payments, renewals, cancellations, refunds (signature verified in the controller).
+    Route::post('stripe', StripeWebhookController::class)->name('stripe');
 });
 
 Route::prefix('meta')->name('meta.')->middleware('throttle:60,1')->group(function () {

@@ -21,7 +21,12 @@ use Illuminate\Support\Carbon;
  * @property string $plan_version_id
  * @property SubscriptionStatus $status
  * @property BillingProvider $provider
+ * @property ?string $provider_customer_id
+ * @property ?string $provider_subscription_id
+ * @property ?string $billing_interval
  * @property ?Carbon $trial_ends_at
+ * @property ?Carbon $current_period_start
+ * @property ?Carbon $cancel_at
  * @property ?Carbon $current_period_end
  * @property ?PlanVersion $planVersion
  */

@@ -15,6 +15,19 @@ return [
         'default_currency' => 'USD',
     ],
 
+    /*
+    | Stripe: subscriptions, invoices, payments and refunds. Prices stay in USD (plan catalog).
+    | UAE customers are charged VAT on top (tax rate created in Stripe on first use, or set
+    | STRIPE_UAE_TAX_RATE_ID to use one you created yourself).
+    */
+    'stripe' => [
+        'secret' => env('STRIPE_SECRET'),
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+        'api_version' => '2024-06-20',
+        'uae_vat_percent' => (float) env('STRIPE_UAE_VAT_PERCENT', 5),
+        'uae_tax_rate_id' => env('STRIPE_UAE_TAX_RATE_ID'),
+    ],
+
     'plans' => [
         // Tenants without a live subscription resolve entitlements from this plan.
         'fallback' => 'free',

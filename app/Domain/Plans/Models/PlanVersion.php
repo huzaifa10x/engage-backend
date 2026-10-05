@@ -19,13 +19,15 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property ?int $price_yearly_minor
  * @property string $currency
  * @property int $trial_days
+ * @property ?string $stripe_price_monthly_id
+ * @property ?string $stripe_price_yearly_id
  * @property ?Plan $plan
  */
 class PlanVersion extends Model
 {
     use HasUuids;
 
-    protected $fillable = ['plan_id', 'version', 'status', 'price_monthly_minor', 'price_yearly_minor', 'currency', 'trial_days', 'published_at'];
+    protected $fillable = ['plan_id', 'version', 'status', 'price_monthly_minor', 'price_yearly_minor', 'currency', 'stripe_price_monthly_id', 'stripe_price_yearly_id', 'trial_days', 'published_at'];
 
     protected function casts(): array
     {

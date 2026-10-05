@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\ActiveTenantController;
 use App\Http\Controllers\Api\V1\Analytics\AnalyticsController;
 use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\Billing\BillingController;
 use App\Http\Controllers\Api\V1\Campaigns\CampaignController;
 use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
@@ -127,6 +128,21 @@ Route::middleware(['auth:sanctum', 'tenant', 'throttle:api'])->group(function ()
         ->middleware(['can:'.Permission::TemplatesSubmit->value, 'throttle:30,1'])->name('templates.update');
     Route::delete('templates/{template}', [TemplateController::class, 'destroy'])
         ->middleware('can:'.Permission::TemplatesCreate->value)->name('templates.destroy');
+
+    /*
+    | Billing: plan, invoice details (company, country, VAT TRN), invoices, Stripe Checkout / Portal
+    */
+    Route::middleware('can:'.Permission::BillingView->value)->group(function () {
+        Route::get('billing', [BillingController::class, 'show'])->name('billing.show');
+        Route::get('billing/invoices', [BillingController::class, 'invoices'])->name('billing.invoices');
+    });
+    Route::middleware(['can:'.Permission::BillingManage->value, 'throttle:30,1'])->group(function () {
+        Route::put('billing/details', [BillingController::class, 'updateDetails'])->name('billing.details');
+        Route::post('billing/checkout', [BillingController::class, 'checkout'])->name('billing.checkout');
+        Route::post('billing/portal', [BillingController::class, 'portal'])->name('billing.portal');
+        Route::post('billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
+        Route::post('billing/resume', [BillingController::class, 'resume'])->name('billing.resume');
+    });
 
     /*
     | Compliance: consent ledger, opt-out keywords, retention, policy checks
