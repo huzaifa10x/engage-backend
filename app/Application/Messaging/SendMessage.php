@@ -36,7 +36,7 @@ final class SendMessage
     /**
      * @param  array{type: string, body?: ?string, media_id?: ?string, template?: ?array<string, mixed>, reply_to?: ?string, content?: ?array<string, mixed>}  $data
      */
-    public function toConversation(Conversation $conversation, array $data, MessageOrigin $origin, ?TenantMembership $sender = null, ?string $idempotencyKey = null): Message
+    public function toConversation(Conversation $conversation, array $data, MessageOrigin $origin, ?TenantMembership $sender = null, ?string $idempotencyKey = null, bool $consentNotice = false): Message
     {
         if ($idempotencyKey !== null && ($existing = Message::query()->where('idempotency_key', $idempotencyKey)->first()) !== null) {
             return $existing;
@@ -50,7 +50,8 @@ final class SendMessage
         if ($number->status !== PhoneNumberStatus::Connected) {
             throw MessagingException::numberUnavailable();
         }
-        if ($contact->isOptedOut()) {
+        // The one message an opted-out contact may still receive: the confirmation of their opt-out.
+        if ($contact->isOptedOut() && ! $consentNotice) {
             throw MessagingException::optedOut();
         }
         if ($contact->wa_id === null && $contact->bsuid === null) {

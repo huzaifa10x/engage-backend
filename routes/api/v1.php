@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\Analytics\AnalyticsController;
 use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\Campaigns\CampaignController;
+use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
@@ -126,6 +127,21 @@ Route::middleware(['auth:sanctum', 'tenant', 'throttle:api'])->group(function ()
         ->middleware(['can:'.Permission::TemplatesSubmit->value, 'throttle:30,1'])->name('templates.update');
     Route::delete('templates/{template}', [TemplateController::class, 'destroy'])
         ->middleware('can:'.Permission::TemplatesCreate->value)->name('templates.destroy');
+
+    /*
+    | Compliance: consent ledger, opt-out keywords, retention, policy checks
+    */
+    Route::middleware('can:'.Permission::ComplianceView->value)->group(function () {
+        Route::get('compliance/overview', [ComplianceController::class, 'overview'])->name('compliance.overview');
+        Route::get('compliance/settings', [ComplianceController::class, 'settings'])->name('compliance.settings');
+        Route::get('compliance/consent-events', [ComplianceController::class, 'consentEvents'])->name('compliance.consent-events');
+        Route::get('compliance/consent-events/export', [ComplianceController::class, 'exportConsentEvents'])
+            ->middleware('throttle:20,1')->name('compliance.consent-events.export');
+    });
+    Route::put('compliance/settings', [ComplianceController::class, 'updateSettings'])
+        ->middleware('can:'.Permission::ComplianceManage->value)->name('compliance.settings.update');
+    Route::post('conversations/{conversation}/consent-request', [ComplianceController::class, 'requestConsent'])
+        ->middleware(['can:'.Permission::InboxReply->value, 'throttle:60,1'])->name('conversations.consent-request');
 
     /*
     | Campaigns (broadcasts) and analytics

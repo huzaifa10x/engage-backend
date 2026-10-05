@@ -51,6 +51,8 @@ final class MessageResource extends JsonResource
             'read_at' => $this->getAttribute('read_at')?->toIso8601String(),
             'edited_at' => $this->getAttribute('edited_at')?->toIso8601String(),
             'revoked_at' => $this->getAttribute('revoked_at')?->toIso8601String(),
+            // Content removed by the workspace's retention policy (the delivery record remains).
+            'redacted' => $this->getAttribute('redacted_at') !== null,
         ];
     }
 

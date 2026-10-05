@@ -138,11 +138,21 @@ final class MessageRecorder
     {
         $text = in_array($message->type, ['text', 'button', 'interactive'], true) ? $message->body : null;
 
-        match ($this->consent->keywordIntent($text)) {
-            'opt_out' => $this->consent->optOut($contact, 'keyword', $text, $message->id),
-            'opt_in' => $this->consent->optIn($contact, 'keyword', $text, $message->id),
-            default => null,
-        };
+        $intent = $this->consent->keywordIntent($text);
+        if ($intent === null) {
+            return;
+        }
+        // A tapped button (our in-chat "Subscribe" request) is recorded apart from a typed keyword.
+        $source = $message->type === 'text' ? 'keyword' : 'in_chat_button';
+
+        $changed = $intent === 'opt_out'
+            ? $this->consent->optOut($contact, $source, $text, $message->id)
+            : $this->consent->optIn($contact, $source, $text, $message->id);
+
+        // Confirm once, when the state really changed — never an auto-reply loop.
+        if ($changed) {
+            app(ConsentAutoReply::class)->confirm($message, $intent);
+        }
     }
 
     /** @param array<string, mixed> $raw */

@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Domain\Messaging\Services;
 
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\ConsentEvent;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Tenancy\TenantContext;
 
 /**
  * Opt-in / opt-out. STOP-style keywords are honoured automatically on inbound text; an
@@ -15,7 +17,7 @@ use App\Domain\Messaging\Models\Contact;
  */
 final class ConsentService
 {
-    public function __construct(private readonly AuditLogger $audit) {}
+    public function __construct(private readonly AuditLogger $audit, private readonly TenantContext $context) {}
 
     /** @return 'opt_out'|'opt_in'|null */
     public function keywordIntent(?string $text): ?string
@@ -29,34 +31,42 @@ final class ConsentService
             return null; // only whole-message keywords, never "please don't stop sending"
         }
 
-        if (in_array($normalized, array_map('mb_strtolower', (array) config('engage.messaging.stop_keywords')), true)) {
+        // The workspace's own keyword lists (Compliance → Keywords), over the platform defaults.
+        $settings = ComplianceSettings::for($this->context->tenantOrNull());
+        if (in_array($normalized, $settings->optOutKeywords, true)) {
             return 'opt_out';
         }
-        if (in_array($normalized, array_map('mb_strtolower', (array) config('engage.messaging.start_keywords')), true)) {
+        if (in_array($normalized, $settings->optInKeywords, true)) {
             return 'opt_in';
         }
 
         return null;
     }
 
-    public function optOut(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null, ?string $membershipId = null): void
+    /** @return bool whether the state changed (false = the contact had already opted out) */
+    public function optOut(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null, ?string $membershipId = null): bool
     {
         if ($contact->consent_state === ConsentState::OptedOut) {
-            return;
+            return false;
         }
 
         $contact->forceFill(['consent_state' => ConsentState::OptedOut, 'opted_out_at' => now()])->save();
         $this->record($contact, 'opted_out', $source, $detail, $messageId, $membershipId);
+
+        return true;
     }
 
-    public function optIn(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null, ?string $membershipId = null): void
+    /** @return bool whether the state changed (false = the contact had already opted in) */
+    public function optIn(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null, ?string $membershipId = null): bool
     {
         if ($contact->consent_state === ConsentState::OptedIn) {
-            return;
+            return false;
         }
 
         $contact->forceFill(['consent_state' => ConsentState::OptedIn, 'opted_in_at' => now(), 'opted_out_at' => null])->save();
         $this->record($contact, 'opted_in', $source, $detail, $messageId, $membershipId);
+
+        return true;
     }
 
     /** Meta user_preferences webhook: the user stopped / resumed marketing messages in WhatsApp. */
