@@ -165,8 +165,11 @@ final class TemplatesTest extends TestCase
         Storage::fake('local');
         $this->actingAsMember($this->owner);
         Http::fake([
-            'graph.facebook.com/v25.0/1234567890/uploads*' => Http::response(['id' => 'upload:MTphdHRhY2htZW50']),
-            'graph.facebook.com/v25.0/upload:MTphdHRhY2htZW50*' => Http::response(['h' => '4:aGVhZGVy:handle']),
+            // Real session ids carry their own signature in a query string.
+            'graph.facebook.com/v25.0/1234567890/uploads*' => Http::response(['id' => 'upload:MTphdHRhY2htZW50?sig=ARZqkGCA_uQMxC8nHKI']),
+            'graph.facebook.com/v25.0/upload:MTphdHRhY2htZW50*' => fn (Request $r) => str_contains($r->url(), 'sig=ARZqkGCA_uQMxC8nHKI')
+                ? Http::response(['h' => '4:aGVhZGVy:handle'])
+                : Http::response(['debug_info' => ['retriable' => false, 'type' => 'InvalidSignature', 'message' => 'Signature missing']], 400),
             self::LIST => Http::response(['id' => '777002', 'status' => 'PENDING', 'category' => 'MARKETING']),
         ]);
 
@@ -186,7 +189,7 @@ final class TemplatesTest extends TestCase
             ->assertCreated()->assertJsonPath('data.variables.header_format', 'IMAGE');
 
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/1234567890/uploads') && str_contains($r->url(), 'file_type=image%2Fpng') && str_contains($r->url(), 'file_length='.strlen($png)));
-        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/upload:') && $r->hasHeader('Authorization', 'OAuth EAA-existing-token') && $r->hasHeader('file_offset', '0') && $r->body() === $png);
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/upload:MTphdHRhY2htZW50?sig=ARZqkGCA_uQMxC8nHKI&appsecret_proof=') && $r->hasHeader('Authorization', 'OAuth EAA-existing-token') && $r->hasHeader('file_offset', '0') && $r->body() === $png);
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/message_templates')
             && $r['components'][0] === ['type' => 'HEADER', 'format' => 'IMAGE', 'example' => ['header_handle' => ['4:aGVhZGVy:handle']]]);
     }

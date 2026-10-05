@@ -312,6 +312,22 @@ final class GraphClient
      */
     public function uploadTemplateSample(string $contents, string $filename, string $mime, string $token): string
     {
+        try {
+            return $this->resumableUpload($contents, $filename, $mime, $token);
+        } catch (MetaApiException $e) {
+            if ($e->isTransient()) {
+                throw $e;
+            }
+            // Upload sessions belong to the app, not to the client's account: when Meta refuses
+            // the client's token here, the app's own token is the documented alternative.
+            Log::warning('Template sample upload failed with the business token; retrying with the app token.', $e->context());
+
+            return $this->resumableUpload($contents, $filename, $mime, "{$this->appId}|{$this->appSecret}");
+        }
+    }
+
+    private function resumableUpload(string $contents, string $filename, string $mime, string $token): string
+    {
         $session = $this->send('POST', "{$this->appId}/uploads", $token, [], [
             'file_name' => $filename,
             'file_length' => strlen($contents),
@@ -319,24 +335,35 @@ final class GraphClient
         ]);
         $sessionId = $session['id'] ?? null;
         if (! is_string($sessionId) || $sessionId === '') {
-            throw new MetaApiException('Meta did not start the file upload for the template header.', 200);
+            throw new MetaApiException('Meta did not start the file upload for the template header.', 400);
         }
+
+        // The session id carries its own signature ("upload:<id>?sig=<signature>"). It must reach
+        // Meta exactly as issued, so nothing may replace its query string — extra parameters are
+        // appended to it instead of being passed as request options.
+        $url = "{$this->version}/{$sessionId}".(str_contains($sessionId, '?') ? '&' : '?')
+            .'appsecret_proof='.hash_hmac('sha256', $token, $this->appSecret);
 
         try {
             $response = Http::baseUrl($this->baseUrl)
                 ->acceptJson()
                 ->timeout(max($this->timeout, 120))
                 ->withHeaders(['Authorization' => 'OAuth '.$token, 'file_offset' => '0'])
-                ->withQueryParameters(['appsecret_proof' => hash_hmac('sha256', $token, $this->appSecret)])
                 ->withBody($contents, 'application/octet-stream')
-                ->post("{$this->version}/{$sessionId}");
+                ->post($url);
         } catch (ConnectionException $e) {
             throw new MetaApiException('Could not reach Meta: '.$e->getMessage(), 503);
         }
 
         $body = $response->json();
         if ($response->failed() || ! is_array($body) || empty($body['h'])) {
-            throw MetaApiException::fromResponse($response->status(), is_array($body) ? $body : null);
+            // This endpoint reports problems as {"debug_info": {"type", "message"}}, not {"error": …}.
+            $debug = is_array($body) && is_array($body['debug_info'] ?? null) ? $body['debug_info'] : null;
+            Log::warning('Template sample upload was rejected by Meta.', ['http_status' => $response->status(), 'body' => mb_substr($response->body(), 0, 500)]);
+
+            throw $debug !== null
+                ? new MetaApiException(trim(($debug['type'] ?? 'Upload error').': '.($debug['message'] ?? 'the file was rejected'), ': '), $response->status())
+                : MetaApiException::fromResponse($response->status(), is_array($body) ? $body : null);
         }
 
         return (string) $body['h'];
