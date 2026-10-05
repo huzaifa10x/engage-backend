@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Messaging;
 
 use App\Application\Messaging\ManageContacts;
+use App\Domain\Crm\Models\Segment;
+use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\ConsentService;
@@ -19,15 +21,21 @@ use Illuminate\Validation\Rule;
 
 final class ContactController extends Controller
 {
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request, SegmentQuery $segments): AnonymousResourceCollection
     {
         $data = $request->validate([
             'q' => ['nullable', 'string', 'max:100'],
             'consent' => ['nullable', Rule::enum(ConsentState::class)],
+            'tag' => ['nullable', 'string', 'max:40'],
+            'segment_id' => ['nullable', 'uuid'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
+        $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
+
         $contacts = Contact::query()
+            ->when($segment, fn ($q) => $segments->apply($q, $segment->match, $segment->rules))
+            ->when($data['tag'] ?? null, fn ($q, string $tag) => $q->whereRaw('tags @> ARRAY[?]::text[]', [$tag]))
             ->when($data['q'] ?? null, function ($q, string $term) {
                 $digits = preg_replace('/\D+/', '', $term);
                 $q->where(fn ($w) => $w
@@ -52,6 +60,8 @@ final class ContactController extends Controller
             'name' => ['nullable', 'string', 'max:190'],
             'email' => ['nullable', 'email:rfc', 'max:190'],
             'attributes' => ['nullable', 'array', 'max:50'],
+            'tags' => ['nullable', 'array', 'max:50'],
+            'tags.*' => ['string', 'max:40'],
             'opted_in' => ['sometimes', 'boolean'],
         ]);
 
@@ -70,6 +80,8 @@ final class ContactController extends Controller
             'name' => ['sometimes', 'nullable', 'string', 'max:190'],
             'email' => ['sometimes', 'nullable', 'email:rfc', 'max:190'],
             'attributes' => ['sometimes', 'nullable', 'array', 'max:50'],
+            'tags' => ['sometimes', 'nullable', 'array', 'max:50'],
+            'tags.*' => ['string', 'max:40'],
         ]);
 
         return ContactResource::make($contacts->update($contact, $data));

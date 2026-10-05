@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\Messaging;
 
+use App\Application\Crm\TagCatalog;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\ConsentService;
@@ -16,9 +17,10 @@ final class ManageContacts
         private readonly TenantContext $context,
         private readonly ConsentService $consent,
         private readonly AuditLogger $audit,
+        private readonly TagCatalog $tags,
     ) {}
 
-    /** @param array{phone: string, name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, opted_in?: bool} $data */
+    /** @param array{phone: string, name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, tags?: ?array<int, string>, opted_in?: bool} $data */
     public function create(array $data): Contact
     {
         $waId = Contact::normalizePhone($data['phone']) ?? throw ValidationException::withMessages(['phone' => 'Enter the number in international format, e.g. +971501234567.']);
@@ -46,7 +48,7 @@ final class ManageContacts
         return $contact;
     }
 
-    /** @param array{name?: ?string, email?: ?string, attributes?: ?array<string, mixed>} $data */
+    /** @param array{name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, tags?: ?array<int, string>} $data */
     public function update(Contact $contact, array $data): Contact
     {
         $before = $contact->only(['name', 'email']);
@@ -74,6 +76,9 @@ final class ManageContacts
         $out = array_intersect_key($data, array_flip(['name', 'email']));
         if (array_key_exists('attributes', $data)) {
             $out['custom_fields'] = $data['attributes'];
+        }
+        if (array_key_exists('tags', $data)) {
+            $out['tags'] = $this->tags->ensure((array) $data['tags']);
         }
 
         return $out;

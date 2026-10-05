@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\Usage\CampaignReachCounter;
+use App\Domain\Plans\Usage\CustomFieldsCounter;
 use App\Domain\Plans\Usage\MessageTemplatesCounter;
+use App\Domain\Plans\Usage\SavedSegmentsCounter;
+use App\Domain\Plans\Usage\TagsCounter;
 use App\Domain\Plans\Usage\TeamSeatsCounter;
 use App\Domain\Plans\Usage\UsageCounterRegistry;
 use App\Domain\Plans\Usage\WhatsappNumbersCounter;
@@ -41,6 +45,10 @@ final class TenancyServiceProvider extends ServiceProvider
             $app->make(TeamSeatsCounter::class),
             $app->make(WhatsappNumbersCounter::class),
             $app->make(MessageTemplatesCounter::class),
+            $app->make(TagsCounter::class),
+            $app->make(CustomFieldsCounter::class),
+            $app->make(SavedSegmentsCounter::class),
+            $app->make(CampaignReachCounter::class),
         ]));
 
         $this->app->singleton(EntitlementService::class);

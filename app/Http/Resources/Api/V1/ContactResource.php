@@ -25,6 +25,7 @@ final class ContactResource extends JsonResource
             'bsuid' => $this->bsuid,
             'email' => $this->email,
             'attributes' => (object) ($this->custom_fields ?? []),
+            'tags' => $this->tags,
             'source' => $this->source,
             'consent_state' => $this->consent_state->value,
             'opted_out_at' => $this->opted_out_at?->toIso8601String(),

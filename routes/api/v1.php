@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 use App\Domain\Access\Permission;
 use App\Http\Controllers\Api\V1\ActiveTenantController;
+use App\Http\Controllers\Api\V1\Analytics\AnalyticsController;
 use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\Campaigns\CampaignController;
+use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
 use App\Http\Controllers\Api\V1\InvitationController;
@@ -123,6 +126,51 @@ Route::middleware(['auth:sanctum', 'tenant', 'throttle:api'])->group(function ()
         ->middleware(['can:'.Permission::TemplatesSubmit->value, 'throttle:30,1'])->name('templates.update');
     Route::delete('templates/{template}', [TemplateController::class, 'destroy'])
         ->middleware('can:'.Permission::TemplatesCreate->value)->name('templates.destroy');
+
+    /*
+    | Campaigns (broadcasts) and analytics
+    */
+    Route::middleware('can:'.Permission::CampaignsView->value)->group(function () {
+        Route::get('campaigns', [CampaignController::class, 'index'])->name('campaigns.index');
+        Route::get('campaigns/audience', [CampaignController::class, 'audience'])->name('campaigns.audience');
+        Route::get('campaigns/{campaign}', [CampaignController::class, 'show'])->name('campaigns.show');
+        Route::get('campaigns/{campaign}/recipients', [CampaignController::class, 'recipients'])->name('campaigns.recipients');
+    });
+    Route::middleware('can:'.Permission::CampaignsCreate->value)->group(function () {
+        Route::post('campaigns', [CampaignController::class, 'store'])->name('campaigns.store');
+        Route::patch('campaigns/{campaign}', [CampaignController::class, 'update'])->name('campaigns.update');
+        Route::delete('campaigns/{campaign}', [CampaignController::class, 'destroy'])->name('campaigns.destroy');
+    });
+    Route::middleware(['can:'.Permission::CampaignsSend->value, 'throttle:30,1'])->group(function () {
+        Route::post('campaigns/{campaign}/launch', [CampaignController::class, 'launch'])->name('campaigns.launch');
+        Route::post('campaigns/{campaign}/cancel', [CampaignController::class, 'cancel'])->name('campaigns.cancel');
+    });
+    Route::get('analytics/overview', [AnalyticsController::class, 'overview'])
+        ->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.overview');
+
+    /*
+    | Contacts & CRM: tags, custom fields, segments, import / export
+    */
+    Route::middleware('can:'.Permission::ContactsView->value)->group(function () {
+        Route::get('tags', [CrmController::class, 'tags'])->name('tags.index');
+        Route::get('contact-fields', [CrmController::class, 'fields'])->name('contact-fields.index');
+        Route::get('segments', [CrmController::class, 'segmentsIndex'])->name('segments.index');
+        Route::post('segments/preview', [CrmController::class, 'previewSegment'])->name('segments.preview');
+    });
+    Route::middleware('can:'.Permission::ContactsUpdate->value)->group(function () {
+        Route::post('tags', [CrmController::class, 'storeTag'])->name('tags.store');
+        Route::delete('tags/{tag}', [CrmController::class, 'destroyTag'])->name('tags.destroy');
+        Route::post('contacts/bulk-tag', [CrmController::class, 'bulkTag'])->name('contacts.bulk-tag');
+        Route::post('contact-fields', [CrmController::class, 'storeField'])->name('contact-fields.store');
+        Route::delete('contact-fields/{field}', [CrmController::class, 'destroyField'])->name('contact-fields.destroy');
+        Route::post('segments', [CrmController::class, 'storeSegment'])->name('segments.store');
+        Route::patch('segments/{segment}', [CrmController::class, 'updateSegment'])->name('segments.update');
+        Route::delete('segments/{segment}', [CrmController::class, 'destroySegment'])->name('segments.destroy');
+    });
+    Route::post('contacts/import', [CrmController::class, 'import'])
+        ->middleware(['can:'.Permission::ContactsImport->value, 'throttle:20,1'])->name('contacts.import');
+    Route::get('contacts/export', [CrmController::class, 'export'])
+        ->middleware(['can:'.Permission::ContactsExport->value, 'throttle:20,1'])->name('contacts.export');
 
     /*
     | Messaging (Phase 3): contacts, team inbox, sending, media
