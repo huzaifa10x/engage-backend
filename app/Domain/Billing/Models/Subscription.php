@@ -27,6 +27,7 @@ use Illuminate\Support\Carbon;
  * @property ?Carbon $trial_ends_at
  * @property ?Carbon $current_period_start
  * @property ?Carbon $cancel_at
+ * @property bool $auto_pay
  * @property ?Carbon $current_period_end
  * @property ?PlanVersion $planVersion
  */
@@ -37,7 +38,7 @@ class Subscription extends Model
     protected $fillable = [
         'tenant_id', 'plan_version_id', 'status', 'provider', 'provider_customer_id', 'provider_subscription_id',
         'billing_interval', 'trial_ends_at', 'current_period_start', 'current_period_end',
-        'cancel_at', 'canceled_at', 'ended_at',
+        'cancel_at', 'canceled_at', 'ended_at', 'auto_pay',
     ];
 
     protected function casts(): array
@@ -49,6 +50,7 @@ class Subscription extends Model
             'current_period_start' => 'datetime',
             'current_period_end' => 'datetime',
             'cancel_at' => 'datetime',
+            'auto_pay' => 'boolean',
             'canceled_at' => 'datetime',
             'ended_at' => 'datetime',
         ];

@@ -7,8 +7,10 @@ use App\Http\Controllers\Admin\Auth\LoginController;
 use App\Http\Controllers\Admin\Auth\TwoFactorController;
 use App\Http\Controllers\Admin\CompanyController;
 use App\Http\Controllers\Admin\ImpersonationController;
+use App\Http\Controllers\Admin\InvoiceController;
 use App\Http\Controllers\Admin\NumberController;
 use App\Http\Controllers\Admin\OverviewController;
+use App\Http\Controllers\Admin\PlanController;
 use App\Http\Controllers\Admin\SubscriptionController;
 use App\Http\Controllers\Admin\TeamController;
 use App\Http\Controllers\Admin\UserController;
@@ -61,6 +63,19 @@ Route::middleware(['auth:admin', 'admin.context'])->group(function () {
     Route::patch('users/{user}/status', [UserController::class, 'updateStatus'])->middleware('admin.can:users.manage')->name('users.status');
 
     Route::get('subscriptions', [SubscriptionController::class, 'index'])->middleware('admin.can:billing.view')->name('subscriptions.index');
+
+    Route::middleware('admin.can:billing.view')->group(function () {
+        Route::get('plans', [PlanController::class, 'index'])->name('plans.index');
+        Route::get('invoices', [InvoiceController::class, 'index'])->name('invoices.index');
+    });
+    Route::middleware('admin.can:billing.manage')->group(function () {
+        Route::get('plans/create', [PlanController::class, 'create'])->name('plans.create');
+        Route::post('plans', [PlanController::class, 'store'])->name('plans.store');
+        Route::get('plans/{plan}', [PlanController::class, 'edit'])->name('plans.edit');
+        Route::put('plans/{plan}', [PlanController::class, 'update'])->name('plans.update');
+        Route::patch('plans/{plan}/active', [PlanController::class, 'toggle'])->name('plans.toggle');
+        Route::post('invoices/{invoice}/refund', [InvoiceController::class, 'refund'])->middleware('throttle:20,1')->name('invoices.refund');
+    });
     Route::get('audit-log', [AuditLogController::class, 'index'])->middleware('admin.can:audit.view')->name('audit.index');
 
     Route::middleware('admin.can:team.manage')->prefix('team')->name('team.')->group(function () {

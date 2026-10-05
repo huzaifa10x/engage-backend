@@ -8,6 +8,8 @@ use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\MediaStorage;
+use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
@@ -20,9 +22,11 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 final class MediaController extends Controller
 {
     /** Upload an attachment before sending it. Validated against Cloud API type/size limits. */
-    public function store(Request $request, MediaStorage $storage, TenantContext $context): JsonResponse
+    public function store(Request $request, MediaStorage $storage, TenantContext $context, EntitlementService $entitlements): JsonResponse
     {
         $request->validate(['file' => ['required', 'file', 'max:'.(100 * 1024)]]);
+        // Plan storage allowance (uploads only: media your customers send is always received).
+        $entitlements->ensureWithinLimit($context->tenant(), FeatureKey::MediaStorageMb, (int) ceil(($request->file('file')?->getSize() ?? 0) / 1048576));
         $file = $request->file('file');
         if (! $file->isValid()) {
             throw ValidationException::withMessages(['file' => 'The file could not be uploaded. It may be larger than the server allows.']);

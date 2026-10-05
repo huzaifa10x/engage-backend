@@ -26,6 +26,7 @@ use App\Http\Controllers\Api\V1\TenantController;
 use App\Http\Controllers\Api\V1\WhatsApp\AccountController as WhatsAppAccountController;
 use App\Http\Controllers\Api\V1\WhatsApp\PhoneNumberController;
 use App\Http\Controllers\Api\V1\WhatsApp\SignupController;
+use App\Http\Middleware\PlanRateLimit;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -59,7 +60,7 @@ Route::middleware(['auth:sanctum', 'tenant:optional', 'throttle:api'])->group(fu
 | Authenticated + tenant resolved (Authenticate → Resolve Tenant → Authorize → Entitlement → Action)
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth:sanctum', 'tenant', 'throttle:api'])->group(function () {
+Route::middleware(['auth:sanctum', 'tenant', 'throttle:api', PlanRateLimit::class])->group(function () {
     Route::get('tenant', [TenantController::class, 'show'])->name('tenant.show');
     Route::patch('tenant', [TenantController::class, 'update'])
         ->middleware('can:'.Permission::SettingsManage->value)->name('tenant.update');
@@ -135,13 +136,22 @@ Route::middleware(['auth:sanctum', 'tenant', 'throttle:api'])->group(function ()
     Route::middleware('can:'.Permission::BillingView->value)->group(function () {
         Route::get('billing', [BillingController::class, 'show'])->name('billing.show');
         Route::get('billing/invoices', [BillingController::class, 'invoices'])->name('billing.invoices');
+        Route::get('billing/payment-methods', [BillingController::class, 'paymentMethods'])->name('billing.payment-methods');
     });
-    Route::middleware(['can:'.Permission::BillingManage->value, 'throttle:30,1'])->group(function () {
+    Route::middleware(['can:'.Permission::BillingManage->value, 'throttle:40,1'])->group(function () {
         Route::put('billing/details', [BillingController::class, 'updateDetails'])->name('billing.details');
-        Route::post('billing/checkout', [BillingController::class, 'checkout'])->name('billing.checkout');
-        Route::post('billing/portal', [BillingController::class, 'portal'])->name('billing.portal');
+        Route::post('billing/subscribe', [BillingController::class, 'subscribe'])->name('billing.subscribe');
+        Route::post('billing/refresh', [BillingController::class, 'refresh'])->name('billing.refresh');
         Route::post('billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
         Route::post('billing/resume', [BillingController::class, 'resume'])->name('billing.resume');
+        Route::put('billing/auto-pay', [BillingController::class, 'autoPay'])->name('billing.auto-pay');
+        Route::post('billing/payment-methods/setup-intent', [BillingController::class, 'setupIntent'])->name('billing.payment-methods.setup');
+        Route::put('billing/payment-methods/{paymentMethod}/default', [BillingController::class, 'setDefaultPaymentMethod'])
+            ->where('paymentMethod', 'pm_[A-Za-z0-9]+')->name('billing.payment-methods.default');
+        Route::delete('billing/payment-methods/{paymentMethod}', [BillingController::class, 'removePaymentMethod'])
+            ->where('paymentMethod', 'pm_[A-Za-z0-9]+')->name('billing.payment-methods.remove');
+        Route::post('billing/invoices/{invoice}/pay', [BillingController::class, 'payInvoice'])->name('billing.invoices.pay');
+        Route::post('billing/invoices/{invoice}/refresh', [BillingController::class, 'refreshInvoice'])->name('billing.invoices.refresh');
     });
 
     /*

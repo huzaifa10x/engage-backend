@@ -43,6 +43,16 @@ final class PlanCatalogSeeder extends Seeder
                 ]);
 
                 if ($plan->versions()->exists()) {
+                    // A feature added to the catalog after a version was published: give every existing
+                    // version of this plan its default, so no plan silently loses (or gains) it.
+                    foreach ($plan->versions()->get() as $existing) {
+                        foreach (FeatureKey::cases() as $key) {
+                            if (! PlanVersionFeature::query()->where('plan_version_id', $existing->getKey())->where('feature_id', $features[$key->value]->getKey())->exists()) {
+                                $this->attach($existing, $features[$key->value], $definition['features'][$key->value] ?? false);
+                            }
+                        }
+                    }
+
                     continue;
                 }
 
@@ -58,22 +68,25 @@ final class PlanCatalogSeeder extends Seeder
                 ]);
 
                 foreach (FeatureKey::cases() as $key) {
-                    $value = $definition['features'][$key->value] ?? false;
-
-                    // '__disabled' marks "not included, but carries config" (e.g. Web chatbot as a paid add-on).
-                    $disabled = $value === false || (is_array($value) && ($value['__disabled'] ?? false));
-                    $config = is_array($value) ? array_diff_key($value, ['__disabled' => true]) : null;
-
-                    PlanVersionFeature::query()->create([
-                        'plan_version_id' => $version->getKey(),
-                        'feature_id' => $features[$key->value]->getKey(),
-                        'enabled' => ! $disabled,
-                        'limit_value' => is_int($value) ? $value : null,
-                        'config' => $config ?: null,
-                    ]);
+                    $this->attach($version, $features[$key->value], $definition['features'][$key->value] ?? false);
                 }
             }
         });
+    }
+
+    private function attach(PlanVersion $version, Feature $feature, mixed $value): void
+    {
+        // '__disabled' marks "not included, but carries config" (e.g. Web chatbot as a paid add-on).
+        $disabled = $value === false || (is_array($value) && ($value['__disabled'] ?? false));
+        $config = is_array($value) ? array_diff_key($value, ['__disabled' => true]) : null;
+
+        PlanVersionFeature::query()->create([
+            'plan_version_id' => $version->getKey(),
+            'feature_id' => $feature->getKey(),
+            'enabled' => ! $disabled,
+            'limit_value' => is_int($value) ? $value : null,
+            'config' => $config ?: null,
+        ]);
     }
 
     /** @return array<string, Feature> */
@@ -112,6 +125,7 @@ final class PlanCatalogSeeder extends Seeder
             'custom_fields' => [2, 10, 25, $U, $U],
             'whatsapp_flows' => [false, 1, 5, $U, $U],
             'chatbots' => [false, 1, 5, $U, $U],
+            'api_rate_limit_per_minute' => [120, 300, 600, 1200, 3000],
             'media_storage_mb' => [250, 1024, 5120, 20480, $U],
             'audit_log_retention_days' => [30, 90, 180, 365, $U],
             // Monthly metered levers

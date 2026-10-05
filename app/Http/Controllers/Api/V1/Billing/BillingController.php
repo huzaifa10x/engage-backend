@@ -34,7 +34,7 @@ final class BillingController extends Controller
         $vat = StripeBilling::vatApplies($tenant);
         $percent = (float) config('engage.stripe.uae_vat_percent', 5);
 
-        $plans = Plan::query()->where('is_public', true)->orderBy('sort_order')->get()->map(function (Plan $plan) use ($currentKey) {
+        $plans = Plan::query()->where('is_public', true)->where(fn ($q) => $q->where('is_active', true)->orWhere('key', $currentKey))->orderBy('sort_order')->get()->map(function (Plan $plan) use ($currentKey) {
             $version = $plan->activeVersion();
 
             return $version === null ? null : [
@@ -46,12 +46,14 @@ final class BillingController extends Controller
                 'price_yearly_minor' => $version->price_yearly_minor,
                 'current' => $plan->key === $currentKey,
                 // Free has no price to pay; custom-priced plans (null) go through sales.
-                'purchasable' => ($version->price_monthly_minor ?? 0) > 0,
+                'purchasable' => $plan->is_active && ($version->price_monthly_minor ?? 0) > 0,
             ];
         })->filter()->values();
 
         return response()->json(['data' => [
-            'stripe_configured' => $this->stripe->configured(),
+            'stripe_configured' => $this->stripe->configured() && (string) config('engage.stripe.key') !== '',
+            // Publishable key: safe to expose; the card form in the browser needs it.
+            'stripe_publishable_key' => config('engage.stripe.key'),
             'plan' => ['key' => $currentKey, 'name' => $subscription->planVersion->plan->name ?? 'Free'],
             'subscription' => $subscription === null ? null : [
                 'status' => $subscription->status->value,
@@ -60,6 +62,7 @@ final class BillingController extends Controller
                 'trial_ends_at' => $subscription->trial_ends_at?->toIso8601String(),
                 'current_period_end' => $subscription->current_period_end?->toIso8601String(),
                 'cancel_at' => $subscription->cancel_at?->toIso8601String(),
+                'auto_pay' => $subscription->auto_pay,
             ],
             'details' => [
                 'legal_name' => $tenant->legal_name,
@@ -103,19 +106,78 @@ final class BillingController extends Controller
         return $this->show();
     }
 
-    public function checkout(Request $request): JsonResponse
+    /**
+     * Buy or switch plan with a saved card. Returns `requires_confirmation` + a client secret when
+     * the browser must confirm the payment with Stripe (card check / 3-D Secure) inside the page.
+     */
+    public function subscribe(Request $request): JsonResponse
     {
         $data = $request->validate([
             'plan' => ['required', 'string', 'max:32'],
             'interval' => ['required', Rule::in(['monthly', 'yearly'])],
+            'payment_method' => ['nullable', 'string', 'max:64', 'starts_with:pm_'],
         ]);
 
-        return response()->json(['data' => $this->billing->subscribe($this->context->tenant(), $data['plan'], $data['interval'], $this->context->membership())]);
+        return response()->json(['data' => $this->billing->subscribe($this->context->tenant(), $data['plan'], $data['interval'], $this->context->membership(), $data['payment_method'] ?? null)]);
     }
 
-    public function portal(): JsonResponse
+    /** Called after the in-page payment step: read the result from Stripe now (no waiting for webhooks). */
+    public function refresh(Request $request): JsonResponse
     {
-        return response()->json(['data' => ['url' => $this->billing->portalUrl($this->context->tenant())]]);
+        $data = $request->validate(['abandon' => ['nullable', 'boolean']]);
+        $status = $this->billing->refresh($this->context->tenant(), (bool) ($data['abandon'] ?? false));
+
+        return response()->json(['data' => ['status' => $status]]);
+    }
+
+    public function paymentMethods(): JsonResponse
+    {
+        return response()->json(['data' => $this->stripe->configured() ? $this->billing->paymentMethods($this->context->tenant()) : []]);
+    }
+
+    /** Start adding a card: the browser completes it with Stripe using this client secret. */
+    public function setupIntent(): JsonResponse
+    {
+        $email = $this->context->membership()?->user()->value('email');
+
+        return response()->json(['data' => ['client_secret' => $this->billing->setupIntent($this->context->tenant(), is_string($email) ? $email : null)]]);
+    }
+
+    public function setDefaultPaymentMethod(string $paymentMethod): JsonResponse
+    {
+        $this->billing->setDefaultPaymentMethod($this->context->tenant(), $paymentMethod);
+
+        return $this->paymentMethods();
+    }
+
+    public function removePaymentMethod(string $paymentMethod): JsonResponse
+    {
+        $this->billing->removePaymentMethod($this->context->tenant(), $paymentMethod);
+
+        return $this->paymentMethods();
+    }
+
+    public function autoPay(Request $request): JsonResponse
+    {
+        $data = $request->validate(['enabled' => ['required', 'boolean']]);
+        $this->billing->setAutoPay($this->context->tenant(), (bool) $data['enabled']);
+
+        return $this->show();
+    }
+
+    public function payInvoice(Request $request, Invoice $invoice): JsonResponse
+    {
+        $data = $request->validate(['payment_method' => ['nullable', 'string', 'max:64', 'starts_with:pm_']]);
+
+        return response()->json(['data' => $this->billing->payInvoice($this->context->tenant(), $invoice, $data['payment_method'] ?? null)]);
+    }
+
+    /** After an in-page invoice payment was confirmed by the browser: mirror the invoice now. */
+    public function refreshInvoice(Invoice $invoice): JsonResponse
+    {
+        $this->billing->syncInvoice($invoice->stripe_invoice_id);
+
+        return $this->invoices();
     }
 
     public function cancel(): JsonResponse

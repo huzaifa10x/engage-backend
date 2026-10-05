@@ -17,7 +17,11 @@ const NAV: NavSection[] = [
     },
     {
         title: 'Revenue',
-        items: [{ label: 'Subscriptions', href: '/admin/subscriptions', ability: 'billing.view', match: '/admin/subscriptions' }],
+        items: [
+            { label: 'Subscriptions', href: '/admin/subscriptions', ability: 'billing.view', match: '/admin/subscriptions' },
+            { label: 'Plans', href: '/admin/plans', ability: 'billing.view', match: '/admin/plans' },
+            { label: 'Invoices', href: '/admin/invoices', ability: 'billing.view', match: '/admin/invoices' },
+        ],
     },
     {
         title: 'Operations',

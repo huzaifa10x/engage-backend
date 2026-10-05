@@ -21,6 +21,7 @@ return [
     | STRIPE_UAE_TAX_RATE_ID to use one you created yourself).
     */
     'stripe' => [
+        'key' => env('STRIPE_KEY'),                 // publishable key (pk_…): used by the card form in the browser
         'secret' => env('STRIPE_SECRET'),
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
         'api_version' => '2024-06-20',

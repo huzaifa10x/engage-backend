@@ -18,11 +18,11 @@ class Plan extends Model
 {
     use HasUuids;
 
-    protected $fillable = ['key', 'name', 'description', 'is_public', 'sort_order'];
+    protected $fillable = ['key', 'name', 'description', 'is_public', 'is_active', 'sort_order'];
 
     protected function casts(): array
     {
-        return ['is_public' => 'boolean', 'sort_order' => 'integer'];
+        return ['is_public' => 'boolean', 'is_active' => 'boolean', 'sort_order' => 'integer'];
     }
 
     public static function byKey(string $key): self
