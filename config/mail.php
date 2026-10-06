@@ -117,4 +117,20 @@ return [
         'name' => env('MAIL_FROM_NAME', env('APP_NAME', 'Laravel')),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Email design
+    |--------------------------------------------------------------------------
+    |
+    | Every system email (verification codes, password reset, invitations, WhatsApp
+    | number and template notices, receipts, admin 2FA codes) is rendered with the
+    | 10X Engage brand theme in resources/views/vendor/mail.
+    |
+    */
+
+    'markdown' => [
+        'theme' => 'engage',
+        'paths' => [resource_path('views/vendor/mail')],
+    ],
+
 ];
