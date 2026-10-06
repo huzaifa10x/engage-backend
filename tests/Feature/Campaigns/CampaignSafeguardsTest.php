@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\Campaigns;
 
 use App\Domain\Campaigns\Models\Campaign;
+use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\Models\Feature;
+use App\Domain\Plans\Models\PlanVersionFeature;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -69,6 +72,14 @@ final class CampaignSafeguardsTest extends TestCase
         ])->assertCreated()->json('data.id');
     }
 
+    /** The plan decides the campaign sending speed; set it for this workspace's plan. */
+    private function planRate(int $perHour): void
+    {
+        $feature = Feature::query()->where('key', 'campaign_send_rate_per_hour')->firstOrFail();
+        PlanVersionFeature::query()->where('feature_id', $feature->id)->update(['enabled' => true, 'limit_value' => $perHour]);
+        app(EntitlementService::class)->forget($this->tenant);
+    }
+
     private function sent(): int
     {
         return Http::recorded(fn (Request $r) => str_contains($r->url(), '/messages'))->count();
@@ -119,8 +130,8 @@ final class CampaignSafeguardsTest extends TestCase
 
     public function test_drip_sending_releases_one_batch_per_hour(): void
     {
-        $id = $this->draft(['batch_per_hour' => 10]); // minimum allowed
-        $this->tenantContext()->run($this->tenant, fn () => Campaign::query()->whereKey($id)->update(['batch_per_hour' => 2]));
+        $this->planRate(2);
+        $id = $this->draft();
 
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
         $this->assertSame(2, $this->sent());
@@ -138,8 +149,8 @@ final class CampaignSafeguardsTest extends TestCase
 
     public function test_a_red_quality_rating_pauses_the_campaign_and_blocks_resuming(): void
     {
-        $id = $this->draft(['batch_per_hour' => 10]);
-        $this->tenantContext()->run($this->tenant, fn () => Campaign::query()->whereKey($id)->update(['batch_per_hour' => 1]));
+        $this->planRate(1);
+        $id = $this->draft();
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
         $this->assertSame(1, $this->sent());
 
@@ -169,8 +180,8 @@ final class CampaignSafeguardsTest extends TestCase
 
     public function test_meta_flagging_the_number_pauses_running_campaigns(): void
     {
-        $id = $this->draft(['batch_per_hour' => 10]);
-        $this->tenantContext()->run($this->tenant, fn () => Campaign::query()->whereKey($id)->update(['batch_per_hour' => 1]));
+        $this->planRate(1);
+        $id = $this->draft();
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
 
         Http::fake(['graph.facebook.com/v25.0/106540352242922*' => Http::response(['id' => '106540352242922', 'quality_rating' => 'YELLOW'])]);

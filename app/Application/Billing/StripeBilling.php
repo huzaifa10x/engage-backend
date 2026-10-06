@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\Billing;
 
+use App\Application\Notifications\WorkspaceMailer;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Billing\Enums\BillingProvider;
 use App\Domain\Billing\Enums\SubscriptionStatus;
@@ -18,6 +19,8 @@ use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Infrastructure\Stripe\StripeClient;
 use App\Infrastructure\Stripe\StripeException;
+use App\Notifications\PaymentFailedNotification;
+use App\Notifications\PaymentReceiptNotification;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\ValidationException;
@@ -41,6 +44,7 @@ final class StripeBilling
         private readonly EntitlementService $entitlements,
         private readonly TenantContext $context,
         private readonly AuditLogger $audit,
+        private readonly WorkspaceMailer $mailer,
     ) {}
 
     public static function vatApplies(Tenant $tenant): bool
@@ -723,10 +727,43 @@ final class StripeBilling
         match (true) {
             $type === 'checkout.session.completed' && ($object['mode'] ?? null) === 'subscription' && isset($object['subscription']) => $this->syncSubscription($this->stripe->get('subscriptions/'.$object['subscription'])),
             in_array($type, ['customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted', 'customer.subscription.paused', 'customer.subscription.resumed'], true) => $this->syncSubscription($this->stripe->get("subscriptions/{$id}")),
-            str_starts_with($type, 'invoice.') && $id !== '' => $this->syncInvoice($id),
+            str_starts_with($type, 'invoice.') && $id !== '' => $this->invoiceEvent($type, $id, $object),
             in_array($type, ['charge.refunded', 'charge.refund.updated'], true) => $this->syncRefund($type === 'charge.refunded' ? $id : (string) ($object['charge'] ?? '')),
             default => null,
         };
+    }
+
+    /**
+     * Mirrors the invoice, then sends the customer email that belongs to the event: a receipt
+     * (VAT invoice) when it was paid, a notice the first time a payment fails. Each Stripe event
+     * is processed once, so each email is sent once.
+     *
+     * @param  array<string, mixed>  $object
+     */
+    private function invoiceEvent(string $type, string $invoiceId, array $object): void
+    {
+        $this->syncInvoice($invoiceId);
+        if (! in_array($type, ['invoice.paid', 'invoice.payment_failed'], true)) {
+            return;
+        }
+
+        $invoice = $this->context->bypass(fn () => Invoice::query()->where('stripe_invoice_id', $invoiceId)->first());
+        $tenant = $invoice !== null ? $this->context->bypass(fn () => Tenant::query()->find($invoice->tenant_id)) : null;
+        if ($invoice === null || $tenant === null) {
+            return;
+        }
+        $money = fn (int $minor): string => $invoice->currency.' '.number_format($minor / 100, 2);
+
+        if ($type === 'invoice.paid' && $invoice->amount_paid_minor > 0) {
+            $this->mailer->toBilling($tenant, new PaymentReceiptNotification($tenant->legal_name ?: $tenant->name, $invoice->number, $money($invoice->subtotal_minor),
+                $invoice->tax_minor > 0 ? $money($invoice->tax_minor) : null, $money($invoice->amount_paid_minor), $invoice->invoice_pdf, $tenant->tax_trn));
+        }
+        // First dunning notice only: Stripe retries several times, the customer gets one clear email.
+        if ($type === 'invoice.payment_failed' && (int) ($object['attempt_count'] ?? 1) <= 1) {
+            $retry = $object['next_payment_attempt'] ?? null;
+            $this->mailer->toBilling($tenant, new PaymentFailedNotification($tenant->legal_name ?: $tenant->name, $invoice->number, $money($invoice->total_minor),
+                is_numeric($retry) ? Carbon::createFromTimestamp((int) $retry)->format('j F Y') : null));
+        }
     }
 
     private function syncRefund(string $chargeId): void

@@ -91,6 +91,8 @@ final class CampaignController extends Controller
             'messaging_limit_tier' => $number?->messaging_limit_tier,
             'quality_rating' => $number?->quality_rating,
             'max_mps' => $number?->max_mps,
+            // Sending speed for this workspace's plan; not selectable by the sender.
+            'send_rate_per_hour' => $this->campaigns->sendRatePerHour(),
             'frequency_cap' => $marketing ? $settings->marketingFrequencyCap : 0,
             'quiet_until' => $marketing ? $settings->quietUntil(now(), $tenant->timezone ?: 'UTC')?->toIso8601String() : null,
             'quiet_hours' => $settings->quietHoursEnabled ? ['start' => $settings->quietHoursStart, 'end' => $settings->quietHoursEnd, 'timezone' => $tenant->timezone ?: 'UTC'] : null,
@@ -234,7 +236,6 @@ final class CampaignController extends Controller
             'audience_tag' => ['nullable', 'string', 'max:40'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'objective' => ['nullable', Rule::in(['promo', 'announcement', 're_engagement', 'reminder', 'update', 'other'])],
-            'batch_per_hour' => ['nullable', 'integer', 'min:10', 'max:100000'],
             'media_id' => ['nullable', 'uuid'],
             'variables' => ['nullable', 'array'],
             'variables.header' => ['nullable', 'array', 'max:1'],

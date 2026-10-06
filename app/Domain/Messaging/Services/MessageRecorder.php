@@ -102,6 +102,7 @@ final class MessageRecorder
         if ($inbound && $origin === MessageOrigin::Customer) {
             $contact->forceFill(['last_inbound_at' => $at])->save();
             $this->applyConsentKeyword($contact, $message);
+            app(AutoReply::class)->handle($message, $contact);
         }
 
         if ($media !== null) {

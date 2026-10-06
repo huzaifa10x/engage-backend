@@ -72,6 +72,8 @@ final class ConversationController extends Controller
         $data = $request->validate([
             'status' => ['sometimes', Rule::enum(ConversationStatus::class)],
             'assigned_membership_id' => ['sometimes', 'nullable', 'uuid'],
+            // false = no automatic replies in this conversation (a person is handling it).
+            'auto_reply_enabled' => ['sometimes', 'boolean'],
         ]);
 
         if (array_key_exists('assigned_membership_id', $data)) {
@@ -84,6 +86,9 @@ final class ConversationController extends Controller
 
         $before = ['status' => $conversation->status->value, 'assigned_membership_id' => $conversation->assigned_membership_id];
 
+        if (array_key_exists('auto_reply_enabled', $data)) {
+            $conversation->setAttribute('auto_reply_enabled', (bool) $data['auto_reply_enabled']);
+        }
         if (isset($data['status'])) {
             $conversation->status = ConversationStatus::from($data['status']);
             $conversation->closed_at = $data['status'] === ConversationStatus::Closed->value ? now() : null;

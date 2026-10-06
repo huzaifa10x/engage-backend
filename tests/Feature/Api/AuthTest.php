@@ -24,11 +24,11 @@ final class AuthTest extends TestCase
             ->assertJsonPath('data.user.email', 'jane@example.com')
             ->assertJsonPath('data.permissions', ['*'])
             ->assertJsonPath('data.entitlements.plan.key', 'pro')
+            ->assertJsonPath('data.user.email_verified', false)
             ->assertJsonCount(1, 'data.memberships');
 
-        $this->withHeaders(self::SPA)->getJson('/api/v1/tenant')
-            ->assertOk()
-            ->assertJsonPath('data.name', 'Acme Trading');
+        // The workspace exists, but nothing in it can be used until the email address is verified.
+        $this->withHeaders(self::SPA)->getJson('/api/v1/tenant')->assertStatus(403)->assertJsonPath('error.code', 'email_unverified');
     }
 
     public function test_login_rejects_bad_credentials_with_validation_envelope(): void

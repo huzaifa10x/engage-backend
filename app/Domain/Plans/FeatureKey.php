@@ -30,6 +30,7 @@ enum FeatureKey: string
     case MediaStorageMb = 'media_storage_mb';
     case AuditLogRetentionDays = 'audit_log_retention_days';
     case ApiRateLimitPerMinute = 'api_rate_limit_per_minute';
+    case CampaignSendRatePerHour = 'campaign_send_rate_per_hour';
 
     // Monthly metered levers
     case CampaignReachMonthly = 'campaign_reach_monthly';
@@ -79,7 +80,7 @@ enum FeatureKey: string
         return match ($this) {
             self::WhatsappNumbers, self::TeamSeats, self::CannedResponses, self::MessageTemplates,
             self::SavedSegments, self::Tags, self::CustomFields, self::WhatsappFlows, self::Chatbots,
-            self::MediaStorageMb, self::AuditLogRetentionDays, self::ApiRateLimitPerMinute => FeatureType::Limit,
+            self::MediaStorageMb, self::AuditLogRetentionDays, self::ApiRateLimitPerMinute, self::CampaignSendRatePerHour => FeatureType::Limit,
             self::CampaignReachMonthly, self::AutomationExecutionsMonthly => FeatureType::Metered,
             default => FeatureType::Boolean,
         };
@@ -91,6 +92,7 @@ enum FeatureKey: string
             self::MediaStorageMb => 'MB',
             self::AuditLogRetentionDays => 'days',
             self::ApiRateLimitPerMinute => 'requests/minute',
+            self::CampaignSendRatePerHour => 'messages/hour',
             self::CampaignReachMonthly => 'recipients/month',
             self::AutomationExecutionsMonthly => 'executions/month',
             default => null,
@@ -112,6 +114,7 @@ enum FeatureKey: string
             self::MediaStorageMb => 'Media storage',
             self::AuditLogRetentionDays => 'Audit log retention',
             self::ApiRateLimitPerMinute => 'API rate limit',
+            self::CampaignSendRatePerHour => 'Campaign sending speed',
             self::CampaignReachMonthly => 'Monthly campaign reach',
             self::AutomationExecutionsMonthly => 'Automation executions',
             self::Coexistence => 'WhatsApp Coexistence',

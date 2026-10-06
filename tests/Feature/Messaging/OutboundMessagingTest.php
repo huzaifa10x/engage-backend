@@ -80,6 +80,24 @@ final class OutboundMessagingTest extends TestCase
         });
     }
 
+    public function test_emoji_reach_whatsapp_unchanged_and_are_stored_exactly(): void
+    {
+        $conversation = $this->thread();
+        $this->fakeSend();
+        $this->actingAsMember($this->owner);
+        // Single emoji, skin-tone modifier, a joined family sequence, a flag, and Arabic text beside them.
+        $text = 'Thanks 😀👍🏽 👨‍👩‍👧 🇦🇪 شكراً ❤️';
+
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => $text])
+            ->assertStatus(202)->assertJsonPath('data.body', $text);
+
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/106540352242922/messages') && $r['text']['body'] === $text
+            && json_decode($r->body(), true)['text']['body'] === $text);
+        $this->assertSame($text, $this->tenantContext()->run($this->tenant, fn () => Message::query()->where('direction', 'outbound')->sole()->body));
+        $this->getJson("/api/v1/conversations/{$conversation->id}/messages")->assertOk()->assertJsonFragment(['body' => $text]);
+
+    }
+
     public function test_free_form_is_blocked_outside_the_window_but_templates_are_allowed(): void
     {
         $conversation = $this->thread();

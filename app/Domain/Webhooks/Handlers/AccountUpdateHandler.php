@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Domain\Webhooks\Handlers;
 
+use App\Application\Notifications\WorkspaceMailer;
 use App\Application\WhatsApp\ManageChannels;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
@@ -13,6 +15,7 @@ use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Enums\WabaStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\QualityEvent;
+use App\Notifications\ReconnectRequiredNotification;
 use Illuminate\Support\Collection;
 
 /**
@@ -45,11 +48,18 @@ final class AccountUpdateHandler implements WebhookHandler
         switch ($event) {
             case 'PARTNER_REMOVED':
             case 'ACCOUNT_OFFBOARDED':
+                $tenant = app(TenantContext::class)->tenantOrNull();
                 foreach ($numbers as $number) {
+                    $wasConnected = $number->status === PhoneNumberStatus::Connected;
                     $number->forceFill([
                         'status' => PhoneNumberStatus::Disconnected,
                         'coexistence_status' => $number->isCoexistence() ? CoexistenceStatus::Offboarded : $number->coexistence_status,
                     ])->save();
+
+                    if ($wasConnected && $tenant !== null) {
+                        app(WorkspaceMailer::class)->toOwners($tenant, new ReconnectRequiredNotification($tenant->name, (string) $number->display_phone_number,
+                            $event === 'PARTNER_REMOVED' ? '10X Engage was removed as a partner on your WhatsApp Business account.' : 'The number was disconnected from the WhatsApp Business Platform.'));
+                    }
                 }
                 if ($event === 'PARTNER_REMOVED' && $numbers->count() === $waba->phoneNumbers()->count()) {
                     // Our access to the WABA is gone: keep no usable credential for it.

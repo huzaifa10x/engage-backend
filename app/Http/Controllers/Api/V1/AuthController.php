@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Application\Identity\EmailVerification;
 use App\Application\Tenancy\RegisterWorkspace;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\LoginRequest;
@@ -20,11 +21,13 @@ use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
  */
 final class AuthController extends Controller
 {
-    public function register(RegisterRequest $request, RegisterWorkspace $register, MeController $me): JsonResponse
+    public function register(RegisterRequest $request, RegisterWorkspace $register, MeController $me, EmailVerification $verification): JsonResponse
     {
         $this->ensureStateful($request);
 
         $result = $register($request->validated());
+        // The account exists but cannot be used until this link is opened (EnsureEmailVerified).
+        $verification->send($result['user']);
 
         Auth::guard('web')->login($result['user']);
         $request->session()->regenerate();

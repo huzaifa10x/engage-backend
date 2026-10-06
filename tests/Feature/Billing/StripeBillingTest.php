@@ -9,10 +9,13 @@ use App\Domain\Billing\Models\Subscription;
 use App\Domain\Billing\SubscriptionService;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Notifications\PaymentFailedNotification;
+use App\Notifications\PaymentReceiptNotification;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
@@ -456,6 +459,33 @@ final class StripeBillingTest extends TestCase
         Artisan::call('engage:billing:reconcile');
         $this->actingAsMember($this->owner);
         $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'free')->assertJsonPath('data.subscription.provider', 'manual');
+    }
+
+    public function test_receipt_and_first_failed_payment_emails_are_sent_once(): void
+    {
+        $this->billingCountry('AE', '100200300400003', 'Nova Fitness LLC');
+        $this->subscribeAndPay();
+        Notification::fake();
+
+        $this->remoteInvoice = [
+            'id' => 'in_1', 'number' => 'ENG-0001', 'status' => 'paid', 'currency' => 'usd', 'customer' => 'cus_1',
+            'subtotal' => 7900, 'tax' => 395, 'total' => 8295, 'amount_paid' => 8295, 'created' => now()->timestamp,
+            'invoice_pdf' => 'https://pay.stripe.com/invoice/1/pdf', 'status_transitions' => ['finalized_at' => now()->timestamp, 'paid_at' => now()->timestamp],
+            'lines' => ['data' => [['description' => '1 × 10X Engage Growth']]], 'charge' => ['id' => 'ch_1', 'amount_refunded' => 0],
+        ];
+        $this->stripeEvent('invoice.paid', ['id' => 'in_1'], 'evt_paid')->assertOk();
+        $this->stripeEvent('invoice.paid', ['id' => 'in_1'], 'evt_paid')->assertOk(); // Stripe retry: no second email
+
+        Notification::assertSentOnDemandTimes(PaymentReceiptNotification::class, 1);
+        Notification::assertSentOnDemand(PaymentReceiptNotification::class,
+            fn (PaymentReceiptNotification $n) => $n->workspace === 'Nova Fitness LLC' && $n->number === 'ENG-0001' && $n->subtotal === 'USD 79.00'
+                && $n->tax === 'USD 3.95' && $n->total === 'USD 82.95' && $n->trn === '100200300400003' && $n->pdfUrl === 'https://pay.stripe.com/invoice/1/pdf');
+
+        // A renewal fails: one notice on the first attempt, nothing more on Stripe's later retries.
+        $this->remoteInvoice = array_merge($this->remoteInvoice, ['status' => 'open', 'amount_paid' => 0]);
+        $this->stripeEvent('invoice.payment_failed', ['id' => 'in_1', 'attempt_count' => 1, 'next_payment_attempt' => now()->addDays(3)->timestamp])->assertOk();
+        $this->stripeEvent('invoice.payment_failed', ['id' => 'in_1', 'attempt_count' => 2])->assertOk();
+        Notification::assertSentOnDemandTimes(PaymentFailedNotification::class, 1);
     }
 
     public function test_webhooks_must_be_signed_and_billing_is_owner_only(): void

@@ -126,6 +126,7 @@ final class PlanCatalogSeeder extends Seeder
             'whatsapp_flows' => [false, 1, 5, $U, $U],
             'chatbots' => [false, 1, 5, $U, $U],
             'api_rate_limit_per_minute' => [120, 300, 600, 1200, 3000],
+            'campaign_send_rate_per_hour' => [false, 500, 2000, 5000, 10000],
             'media_storage_mb' => [250, 1024, 5120, 20480, $U],
             'audit_log_retention_days' => [30, 90, 180, 365, $U],
             // Monthly metered levers

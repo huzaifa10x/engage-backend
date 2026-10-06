@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\WhatsApp\Jobs;
 
+use App\Application\Notifications\WorkspaceMailer;
 use App\Application\WhatsApp\PhoneNumberSync;
 use App\Application\WhatsApp\WhatsappCredentials;
 use App\Domain\Audit\AuditLogger;
@@ -19,6 +20,7 @@ use App\Domain\WhatsApp\Models\WabaAccount;
 use App\Infrastructure\Meta\GraphClient;
 use App\Infrastructure\Meta\MetaApiException;
 use App\Infrastructure\Secrets\SecretStore;
+use App\Notifications\NumberConnectedNotification;
 use App\Support\Queue\QueueName;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -109,6 +111,11 @@ final class ProvisionWhatsappAccount implements ShouldQueue
                         throw new MetaApiException('The number is not active on the WhatsApp Cloud API yet.', 503);
                     }
                     $number->forceFill(['status' => PhoneNumberStatus::Connected])->save();
+
+                    $tenant = app(TenantContext::class)->tenantOrNull();
+                    if ($tenant !== null) {
+                        app(WorkspaceMailer::class)->toOwners($tenant, new NumberConnectedNotification($tenant->name, (string) $number->display_phone_number, $number->verified_name));
+                    }
                 });
 
                 if ($number->isCoexistence()) {

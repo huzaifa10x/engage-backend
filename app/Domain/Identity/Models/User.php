@@ -6,6 +6,7 @@ namespace App\Domain\Identity\Models;
 
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\Scopes\TenantScope;
+use App\Notifications\ResetPasswordNotification;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -60,6 +61,13 @@ class User extends Authenticatable
     public function memberships(): HasMany
     {
         return $this->hasMany(TenantMembership::class)->withoutGlobalScope(TenantScope::class);
+    }
+
+    /** Password reset link → the web app's reset page (email 2 of the system emails). */
+    public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
+    {
+        $url = config('engage.frontend_url').'/reset-password?'.http_build_query(['token' => $token, 'email' => $this->email]);
+        $this->notify(new ResetPasswordNotification($url, (int) config('auth.passwords.users.expire', 60)));
     }
 
     public function isDisabled(): bool

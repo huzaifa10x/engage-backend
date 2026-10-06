@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace App\Domain\Webhooks\Handlers;
 
+use App\Application\Notifications\WorkspaceMailer;
 use App\Domain\Templates\Enums\TemplateStatus;
 use App\Domain\Templates\Jobs\SyncMessageTemplates;
 use App\Domain\Templates\Models\MessageTemplate;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
+use App\Notifications\TemplateRejectedNotification;
 
 /**
  * Real-time template changes from Meta: review decisions and pauses (status), quality rating,
@@ -64,11 +67,17 @@ final class TemplateUpdatesHandler implements WebhookHandler
         $status = TemplateStatus::normalize($event);
         $reason = isset($value['reason']) ? strtoupper((string) $value['reason']) : null;
 
+        $newlyRejected = $status === TemplateStatus::REJECTED && $template->status !== TemplateStatus::REJECTED;
         $template->forceFill([
             'status' => $status,
             'rejected_reason' => $status === TemplateStatus::REJECTED && $reason !== null && $reason !== 'NONE' ? mb_substr($reason, 0, 64) : null,
             'last_synced_at' => now(),
         ])->save();
+
+        $tenant = app(TenantContext::class)->tenantOrNull();
+        if ($newlyRejected && $tenant !== null) {
+            app(WorkspaceMailer::class)->toOwners($tenant, new TemplateRejectedNotification($tenant->name, (string) $template->name, (string) $template->language, $template->rejected_reason));
+        }
 
         if ($status === TemplateStatus::DELETED) {
             $template->delete();

@@ -36,6 +36,11 @@ use Illuminate\Validation\ValidationException;
  */
 final class ManageCampaigns
 {
+    /** Platform ceiling, whatever the plan says. */
+    public const MAX_RATE_PER_HOUR = 20000;
+
+    public const DEFAULT_RATE_PER_HOUR = 500;
+
     private const MEDIA_HEADERS = ['IMAGE' => 'image', 'VIDEO' => 'video', 'DOCUMENT' => 'document'];
 
     public function __construct(
@@ -116,7 +121,6 @@ final class ManageCampaigns
             'audience_tag' => isset($data['audience_tag']) && trim((string) $data['audience_tag']) !== '' ? trim((string) $data['audience_tag']) : null,
             'notes' => isset($data['notes']) && trim((string) $data['notes']) !== '' ? trim((string) $data['notes']) : null,
             'objective' => $data['objective'] ?? null,
-            'batch_per_hour' => isset($data['batch_per_hour']) && (int) $data['batch_per_hour'] > 0 ? (int) $data['batch_per_hour'] : null,
         ])->save();
 
         $this->audit->record($campaign->wasRecentlyCreated ? 'campaign.created' : 'campaign.updated', $campaign, after: ['name' => $campaign->name]);
@@ -163,6 +167,8 @@ final class ManageCampaigns
 
         $campaign->forceFill([
             'audience' => $audience,
+            // The sending speed is fixed at launch from the workspace's plan.
+            'batch_per_hour' => $this->sendRatePerHour(),
             'matched_count' => $counts['matched'],
             'eligible_count' => $counts['eligible'],
             'status' => $scheduled ? CampaignStatus::Scheduled : CampaignStatus::Sending,
@@ -256,7 +262,7 @@ final class ManageCampaigns
         $this->entitlements->ensureEnabled($this->context->tenant(), FeatureKey::Broadcasts);
 
         $copy = Campaign::query()->create(array_merge(
-            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'notes', 'objective', 'batch_per_hour']),
+            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'notes', 'objective']),
             ['name' => mb_substr($campaign->name, 0, 112).' (copy)', 'status' => CampaignStatus::Draft, 'created_by_membership_id' => $this->context->membership()?->id],
         ));
         $this->audit->record('campaign.duplicated', $copy, meta: ['from' => $campaign->id]);
@@ -302,6 +308,21 @@ final class ManageCampaigns
             ->pluck('campaign_recipients.contact_id')
             ->mapWithKeys(fn (string $id) => [$id => true])
             ->all();
+    }
+
+    /**
+     * How fast campaigns of this workspace are sent (messages per hour). Set by the plan — never
+     * chosen by the sender — so nobody can pick a speed that hurts their number or our platform.
+     */
+    public function sendRatePerHour(): int
+    {
+        $entitlement = $this->entitlements->for($this->context->tenant())->get(FeatureKey::CampaignSendRatePerHour);
+
+        return match (true) {
+            $entitlement->isUnlimited() => self::MAX_RATE_PER_HOUR,
+            $entitlement->enabled && (int) $entitlement->limit > 0 => min(self::MAX_RATE_PER_HOUR, (int) $entitlement->limit),
+            default => self::DEFAULT_RATE_PER_HOUR,
+        };
     }
 
     /** Meta's per-number limit of business-initiated conversations per rolling 24 hours (null = unlimited / unknown). */

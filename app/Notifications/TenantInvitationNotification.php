@@ -35,8 +35,10 @@ final class TenantInvitationNotification extends Notification implements ShouldQ
 
         return (new MailMessage)
             ->subject("You've been invited to {$this->tenantName} on 10X Engage")
-            ->line("You've been invited to join {$this->tenantName} as {$this->roleName}.")
+            ->greeting('You have been invited')
+            ->line("You've been invited to join {$this->tenantName} on 10X Engage as {$this->roleName}.")
+            ->line('10X Engage is where the team answers WhatsApp customers from one shared inbox.')
             ->action('Accept invitation', $url)
-            ->line('This invitation expires in '.((int) config('engage.invitations.ttl_hours') / 24).' days.');
+            ->line('This invitation expires in '.((int) config('engage.invitations.ttl_hours') / 24).' days. If you were not expecting it, you can ignore this email.');
     }
 }

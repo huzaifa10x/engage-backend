@@ -76,9 +76,12 @@ final class SendCampaignBatch implements ShouldQueue
         }
 
         // Drip: at most batch_per_hour messages per run, then wait an hour.
-        $limit = $campaign->batch_per_hour !== null ? max(1, $campaign->batch_per_hour) : self::BATCH;
+        // Pace: `batch_per_hour` messages per hour (set from the plan at launch), in slices of at most
+        // 1,000 so no single job runs long; the wait after a slice is proportional to its size.
+        $rate = $campaign->batch_per_hour !== null ? max(1, $campaign->batch_per_hour) : null;
+        $limit = $rate !== null ? min($rate, 1000) : self::BATCH;
         $recipients = CampaignRecipient::query()->with('contact')->where('campaign_id', $campaign->id)
-            ->where('status', 'pending')->orderBy('id')->limit(min($limit, 2000))->get();
+            ->where('status', 'pending')->orderBy('id')->limit($limit)->get();
         $capped = $marketing ? $campaigns->cappedContactIds($recipients->pluck('contact_id')->all(), $campaign->id) : [];
         if ($campaign->next_batch_at !== null) {
             $campaign->forceFill(['next_batch_at' => null])->save();
@@ -127,8 +130,9 @@ final class SendCampaignBatch implements ShouldQueue
 
         $remaining = CampaignRecipient::query()->where('campaign_id', $campaign->id)->where('status', 'pending')->exists();
         if ($remaining) {
-            if ($campaign->batch_per_hour !== null) {
-                Campaign::query()->whereKey($campaign->id)->where('status', CampaignStatus::Sending->value)->update(['next_batch_at' => now()->addHour()]);
+            if ($rate !== null) {
+                $wait = (int) ceil(3600 * $recipients->count() / $rate); // seconds until the next slice
+                Campaign::query()->whereKey($campaign->id)->where('status', CampaignStatus::Sending->value)->update(['next_batch_at' => now()->addSeconds(max(60, $wait))]);
             } else {
                 self::dispatch($campaign->id);
             }
