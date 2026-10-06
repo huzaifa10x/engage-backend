@@ -56,15 +56,33 @@ final class StripeBilling
         $params = array_filter([
             'name' => $tenant->legal_name ?: $tenant->name,
             'email' => $tenant->billing_email ?: $fallbackEmail,
-            'address' => $tenant->country !== null ? ['country' => strtoupper($tenant->country)] : null,
+            'phone' => $tenant->phone,
+            'address' => $tenant->country !== null ? array_filter([
+                'country' => strtoupper($tenant->country),
+                'line1' => $tenant->address_line1,
+                'line2' => $tenant->address_line2,
+                'city' => $tenant->city,
+                'state' => $tenant->region,
+                'postal_code' => $tenant->postal_code,
+            ]) : null,
             'metadata' => ['tenant_id' => $tenant->id, 'workspace' => $tenant->name],
         ]);
 
+        if ($tenant->stripe_customer_id !== null) {
+            try {
+                $this->stripe->post("customers/{$tenant->stripe_customer_id}", $params);
+            } catch (StripeException $e) {
+                if ($e->stripeCode !== 'resource_missing') {
+                    throw $e;
+                }
+                // The stored customer belongs to the other Stripe mode (test ↔ live) or was deleted:
+                // forget it and create a fresh one below.
+                $this->context->bypass(fn () => $tenant->forceFill(['stripe_customer_id' => null])->save());
+            }
+        }
         if ($tenant->stripe_customer_id === null) {
-            $customer = $this->stripe->post('customers', $params, "customer:{$tenant->id}");
+            $customer = $this->stripe->post('customers', $params);
             $this->context->bypass(fn () => $tenant->forceFill(['stripe_customer_id' => (string) $customer['id']])->save());
-        } else {
-            $this->stripe->post("customers/{$tenant->stripe_customer_id}", $params);
         }
         $customerId = (string) $tenant->stripe_customer_id;
 
@@ -89,14 +107,12 @@ final class StripeBilling
         return $customerId;
     }
 
-    // ── Starting / changing a subscription ─────────────────────────────────────────────────
-
     // ── Payment methods (cards are entered in Stripe's secure fields inside our page) ───────
 
     /** A SetupIntent client secret: the browser uses it to save a card without it touching our servers. */
     public function setupIntent(Tenant $tenant, ?string $fallbackEmail = null): string
     {
-        $customer = $tenant->stripe_customer_id ?? $this->syncCustomer($tenant, $fallbackEmail);
+        $customer = $this->syncCustomer($tenant, $fallbackEmail); // also heals a customer left over from the other Stripe mode
 
         return (string) $this->stripe->post('setup_intents', ['customer' => $customer, 'usage' => 'off_session', 'payment_method_types' => ['card']])['client_secret'];
     }
@@ -107,7 +123,14 @@ final class StripeBilling
         if ($tenant->stripe_customer_id === null) {
             return [];
         }
-        $customer = $this->stripe->get("customers/{$tenant->stripe_customer_id}");
+        try {
+            $customer = $this->stripe->get("customers/{$tenant->stripe_customer_id}");
+        } catch (StripeException $e) {
+            if ($e->stripeCode === 'resource_missing') {
+                return []; // customer from the other Stripe mode: recreated on the next billing action
+            }
+            throw $e;
+        }
         $default = $customer['invoice_settings']['default_payment_method'] ?? null;
         $methods = (array) ($this->stripe->get("customers/{$tenant->stripe_customer_id}/payment_methods", ['type' => 'card', 'limit' => 20])['data'] ?? []);
 
@@ -145,8 +168,8 @@ final class StripeBilling
 
         $methods = $this->paymentMethods($tenant);
         $live = $this->liveStripeSubscription($tenant);
-        if (count($methods) === 1 && $live !== null && $live->auto_pay && $live->cancel_at === null) {
-            throw ValidationException::withMessages(['payment_method' => 'This is the only card on an active subscription. Add another card first, or turn off auto-pay.']);
+        if (count($methods) === 1 && $live !== null && $live->cancel_at === null) {
+            throw ValidationException::withMessages(['payment_method' => 'This is the only card on an active subscription. Add another card first, or cancel the plan.']);
         }
 
         $this->stripe->post("payment_methods/{$paymentMethodId}/detach");
@@ -168,81 +191,165 @@ final class StripeBilling
         }
     }
 
-    // ── Starting / changing a subscription (in-app, no redirect) ───────────────────────────
+    // ── Starting / changing a subscription (in-app, always confirmed first) ────────────────
 
     /**
-     * Move the workspace to a paid plan using a saved card.
+     * The billing summary shown before the customer confirms: exactly what Stripe will invoice.
      *
-     * New subscription → Stripe creates the first invoice and a PaymentIntent; the browser confirms
-     * it with Stripe (this is where a bank's 3-D Secure step appears, inside our page) and the
-     * plan becomes active once the payment has succeeded. Existing subscription → the plan is
-     * switched in place and prorated.
+     * New subscription → the plan price (+ VAT). Plan or interval change → Stripe's own proration:
+     * the unused part of the current period comes back as a credit, the new plan is charged in
+     * full, and a new billing period starts today. Nothing here is calculated by us.
+     *
+     * @return array<string, mixed>
+     */
+    public function preview(Tenant $tenant, string $planKey, string $interval, ?TenantMembership $actor = null): array
+    {
+        [$version, $plan] = $this->purchasable($planKey, $interval);
+        $customer = $this->syncCustomer($tenant, $actor?->user()->value('email'));
+        $live = $this->liveStripeSubscription($tenant);
+
+        $invoice = $this->withCatalog($version, function () use ($tenant, $version, $interval, $customer, $live): array {
+            $price = $this->priceId($version, $interval);
+
+            if ($live === null) {
+                return $this->stripe->get('invoices/upcoming', array_filter([
+                    'customer' => $customer,
+                    'subscription_items' => [['price' => $price, 'quantity' => 1]],
+                    'subscription_default_tax_rates' => self::vatApplies($tenant) ? [$this->uaeTaxRateId()] : null,
+                ]));
+            }
+
+            $remote = $this->stripe->get("subscriptions/{$live->provider_subscription_id}");
+
+            return $this->stripe->get('invoices/upcoming', [
+                'customer' => $customer,
+                'subscription' => $live->provider_subscription_id,
+                'subscription_items' => [['id' => $remote['items']['data'][0]['id'] ?? null, 'price' => $price]],
+                'subscription_proration_behavior' => 'always_invoice',
+                'subscription_billing_cycle_anchor' => 'now',
+            ]);
+        });
+
+        $lines = [];
+        $credit = 0;
+        foreach ((array) ($invoice['lines']['data'] ?? []) as $line) {
+            $amount = (int) ($line['amount'] ?? 0);
+            $credit += $amount < 0 ? -$amount : 0;
+            $lines[] = ['description' => (string) ($line['description'] ?? ''), 'amount_minor' => $amount, 'proration' => (bool) ($line['proration'] ?? false)];
+        }
+        $total = (int) ($invoice['total'] ?? 0);
+        $due = (int) ($invoice['amount_due'] ?? max(0, $total));
+        $current = $live?->planVersion()->with('plan')->first();
+        $amount = (int) ($interval === 'yearly' ? $version->price_yearly_minor : $version->price_monthly_minor);
+
+        return [
+            'plan' => ['key' => $plan->key, 'name' => $plan->name],
+            'interval' => $interval,
+            'price_minor' => $amount,
+            'currency' => strtoupper((string) ($invoice['currency'] ?? $version->currency)),
+            'change' => $live !== null,
+            'from' => $live === null ? null : ['plan' => $current?->plan?->name, 'interval' => $live->billing_interval],
+            'lines' => $lines,
+            'unused_credit_minor' => $credit,
+            'subtotal_minor' => (int) ($invoice['subtotal'] ?? 0),
+            'tax_minor' => (int) ($invoice['tax'] ?? 0),
+            'tax_percent' => self::vatApplies($tenant) ? (float) config('engage.stripe.uae_vat_percent', 5) : 0,
+            'total_minor' => $total,
+            // Money already on the account (earlier credits) that Stripe applies to this invoice.
+            'balance_applied_minor' => max(0, (int) ($invoice['starting_balance'] ?? 0) * -1 - max(0, (int) ($invoice['ending_balance'] ?? 0) * -1)),
+            'amount_due_minor' => max(0, $due),
+            // A change that costs less than the unused credit: the rest stays on the account for future invoices.
+            'credit_kept_minor' => $total < 0 ? -$total : 0,
+            'renews_at' => ($interval === 'yearly' ? now()->addYear() : now()->addMonth())->toIso8601String(),
+            'has_payment_method' => $this->paymentMethods($tenant) !== [],
+        ];
+    }
+
+    /**
+     * Carry out what preview() showed, after the customer confirmed.
+     *
+     * New subscription → first invoice + PaymentIntent, confirmed by the browser. Change → the
+     * subscription is updated with `pending_if_incomplete`: Stripe invoices the prorated amount
+     * NOW and only applies the new plan once that payment has succeeded.
      *
      * @return array{status: string, updated: bool, client_secret: ?string, payment_method: ?string}
      */
     public function subscribe(Tenant $tenant, string $planKey, string $interval, ?TenantMembership $actor = null, ?string $paymentMethodId = null): array
     {
-        $version = Plan::query()->where('key', $planKey)->where('is_public', true)->where('is_active', true)->first()?->activeVersion();
-        $amount = $interval === 'yearly' ? $version?->price_yearly_minor : $version?->price_monthly_minor;
-        if ($version === null || $amount === null || $amount <= 0) {
-            throw ValidationException::withMessages(['plan' => 'This plan cannot be bought online. Contact sales.']);
-        }
+        [$version] = $this->purchasable($planKey, $interval);
         if ($tenant->country === null) {
             throw ValidationException::withMessages(['country' => 'Choose your billing country first, so the correct tax is applied.']);
         }
 
-        $price = $this->priceId($version, $interval);
         $customer = $this->syncCustomer($tenant, $actor?->user()->value('email'));
-        $taxRates = self::vatApplies($tenant) ? [$this->uaeTaxRateId()] : [];
-
-        $live = $this->liveStripeSubscription($tenant);
-        if ($live !== null) {
-            $remote = $this->stripe->get("subscriptions/{$live->provider_subscription_id}");
-            $updated = $this->stripe->post("subscriptions/{$live->provider_subscription_id}", [
-                'items' => [['id' => $remote['items']['data'][0]['id'] ?? null, 'price' => $price]],
-                'proration_behavior' => 'create_prorations',
-                'cancel_at_period_end' => 'false',
-                'default_tax_rates' => $taxRates === [] ? '' : $taxRates,
-                'metadata' => ['tenant_id' => $tenant->id, 'plan_version_id' => $version->id],
-            ]);
-            $this->syncSubscription($updated);
-            $this->audit->record('billing.plan_switched', $tenant, meta: ['plan' => $planKey, 'interval' => $interval]);
-
-            return ['status' => 'active', 'updated' => true, 'client_secret' => null, 'payment_method' => null];
-        }
-
         $methods = $this->paymentMethods($tenant);
         $method = $paymentMethodId ?? (array_values(array_filter($methods, fn (array $m) => $m['is_default']))[0]['id'] ?? null);
         if ($method === null || ! in_array($method, array_column($methods, 'id'), true)) {
             throw ValidationException::withMessages(['payment_method' => 'Add a card first, then choose your plan.']);
         }
 
-        $subscription = $this->stripe->post('subscriptions', [
-            'customer' => $customer,
-            'items' => [['price' => $price]],
-            'default_payment_method' => $method,
-            'default_tax_rates' => $taxRates ?: null,
-            'metadata' => ['tenant_id' => $tenant->id, 'plan_version_id' => $version->id],
-            'payment_behavior' => 'default_incomplete',
-            'payment_settings' => ['save_default_payment_method' => 'on_subscription', 'payment_method_types' => ['card']],
-            'expand' => ['latest_invoice.payment_intent'],
-        ]);
-        $this->audit->record('billing.subscription_started', $tenant, meta: ['plan' => $planKey, 'interval' => $interval]);
+        $live = $this->liveStripeSubscription($tenant);
 
-        $intent = $subscription['latest_invoice']['payment_intent'] ?? null;
-        if (($subscription['status'] ?? null) === 'active' || ! is_array($intent) || ($intent['status'] ?? null) === 'succeeded') {
+        $subscription = $this->withCatalog($version, function () use ($tenant, $version, $interval, $customer, $method, $live): array {
+            $price = $this->priceId($version, $interval);
+            $taxRates = self::vatApplies($tenant) ? [$this->uaeTaxRateId()] : [];
+
+            if ($live === null) {
+                return $this->stripe->post('subscriptions', [
+                    'customer' => $customer,
+                    'items' => [['price' => $price]],
+                    'default_payment_method' => $method,
+                    'default_tax_rates' => $taxRates ?: null,
+                    'metadata' => ['tenant_id' => $tenant->id, 'plan_version_id' => $version->id],
+                    'payment_behavior' => 'default_incomplete',
+                    'payment_settings' => ['save_default_payment_method' => 'on_subscription', 'payment_method_types' => ['card']],
+                    'expand' => ['latest_invoice.payment_intent'],
+                ]);
+            }
+
+            // Settings that may not travel with a pending update go first (they change no money).
+            $remote = $this->stripe->post("subscriptions/{$live->provider_subscription_id}", [
+                'cancel_at_period_end' => 'false',
+                'collection_method' => 'charge_automatically',
+                'default_payment_method' => $method,
+                'default_tax_rates' => $taxRates === [] ? '' : $taxRates,
+            ]);
+
+            return $this->stripe->post("subscriptions/{$live->provider_subscription_id}", [
+                'items' => [['id' => $remote['items']['data'][0]['id'] ?? null, 'price' => $price]],
+                'proration_behavior' => 'always_invoice',   // charge the difference today …
+                'billing_cycle_anchor' => 'now',            // … and start a new period on the new plan
+                'payment_behavior' => 'pending_if_incomplete', // the plan changes only after the payment succeeds
+                'expand' => ['latest_invoice.payment_intent'],
+            ]);
+        });
+
+        $this->audit->record($live === null ? 'billing.subscription_started' : 'billing.plan_change_requested', $tenant, meta: ['plan' => $planKey, 'interval' => $interval]);
+
+        $intent = is_array($subscription['latest_invoice']['payment_intent'] ?? null) ? $subscription['latest_invoice']['payment_intent'] : null;
+        $pending = $live === null ? ($subscription['status'] ?? null) !== 'active' : ! empty($subscription['pending_update']);
+
+        if (! $pending || $intent === null || ($intent['status'] ?? null) === 'succeeded') {
             $this->syncSubscription($this->stripe->get('subscriptions/'.$subscription['id']));
 
-            return ['status' => 'active', 'updated' => false, 'client_secret' => null, 'payment_method' => null];
+            return ['status' => 'active', 'updated' => $live !== null, 'client_secret' => null, 'payment_method' => null];
+        }
+
+        if ($live !== null && ($intent['status'] ?? null) === 'requires_payment_method') {
+            // The card was declined outright: withdraw the invoice, the current plan stays as it is.
+            $this->voidInvoice($subscription['latest_invoice']['id'] ?? null);
+            $reason = (string) ($intent['last_payment_error']['message'] ?? 'Your card was declined.');
+
+            throw ValidationException::withMessages(['payment_method' => "{$reason} Your plan was not changed."]);
         }
 
         // The browser now confirms the payment with Stripe (card check / 3-D Secure), in-page.
-        return ['status' => 'requires_confirmation', 'updated' => false, 'client_secret' => (string) $intent['client_secret'], 'payment_method' => $method];
+        return ['status' => 'requires_confirmation', 'updated' => $live !== null, 'client_secret' => (string) $intent['client_secret'], 'payment_method' => $method];
     }
 
     /**
      * After the browser finished (or gave up on) a payment: read the truth from Stripe now rather
-     * than waiting for the webhook. An unpaid first attempt is cancelled so it cannot linger.
+     * than waiting for the webhook. An unpaid attempt is withdrawn so it cannot linger.
      *
      * @return 'active'|'pending'|'failed'
      */
@@ -255,6 +362,17 @@ final class StripeBilling
 
         foreach ($subscriptions as $remote) {
             if (in_array($remote['status'] ?? '', ['active', 'trialing', 'past_due'], true)) {
+                if (! empty($remote['pending_update'])) {
+                    // A plan change is still waiting for its payment.
+                    if ($abandon) {
+                        $this->voidInvoice(is_string($remote['latest_invoice'] ?? null) ? $remote['latest_invoice'] : null);
+                        $this->syncSubscription($this->stripe->get('subscriptions/'.$remote['id']));
+
+                        return 'failed';
+                    }
+
+                    return 'pending';
+                }
                 $this->syncSubscription($remote);
 
                 return 'active';
@@ -275,25 +393,117 @@ final class StripeBilling
         return 'failed';
     }
 
-    /** Auto-pay on: the saved card is charged at each renewal. Off: an invoice is issued and paid by hand. */
-    public function setAutoPay(Tenant $tenant, bool $enabled): void
+    /**
+     * Every card payment of this workspace, newest first (straight from Stripe).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function payments(Tenant $tenant): array
     {
-        $live = $this->liveStripeSubscription($tenant);
-        if ($live === null) {
-            throw ValidationException::withMessages(['billing' => 'There is no paid subscription yet.']);
+        if ($tenant->stripe_customer_id === null) {
+            return [];
         }
-        if ($enabled && $this->paymentMethods($tenant) === []) {
-            throw ValidationException::withMessages(['payment_method' => 'Add a card before turning on auto-pay.']);
+        try {
+            $charges = (array) ($this->stripe->get('charges', ['customer' => $tenant->stripe_customer_id, 'limit' => 50])['data'] ?? []);
+        } catch (StripeException $e) {
+            if ($e->stripeCode === 'resource_missing') {
+                return [];
+            }
+            throw $e;
         }
 
-        $this->syncSubscription($this->stripe->post("subscriptions/{$live->provider_subscription_id}", $enabled
-            ? ['collection_method' => 'charge_automatically']
-            : ['collection_method' => 'send_invoice', 'days_until_due' => 7]));
-        $this->audit->record($enabled ? 'billing.auto_pay_enabled' : 'billing.auto_pay_disabled', $tenant);
+        return array_map(fn (array $c) => [
+            'id' => (string) $c['id'],
+            'amount_minor' => (int) ($c['amount'] ?? 0),
+            'amount_refunded_minor' => (int) ($c['amount_refunded'] ?? 0),
+            'currency' => strtoupper((string) ($c['currency'] ?? 'usd')),
+            'status' => ($c['refunded'] ?? false) ? 'refunded' : (((int) ($c['amount_refunded'] ?? 0)) > 0 ? 'partially_refunded' : (string) ($c['status'] ?? 'pending')),
+            'failure_message' => $c['failure_message'] ?? null,
+            'card_brand' => $c['payment_method_details']['card']['brand'] ?? null,
+            'card_last4' => $c['payment_method_details']['card']['last4'] ?? null,
+            'description' => $c['description'] ?? null,
+            'receipt_url' => $c['receipt_url'] ?? null,
+            'created_at' => isset($c['created']) ? Carbon::createFromTimestamp((int) $c['created'])->toIso8601String() : null,
+        ], array_values($charges));
     }
 
     /**
-     * Pay an open invoice with a saved card (auto-pay off, or after a failed renewal).
+     * The next renewal charge of the running subscription, as Stripe will invoice it.
+     *
+     * @return ?array{amount_due_minor: int, currency: string, date: ?string}
+     */
+    public function upcoming(Tenant $tenant): ?array
+    {
+        $live = $this->liveStripeSubscription($tenant);
+        if ($live === null || $live->cancel_at !== null) {
+            return null;
+        }
+        try {
+            $invoice = $this->stripe->get('invoices/upcoming', ['customer' => $tenant->stripe_customer_id, 'subscription' => $live->provider_subscription_id]);
+        } catch (StripeException) {
+            return null; // nothing upcoming
+        }
+        $at = $invoice['next_payment_attempt'] ?? $invoice['period_end'] ?? null;
+
+        return [
+            'amount_due_minor' => (int) ($invoice['amount_due'] ?? 0),
+            'currency' => strtoupper((string) ($invoice['currency'] ?? 'usd')),
+            'date' => is_numeric($at) ? Carbon::createFromTimestamp((int) $at)->toIso8601String() : null,
+        ];
+    }
+
+    /** @return array{0: PlanVersion, 1: Plan} */
+    private function purchasable(string $planKey, string $interval): array
+    {
+        $plan = Plan::query()->where('key', $planKey)->where('is_public', true)->where('is_active', true)->first();
+        $version = $plan?->activeVersion();
+        $amount = $interval === 'yearly' ? $version?->price_yearly_minor : $version?->price_monthly_minor;
+        if ($plan === null || $version === null || $amount === null || $amount <= 0) {
+            throw ValidationException::withMessages(['plan' => $interval === 'yearly' && $version?->price_monthly_minor ? 'This plan has no yearly price. Choose monthly billing.' : 'This plan cannot be bought online. Contact sales.']);
+        }
+
+        return [$version, $plan];
+    }
+
+    /**
+     * Runs a Stripe call that uses catalog objects (price, tax rate). If one of them does not exist
+     * in the current Stripe mode (test ↔ live switch), the stored IDs are dropped and it runs once
+     * more, which re-creates them.
+     *
+     * @template T
+     *
+     * @param  callable(): T  $call
+     * @return T
+     */
+    private function withCatalog(PlanVersion $version, callable $call): mixed
+    {
+        try {
+            return $call();
+        } catch (StripeException $e) {
+            if ($e->stripeCode !== 'resource_missing' || preg_match('/No such (price|tax rate|tax_rate)/i', $e->getMessage()) !== 1) {
+                throw $e;
+            }
+            $version->forceFill(['stripe_price_monthly_id' => null, 'stripe_price_yearly_id' => null])->save();
+            Cache::forget('stripe:uae_vat_tax_rate');
+
+            return $call();
+        }
+    }
+
+    private function voidInvoice(mixed $invoiceId): void
+    {
+        if (! is_string($invoiceId) || $invoiceId === '') {
+            return;
+        }
+        try {
+            $this->stripe->post("invoices/{$invoiceId}/void");
+        } catch (StripeException) {
+            // Already paid or void: nothing to withdraw.
+        }
+    }
+
+    /**
+     * Pay an open invoice with a saved card (after a failed renewal).
      *
      * @return array{status: string, client_secret: ?string, payment_method: ?string}
      */

@@ -32,7 +32,7 @@ final class TenantController extends Controller
         $audit->record('tenant.updated', $tenant, before: $before, after: $request->validated());
 
         // The billing country decides VAT: keep the Stripe customer and subscription in step.
-        if ($tenant->stripe_customer_id !== null && $tenant->wasChanged(['country', 'billing_email', 'name']) && $stripe->configured()) {
+        if ($tenant->stripe_customer_id !== null && $tenant->wasChanged(['country', 'billing_email', 'name', 'legal_name', 'phone', 'address_line1', 'address_line2', 'city', 'region', 'postal_code']) && $stripe->configured()) {
             try {
                 $billing->syncCustomer($tenant);
                 $billing->applyTaxToSubscription($tenant);

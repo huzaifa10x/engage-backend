@@ -29,6 +29,14 @@ return [
         'uae_tax_rate_id' => env('STRIPE_UAE_TAX_RATE_ID'),
     ],
 
+    /*
+    | Super Admin panel security. With two_factor_required on (default), every platform admin
+    | must use 2FA (authenticator app or email code) and cannot switch it off.
+    */
+    'admin' => [
+        'two_factor_required' => (bool) env('ADMIN_2FA_REQUIRED', true),
+    ],
+
     'plans' => [
         // Tenants without a live subscription resolve entitlements from this plan.
         'fallback' => 'free',

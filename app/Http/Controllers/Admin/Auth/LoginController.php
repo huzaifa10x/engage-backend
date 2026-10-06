@@ -6,15 +6,18 @@ namespace App\Http\Controllers\Admin\Auth;
 
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Identity\Models\PlatformAdmin;
+use App\Domain\Identity\Security\AdminSecurity;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
+use Throwable;
 
 /**
  * Step 1 of 2: password. A successful password check never logs in directly — it parks the
@@ -29,7 +32,7 @@ final class LoginController extends Controller
         return Inertia::render('auth/Login');
     }
 
-    public function store(Request $request): RedirectResponse
+    public function store(Request $request, AdminSecurity $security): RedirectResponse
     {
         $data = $request->validate([
             'email' => ['required', 'string', 'email'],
@@ -50,21 +53,43 @@ final class LoginController extends Controller
 
         if (! $admin instanceof PlatformAdmin || ! $valid || ! $admin->isActive()) {
             RateLimiter::hit($key, 60);
+            $security->record($request, 'failed_password', $admin instanceof PlatformAdmin ? $admin : null, $data['email']);
 
             throw ValidationException::withMessages(['email' => 'These credentials do not match our records.']);
         }
 
         RateLimiter::clear($key);
         $request->session()->regenerate();
-        $request->session()->put(self::PENDING, ['id' => $admin->id, 'remember' => (bool) ($data['remember'] ?? false), 'at' => time()]);
+        $remember = (bool) ($data['remember'] ?? false);
+
+        // 2FA switched off for this admin (only possible when the platform does not require it).
+        if (! $admin->hasTwoFactor() && ! AdminSecurity::twoFactorRequired()) {
+            $security->completeLogin($request, $admin, $remember, 'none');
+
+            return redirect()->intended(route('admin.overview'));
+        }
+
+        $request->session()->put(self::PENDING, ['id' => $admin->id, 'remember' => $remember, 'at' => time()]);
+
+        if ($admin->twoFactorMethod() === 'email') {
+            try {
+                $security->sendEmailCode($admin);
+            } catch (Throwable $e) {
+                // The challenge page still opens: a recovery code works without email.
+                Log::error('Admin 2FA email could not be sent', ['admin' => $admin->id, 'error' => $e->getMessage()]);
+                $request->session()->flash('error', 'We could not send the email code. Use a recovery code, or try "Send a new code" in a moment.');
+            }
+        }
 
         return redirect()->route($admin->hasTwoFactor() ? 'admin.two-factor.challenge' : 'admin.two-factor.setup');
     }
 
-    public function destroy(Request $request, AuditLogger $audit): RedirectResponse
+    public function destroy(Request $request, AuditLogger $audit, AdminSecurity $security): RedirectResponse
     {
         if ($admin = $request->user('admin')) {
             $audit->record('admin.logout', $admin);
+            $security->record($request, 'logout', $admin);
+            $security->endSession($request);
         }
 
         Auth::guard('admin')->logout();

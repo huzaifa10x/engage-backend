@@ -137,14 +137,15 @@ Route::middleware(['auth:sanctum', 'tenant', 'throttle:api', PlanRateLimit::clas
         Route::get('billing', [BillingController::class, 'show'])->name('billing.show');
         Route::get('billing/invoices', [BillingController::class, 'invoices'])->name('billing.invoices');
         Route::get('billing/payment-methods', [BillingController::class, 'paymentMethods'])->name('billing.payment-methods');
+        Route::get('billing/payments', [BillingController::class, 'payments'])->name('billing.payments');
     });
     Route::middleware(['can:'.Permission::BillingManage->value, 'throttle:40,1'])->group(function () {
         Route::put('billing/details', [BillingController::class, 'updateDetails'])->name('billing.details');
+        Route::post('billing/preview', [BillingController::class, 'preview'])->name('billing.preview');
         Route::post('billing/subscribe', [BillingController::class, 'subscribe'])->name('billing.subscribe');
         Route::post('billing/refresh', [BillingController::class, 'refresh'])->name('billing.refresh');
         Route::post('billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
         Route::post('billing/resume', [BillingController::class, 'resume'])->name('billing.resume');
-        Route::put('billing/auto-pay', [BillingController::class, 'autoPay'])->name('billing.auto-pay');
         Route::post('billing/payment-methods/setup-intent', [BillingController::class, 'setupIntent'])->name('billing.payment-methods.setup');
         Route::put('billing/payment-methods/{paymentMethod}/default', [BillingController::class, 'setDefaultPaymentMethod'])
             ->where('paymentMethod', 'pm_[A-Za-z0-9]+')->name('billing.payment-methods.default');

@@ -24,6 +24,7 @@ use Illuminate\Support\Carbon;
  * @property list<string>|null $two_factor_recovery_codes
  * @property ?Carbon $two_factor_confirmed_at
  * @property ?int $two_factor_last_used_step
+ * @property ?string $two_factor_method
  * @property ?Carbon $disabled_at
  * @property ?Carbon $last_login_at
  */
@@ -68,9 +69,24 @@ class PlatformAdmin extends Authenticatable
         return parent::can($abilities, $arguments);
     }
 
+    /** 2FA is on: an authenticator app (needs its secret) or email codes. */
     public function hasTwoFactor(): bool
     {
-        return $this->getAttribute('two_factor_confirmed_at') !== null && $this->getAttribute('two_factor_secret') !== null;
+        if ($this->getAttribute('two_factor_confirmed_at') === null) {
+            return false;
+        }
+
+        return $this->twoFactorMethod() === 'email' || $this->getAttribute('two_factor_secret') !== null;
+    }
+
+    /** @return 'app'|'email'|null */
+    public function twoFactorMethod(): ?string
+    {
+        if ($this->getAttribute('two_factor_confirmed_at') === null) {
+            return null;
+        }
+
+        return $this->getAttribute('two_factor_method') === 'email' ? 'email' : 'app';
     }
 
     public function isActive(): bool

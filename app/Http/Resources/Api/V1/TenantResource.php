@@ -24,6 +24,16 @@ final class TenantResource extends JsonResource
             'currency' => $this->currency,
             'country' => $this->country,
             'billing_email' => $this->billing_email,
+            'legal_name' => $this->legal_name,
+            'website' => $this->website,
+            'phone' => $this->phone,
+            'industry' => $this->industry,
+            'company_size' => $this->company_size,
+            'address_line1' => $this->address_line1,
+            'address_line2' => $this->address_line2,
+            'city' => $this->city,
+            'region' => $this->region,
+            'postal_code' => $this->postal_code,
             'created_at' => $this->created_at?->toIso8601String(),
         ];
     }

@@ -29,6 +29,7 @@ const NAV: NavSection[] = [
             { label: 'Audit log', href: '/admin/audit-log', ability: 'audit.view', match: '/admin/audit-log' },
             { label: 'Webhooks', href: '/admin/webhooks', ability: 'system.view', match: '/admin/webhooks' },
             { label: 'Platform team', href: '/admin/team', ability: 'team.manage', match: '/admin/team' },
+            { label: 'Security', href: '/admin/security', ability: 'companies.view', match: '/admin/security' },
             { label: 'Queues', href: '/horizon', ability: 'system.view', match: '^$', external: true },
         ],
     },

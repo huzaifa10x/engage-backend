@@ -11,10 +11,12 @@ use App\Http\Controllers\Admin\InvoiceController;
 use App\Http\Controllers\Admin\NumberController;
 use App\Http\Controllers\Admin\OverviewController;
 use App\Http\Controllers\Admin\PlanController;
+use App\Http\Controllers\Admin\SecurityController;
 use App\Http\Controllers\Admin\SubscriptionController;
 use App\Http\Controllers\Admin\TeamController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\WebhookLogController;
+use App\Http\Middleware\Admin\TrackAdminSession;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -29,9 +31,29 @@ Route::middleware('guest:admin')->group(function () {
     Route::post('two-factor/challenge', [TwoFactorController::class, 'verify'])->middleware('throttle:admin-login')->name('two-factor.verify');
     Route::get('two-factor/setup', [TwoFactorController::class, 'setup'])->name('two-factor.setup');
     Route::post('two-factor/setup', [TwoFactorController::class, 'confirm'])->middleware('throttle:admin-login')->name('two-factor.confirm');
+    Route::post('two-factor/resend', [TwoFactorController::class, 'resend'])->middleware('throttle:admin-login')->name('two-factor.resend');
+    Route::post('two-factor/setup/email', [TwoFactorController::class, 'setupEmail'])->middleware('throttle:admin-login')->name('two-factor.setup-email');
+    Route::post('two-factor/setup/email/confirm', [TwoFactorController::class, 'confirmEmail'])->middleware('throttle:admin-login')->name('two-factor.confirm-email');
 });
 
-Route::middleware(['auth:admin', 'admin.context'])->group(function () {
+Route::middleware(['auth:admin', 'admin.context', TrackAdminSession::class])->group(function () {
+    // Security: every admin manages their own 2FA and sessions.
+    Route::prefix('security')->name('security.')->group(function () {
+        Route::get('/', [SecurityController::class, 'index'])->name('index');
+        Route::middleware('throttle:30,1')->group(function () {
+            Route::post('two-factor/app', [SecurityController::class, 'startApp'])->name('app.start');
+            Route::post('two-factor/app/confirm', [SecurityController::class, 'confirmApp'])->name('app.confirm');
+            Route::post('two-factor/email', [SecurityController::class, 'startEmail'])->name('email.start');
+            Route::post('two-factor/email/confirm', [SecurityController::class, 'confirmEmail'])->name('email.confirm');
+            Route::post('two-factor/cancel', [SecurityController::class, 'cancelSetup'])->name('cancel');
+            Route::delete('two-factor', [SecurityController::class, 'disable'])->name('disable');
+            Route::post('recovery-codes', [SecurityController::class, 'regenerateRecoveryCodes'])->name('recovery-codes');
+            Route::delete('sessions', [SecurityController::class, 'revokeOtherSessions'])->name('sessions.revoke-others');
+            Route::delete('sessions/{session}', [SecurityController::class, 'revokeSession'])->whereUuid('session')->name('sessions.revoke');
+            Route::post('test-email', [SecurityController::class, 'testEmail'])->name('test-email');
+        });
+    });
+
     Route::post('logout', [LoginController::class, 'destroy'])->name('logout');
     Route::get('two-factor/recovery-codes', [TwoFactorController::class, 'recoveryCodes'])->name('two-factor.recovery-codes');
 

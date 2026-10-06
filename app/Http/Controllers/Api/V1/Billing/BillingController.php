@@ -62,7 +62,6 @@ final class BillingController extends Controller
                 'trial_ends_at' => $subscription->trial_ends_at?->toIso8601String(),
                 'current_period_end' => $subscription->current_period_end?->toIso8601String(),
                 'cancel_at' => $subscription->cancel_at?->toIso8601String(),
-                'auto_pay' => $subscription->auto_pay,
             ],
             'details' => [
                 'legal_name' => $tenant->legal_name,
@@ -104,6 +103,31 @@ final class BillingController extends Controller
         }
 
         return $this->show();
+    }
+
+    /** The billing summary for a plan the customer is about to choose (shown before they confirm). */
+    public function preview(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'plan' => ['required', 'string', 'max:32'],
+            'interval' => ['required', Rule::in(['monthly', 'yearly'])],
+        ]);
+        if ($this->context->tenant()->country === null) {
+            throw ValidationException::withMessages(['country' => 'Choose your billing country first, so the correct tax is applied.']);
+        }
+
+        return response()->json(['data' => $this->billing->preview($this->context->tenant(), $data['plan'], $data['interval'], $this->context->membership())]);
+    }
+
+    /** Card payments (succeeded, failed, refunded) and the next renewal charge. */
+    public function payments(): JsonResponse
+    {
+        $configured = $this->stripe->configured();
+
+        return response()->json(['data' => [
+            'payments' => $configured ? $this->billing->payments($this->context->tenant()) : [],
+            'upcoming' => $configured ? $this->billing->upcoming($this->context->tenant()) : null,
+        ]]);
     }
 
     /**
@@ -155,14 +179,6 @@ final class BillingController extends Controller
         $this->billing->removePaymentMethod($this->context->tenant(), $paymentMethod);
 
         return $this->paymentMethods();
-    }
-
-    public function autoPay(Request $request): JsonResponse
-    {
-        $data = $request->validate(['enabled' => ['required', 'boolean']]);
-        $this->billing->setAutoPay($this->context->tenant(), (bool) $data['enabled']);
-
-        return $this->show();
     }
 
     public function payInvoice(Request $request, Invoice $invoice): JsonResponse

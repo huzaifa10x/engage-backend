@@ -32,6 +32,15 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property ?string $legal_name
  * @property ?string $tax_trn
  * @property ?string $stripe_customer_id
+ * @property ?string $website
+ * @property ?string $phone
+ * @property ?string $industry
+ * @property ?string $company_size
+ * @property ?string $address_line1
+ * @property ?string $address_line2
+ * @property ?string $city
+ * @property ?string $region
+ * @property ?string $postal_code
  * @property array<string, mixed>|null $settings
  */
 class Tenant extends Model
@@ -42,6 +51,7 @@ class Tenant extends Model
     protected $fillable = [
         'name', 'slug', 'status', 'timezone', 'locale', 'currency', 'country',
         'billing_email', 'settings', 'created_by_user_id', 'legal_name', 'tax_trn', 'stripe_customer_id',
+        'website', 'phone', 'industry', 'company_size', 'address_line1', 'address_line2', 'city', 'region', 'postal_code',
     ];
 
     protected function casts(): array
