@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Application\Identity\EmailVerification;
+use App\Application\Identity\LoginVerification;
 use App\Domain\Identity\Models\User;
 use App\Http\Controllers\Controller;
 use Illuminate\Auth\Events\PasswordReset;
@@ -23,7 +24,7 @@ final class AccountEmailController extends Controller
      * The signed-in (but not yet verified) user enters the 6-digit code from the email. On success
      * the account is verified and the same session carries straight on into the app.
      */
-    public function verify(Request $request, EmailVerification $verification): JsonResponse
+    public function verify(Request $request, EmailVerification $verification, LoginVerification $login): JsonResponse
     {
         /** @var User $user */
         $user = $request->user();
@@ -40,8 +41,14 @@ final class AccountEmailController extends Controller
         $result = $verification->verify($user, $data['code']);
         if ($result === 'verified' || $result === 'already') {
             RateLimiter::clear('otp-verify:'.$user->id);
+            $response = response()->json(['data' => ['status' => $result]]);
+            if ($result === 'verified' && $request->hasSession()) {
+                // The registration code doubles as the first sign-in code: trust this browser for the window.
+                $request->session()->put(LoginVerification::SESSION_STAMP, now()->timestamp);
+                $response->withCookie($login->trust($user));
+            }
 
-            return response()->json(['data' => ['status' => $result]]);
+            return $response;
         }
 
         throw ValidationException::withMessages(['code' => match ($result) {

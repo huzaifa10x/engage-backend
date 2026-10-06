@@ -29,6 +29,7 @@ use App\Http\Controllers\Api\V1\WhatsApp\AccountController as WhatsAppAccountCon
 use App\Http\Controllers\Api\V1\WhatsApp\PhoneNumberController;
 use App\Http\Controllers\Api\V1\WhatsApp\SignupController;
 use App\Http\Middleware\EnsureEmailVerified;
+use App\Http\Middleware\EnsureFreshLogin;
 use App\Http\Middleware\PlanRateLimit;
 use Illuminate\Support\Facades\Route;
 
@@ -40,6 +41,8 @@ use Illuminate\Support\Facades\Route;
 Route::middleware('throttle:auth')->prefix('auth')->name('auth.')->group(function () {
     Route::post('register', [AuthController::class, 'register'])->name('register');
     Route::post('login', [AuthController::class, 'login'])->name('login');
+    Route::post('login/verify', [AuthController::class, 'loginVerify'])->name('login.verify');
+    Route::post('login/resend', [AuthController::class, 'loginResend'])->name('login.resend');
     Route::post('forgot-password', [AccountEmailController::class, 'forgot'])->name('password.forgot');
     Route::post('reset-password', [AccountEmailController::class, 'reset'])->name('password.reset');
     Route::post('impersonation', [ImpersonationController::class, 'store'])->name('impersonation.start');
@@ -50,7 +53,7 @@ Route::middleware('throttle:auth')->prefix('auth')->name('auth.')->group(functio
 | Authenticated, tenant optional (identity-level endpoints)
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth:sanctum', 'tenant:optional', 'throttle:api'])->group(function () {
+Route::middleware(['auth:sanctum', EnsureFreshLogin::class, 'tenant:optional', 'throttle:api'])->group(function () {
     Route::post('auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
     Route::post('auth/email/verify', [AccountEmailController::class, 'verify'])->name('auth.email.verify');
     Route::post('auth/email/resend', [AccountEmailController::class, 'resend'])->name('auth.email.resend');
@@ -67,7 +70,7 @@ Route::middleware(['auth:sanctum', 'tenant:optional', 'throttle:api'])->group(fu
 | Authenticated + tenant resolved (Authenticate → Resolve Tenant → Authorize → Entitlement → Action)
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth:sanctum', EnsureEmailVerified::class, 'tenant', 'throttle:api', PlanRateLimit::class])->group(function () {
+Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified::class, 'tenant', 'throttle:api', PlanRateLimit::class])->group(function () {
     Route::get('tenant', [TenantController::class, 'show'])->name('tenant.show');
     Route::patch('tenant', [TenantController::class, 'update'])
         ->middleware('can:'.Permission::SettingsManage->value)->name('tenant.update');

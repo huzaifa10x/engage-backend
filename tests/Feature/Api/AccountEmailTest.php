@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api;
 
 use App\Domain\Identity\Models\User;
+use App\Notifications\LoginCodeNotification;
 use App\Notifications\ResetPasswordNotification;
 use App\Notifications\VerifyEmailNotification;
 use Illuminate\Support\Facades\Notification;
@@ -141,9 +142,17 @@ final class AccountEmailTest extends TestCase
         $this->travel(2)->minutes();
         Notification::fake();
 
+        // Signing in asks for an emailed code; entering it also proves the address.
         $this->withHeaders(self::SPA)->postJson('/api/v1/auth/login', ['email' => 'jane@example.com', 'password' => self::PASSWORD])
-            ->assertOk()->assertJsonPath('data.user.email_verified', false);
-        $this->verify($this->codeFromEmail($user))->assertOk()->assertJsonPath('data.status', 'verified');
+            ->assertStatus(202)->assertJsonPath('data.otp_required', true);
+        $code = '';
+        Notification::assertSentTo($user, LoginCodeNotification::class, function (LoginCodeNotification $n) use (&$code) {
+            $code = $n->code;
+
+            return true;
+        });
+        $this->withHeaders(self::SPA)->postJson('/api/v1/auth/login/verify', ['code' => $code])->assertOk()->assertJsonPath('data.user.email_verified', true);
+        $this->withHeaders(self::SPA)->getJson('/api/v1/tenant')->assertOk();
     }
 
     public function test_password_reset_by_email(): void
@@ -172,7 +181,22 @@ final class AccountEmailTest extends TestCase
         $this->postJson('/api/v1/auth/reset-password', ['email' => $query['email'], 'token' => $query['token'], 'password' => $new, 'password_confirmation' => $new])->assertStatus(422); // single use
 
         $this->withHeaders(self::SPA)->postJson('/api/v1/auth/login', ['email' => 'jane@example.com', 'password' => self::PASSWORD])->assertStatus(422);
-        $this->withHeaders(self::SPA)->postJson('/api/v1/auth/login', ['email' => 'jane@example.com', 'password' => $new])->assertOk()
-            ->assertJsonPath('data.user.email_verified', true); // the reset link proved the address
+        $this->withHeaders(self::SPA)->postJson('/api/v1/auth/login', ['email' => 'jane@example.com', 'password' => $new])->assertStatus(202)
+            ->assertJsonPath('data.otp_required', true);
+        $this->assertNotNull($user->fresh()?->email_verified_at); // the reset link proved the address
+
+        // A reset link is only good for 5 minutes.
+        $this->travel(2)->minutes();
+        Notification::fake();
+        $this->postJson('/api/v1/auth/forgot-password', ['email' => 'jane@example.com'])->assertOk();
+        $late = [];
+        Notification::assertSentTo($user, ResetPasswordNotification::class, function (ResetPasswordNotification $n) use (&$late) {
+            $this->assertSame(5, $n->minutes);
+            parse_str((string) parse_url($n->url, PHP_URL_QUERY), $late);
+
+            return true;
+        });
+        $this->travel(6)->minutes();
+        $this->postJson('/api/v1/auth/reset-password', ['email' => $late['email'], 'token' => $late['token'], 'password' => 'Another-Passw0rd-1', 'password_confirmation' => 'Another-Passw0rd-1'])->assertStatus(422);
     }
 }

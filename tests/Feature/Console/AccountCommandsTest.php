@@ -24,7 +24,7 @@ final class AccountCommandsTest extends TestCase
         $this->assertNotNull($user->getAttribute('last_active_tenant_id'));
 
         $this->withHeaders(self::SPA)->postJson('/api/v1/auth/login', ['email' => 'owner@example.com', 'password' => 'Str0ngPassw0rd'])
-            ->assertOk()->assertJsonPath('data.memberships.0.tenant.name', '10X Digital');
+            ->assertStatus(202)->assertJsonPath('data.otp_required', true); // password accepted; the emailed code comes next
     }
 
     public function test_client_create_rejects_weak_password_and_duplicates(): void

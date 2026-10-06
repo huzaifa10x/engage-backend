@@ -37,6 +37,17 @@ return [
         'two_factor_required' => (bool) env('ADMIN_2FA_REQUIRED', true),
     ],
 
+    /*
+    | Sign-in security for workspace users: after the password, a one-time code is emailed.
+    | A browser that has entered a code is trusted for `window_hours`; after that the next
+    | sign-in asks for a code again and any session still open is signed out.
+    | LOGIN_OTP_ENABLED=false switches the code step off (emergency use: mail outage).
+    */
+    'login_otp' => [
+        'enabled' => (bool) env('LOGIN_OTP_ENABLED', true),
+        'window_hours' => (int) env('LOGIN_OTP_WINDOW_HOURS', 24),
+    ],
+
     'plans' => [
         // Tenants without a live subscription resolve entitlements from this plan.
         'fallback' => 'free',

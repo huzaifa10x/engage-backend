@@ -42,7 +42,7 @@ return [
         'users' => [
             'provider' => 'users',
             'table' => 'password_reset_tokens',
-            'expire' => 60,
+            'expire' => 5, // minutes a password-reset link stays valid
             'throttle' => 60,
         ],
     ],
