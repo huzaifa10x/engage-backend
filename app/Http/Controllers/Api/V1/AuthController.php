@@ -26,7 +26,7 @@ final class AuthController extends Controller
         $this->ensureStateful($request);
 
         $result = $register($request->validated());
-        // The account exists but cannot be used until this link is opened (EnsureEmailVerified).
+        // The account exists but cannot be used until the emailed code is entered (EnsureEmailVerified).
         $verification->send($result['user']);
 
         Auth::guard('web')->login($result['user']);
@@ -36,13 +36,15 @@ final class AuthController extends Controller
         return $me->payload($result['user'], (string) $result['tenant']->getKey())->setStatusCode(201);
     }
 
-    public function login(LoginRequest $request, MeController $me): JsonResponse
+    public function login(LoginRequest $request, MeController $me, EmailVerification $verification): JsonResponse
     {
         $this->ensureStateful($request);
 
         $user = $request->authenticate();
         $request->session()->regenerate();
         $user->forceFill(['last_login_at' => now()])->saveQuietly();
+        // Signed in but never verified: a fresh code is on its way (subject to the send limits).
+        $verification->send($user);
 
         return $me->payload($user, $user->last_active_tenant_id);
     }

@@ -10,12 +10,12 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-/** 1. Email verification: sent at registration; the account cannot be used until the link is opened. */
+/** 1. Email verification: a one-time code sent at registration; the account cannot be used until it is entered. */
 final class VerifyEmailNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
-    public function __construct(#[\SensitiveParameter] public readonly string $url, public readonly string $name, public readonly int $hours)
+    public function __construct(#[\SensitiveParameter] public readonly string $code, public readonly string $name, public readonly int $minutes)
     {
         $this->onQueue(QueueName::Notifications->value);
         $this->afterCommit();
@@ -30,11 +30,11 @@ final class VerifyEmailNotification extends Notification implements ShouldQueue
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject('Confirm your email for 10X Engage')
+            ->subject("{$this->code} is your 10X Engage verification code")
             ->greeting("Welcome, {$this->name}")
-            ->line('Please confirm your email address to activate your 10X Engage account.')
-            ->action('Verify email address', $this->url)
-            ->line("This link works for {$this->hours} hours. If it expires, sign in and ask for a new one.")
-            ->line('If you did not create an account, you can ignore this email.');
+            ->line('Enter this code in 10X Engage to verify your email address and activate your account:')
+            ->line("**{$this->code}**")
+            ->line("The code expires in {$this->minutes} minutes and can be used once.")
+            ->line('If you did not create an account, you can ignore this email. Never share this code with anyone.');
     }
 }

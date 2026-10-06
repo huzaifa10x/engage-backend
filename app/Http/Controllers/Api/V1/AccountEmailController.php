@@ -19,21 +19,36 @@ use Illuminate\Validation\ValidationException;
 /** Email verification and password reset for workspace users. */
 final class AccountEmailController extends Controller
 {
-    /** The link in the verification email lands on the web app, which posts its parameters here. */
+    /**
+     * The signed-in (but not yet verified) user enters the 6-digit code from the email. On success
+     * the account is verified and the same session carries straight on into the app.
+     */
     public function verify(Request $request, EmailVerification $verification): JsonResponse
     {
-        $data = $request->validate([
-            'id' => ['required', 'uuid'],
-            'expires' => ['required', 'integer'],
-            'token' => ['required', 'string', 'size:64'],
-        ]);
-        $result = $verification->verify($data['id'], (int) $data['expires'], $data['token']);
+        /** @var User $user */
+        $user = $request->user();
+        $data = $request->validate(['code' => ['required', 'string', 'regex:/^\s*\d[\d\s-]{4,10}\d\s*$/']], ['code.regex' => 'Enter the 6-digit code from the email.']);
 
-        if ($result === 'invalid') {
-            throw ValidationException::withMessages(['token' => 'This verification link is not valid or has expired. Sign in and ask for a new one.']);
+        // Per account and per IP, on top of the 5 guesses each code allows.
+        foreach (['otp-verify:'.$user->id => 10, 'otp-verify-ip:'.$request->ip() => 30] as $key => $max) {
+            if (RateLimiter::tooManyAttempts($key, $max)) {
+                throw ValidationException::withMessages(['code' => 'Too many attempts. Try again in '.(int) ceil(RateLimiter::availableIn($key) / 60).' minute(s).']);
+            }
+            RateLimiter::hit($key, 900);
         }
 
-        return response()->json(['data' => ['status' => $result]]);
+        $result = $verification->verify($user, $data['code']);
+        if ($result === 'verified' || $result === 'already') {
+            RateLimiter::clear('otp-verify:'.$user->id);
+
+            return response()->json(['data' => ['status' => $result]]);
+        }
+
+        throw ValidationException::withMessages(['code' => match ($result) {
+            'expired' => 'This code has expired. Request a new one.',
+            'locked' => 'Too many wrong codes. Request a new code.',
+            default => 'That code is not correct. Check the latest email and try again.',
+        }]);
     }
 
     public function resend(Request $request, EmailVerification $verification): JsonResponse
@@ -41,17 +56,19 @@ final class AccountEmailController extends Controller
         /** @var User $user */
         $user = $request->user();
         if ($user->getAttribute('email_verified_at') !== null) {
-            return response()->json(['data' => ['status' => 'already']]);
+            return response()->json(['data' => ['status' => 'already', 'retry_in' => 0]]);
         }
 
-        $key = 'verify-resend:'.$user->id;
-        if (RateLimiter::tooManyAttempts($key, 1)) {
-            throw ValidationException::withMessages(['email' => 'We just sent you an email. You can ask for another in '.RateLimiter::availableIn($key).' seconds.']);
-        }
-        RateLimiter::hit($key, 60);
-        $verification->send($user);
+        $result = $verification->send($user);
+        if (! $result['sent']) {
+            $wait = $result['retry_in'];
 
-        return response()->json(['data' => ['status' => 'sent']]);
+            throw ValidationException::withMessages(['code' => $wait > 120
+                ? 'You have requested too many codes. Try again in '.(int) ceil($wait / 60).' minutes.'
+                : "A code was just sent. You can request another in {$wait} seconds."]);
+        }
+
+        return response()->json(['data' => ['status' => 'sent', 'retry_in' => $result['retry_in'], 'expires_in' => EmailVerification::MINUTES * 60]]);
     }
 
     /** Always answers the same way, so the form cannot be used to find out who has an account. */
