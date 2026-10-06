@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\WhatsApp;
 
 use App\Domain\Access\SystemRole;
+use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\Models\Feature;
+use App\Domain\Plans\Models\TenantEntitlementOverride;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
@@ -265,6 +268,89 @@ final class EmbeddedSignupTest extends TestCase
         // exchange, debug, subscribed-apps check, waba, subscribe, verify subscription, number, 2 × smb_app_data, template sync
         Http::assertSentCount(10);
         $this->assertSame(2, $this->tenantContext()->bypass(fn () => CoexistenceSyncJob::query()->whereNotNull('request_id')->count()));
+    }
+
+    public function test_coexistence_launches_with_its_own_configuration_id(): void
+    {
+        $this->configureMeta(coexistence: true);
+        config(['engage.meta.coexistence_config_id' => '2159163541380544']);
+        $this->actingAsMember($this->owner());
+
+        // The WhatsApp Business app flow uses the coexistence configuration, with Meta's two required extras …
+        $this->postJson('/api/v1/whatsapp/signups', ['coexistence' => true])->assertCreated()
+            ->assertJsonPath('data.attempt.flow', 'coexistence')
+            ->assertJsonPath('data.launch.config_id', '2159163541380544')
+            ->assertJsonPath('data.launch.login_options.config_id', '2159163541380544')
+            ->assertJsonPath('data.launch.login_options.response_type', 'code')
+            ->assertJsonPath('data.launch.login_options.extras.featureType', 'whatsapp_business_app_onboarding')
+            ->assertJsonPath('data.launch.login_options.extras.sessionInfoVersion', '3');
+
+        // … while a normal number keeps the standard one and carries no coexistence extras.
+        $this->postJson('/api/v1/whatsapp/signups', ['coexistence' => false])->assertCreated()
+            ->assertJsonPath('data.launch.config_id', '555000')
+            ->assertJsonMissingPath('data.launch.login_options.extras.featureType');
+    }
+
+    public function test_the_free_plan_connects_without_importing_chat_history(): void
+    {
+        $this->configureMeta(coexistence: true);
+        $this->fakeGraph();
+        $this->actingAsMember($this->owner('free'));
+
+        $start = $this->postJson('/api/v1/whatsapp/signups', ['coexistence' => true])->assertCreated();
+        $this->postJson("/api/v1/whatsapp/signups/{$start->json('data.attempt.id')}/complete", $this->finish('FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'))
+            ->assertOk()->assertJsonPath('data.status', 'completed');
+
+        // Contacts are synced, history is never requested, and the number is live at once.
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/smb_app_data') && $r['sync_type'] === 'smb_app_state_sync');
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/smb_app_data') && $r['sync_type'] === 'history');
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/register'));
+
+        $number = $this->tenantContext()->bypass(fn () => PhoneNumber::query()->where('phone_number_id', self::PHONE)->first());
+        $this->assertSame('coexistence', $number?->onboarding_type->value);
+        $this->assertSame(CoexistenceStatus::Synced, $number?->coexistence_status);
+        $this->assertSame(20, $number?->max_mps);
+    }
+
+    public function test_one_workspace_can_be_switched_off_and_stalled_imports_are_closed(): void
+    {
+        $this->configureMeta(coexistence: true);
+        $this->fakeGraph();
+        $owner = $this->owner();
+        $this->actingAsMember($owner);
+
+        $start = $this->postJson('/api/v1/whatsapp/signups', ['coexistence' => true])->assertCreated();
+        $this->postJson("/api/v1/whatsapp/signups/{$start->json('data.attempt.id')}/complete", $this->finish('FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'))->assertOk();
+        $number = fn () => $this->tenantContext()->bypass(fn () => PhoneNumber::query()->where('phone_number_id', self::PHONE)->firstOrFail());
+        $this->assertSame(CoexistenceStatus::HistorySyncing, $number()->coexistence_status);
+
+        // Inside the window, or with data still arriving, nothing is touched.
+        $this->travel(30)->hours();
+        $this->artisan('engage:coexistence:watch')->assertSuccessful();
+        $this->assertSame(CoexistenceStatus::HistorySyncing, $number()->coexistence_status);
+
+        // Requested but silent for three days → closed, so the inbox stops showing "syncing".
+        $this->travel(3)->days();
+        $this->artisan('engage:coexistence:watch')->assertSuccessful();
+        $this->assertSame(CoexistenceStatus::Synced, $number()->coexistence_status);
+
+        // Never requested inside Meta's 24 hours → the import can no longer start.
+        $this->tenantContext()->bypass(function () use ($number): void {
+            CoexistenceSyncJob::query()->where('phone_number_id', $number()->id)->update(['request_id' => null]);
+            $number()->forceFill(['coexistence_status' => CoexistenceStatus::SyncPending, 'app_sync_expires_at' => now()->subHour()])->save();
+        });
+        $this->artisan('engage:coexistence:watch')->assertSuccessful();
+        $this->assertSame(CoexistenceStatus::SyncFailed, $number()->coexistence_status);
+
+        // The per-workspace switch: an entitlement override turns coexistence off for this tenant only.
+        $this->tenantContext()->bypass(function (): void {
+            $feature = Feature::query()->where('key', 'coexistence')->firstOrFail();
+            TenantEntitlementOverride::query()->create(['tenant_id' => $this->tenant?->id, 'feature_id' => $feature->id, 'enabled' => false, 'reason' => 'Meta behaviour change']);
+        });
+        app(EntitlementService::class)->forget($this->tenant);
+        $this->actingAsMember($owner);
+        $this->postJson('/api/v1/whatsapp/signups', ['coexistence' => true])->assertForbidden()->assertJsonPath('error.code', 'feature_not_available');
+        $this->postJson('/api/v1/whatsapp/signups', ['coexistence' => false])->assertCreated();
     }
 
     public function test_cancel_records_the_abandoned_screen(): void

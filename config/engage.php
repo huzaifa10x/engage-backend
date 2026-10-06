@@ -82,9 +82,16 @@ return [
         // Facebook Login for Business configuration used by Embedded Signup v4.
         'embedded_signup_config_id' => env('META_ES_CONFIG_ID'),
         'webhook_verify_token' => env('META_WEBHOOK_VERIFY_TOKEN'),
-        // Coexistence (WhatsApp Business app numbers) stays off until the messaging pipeline can
-        // ingest history / smb_message_echoes (the 24-hour sync window cannot be retried).
-        'coexistence_enabled' => (bool) env('META_COEXISTENCE_ENABLED', false),
+        // Coexistence: connect a number that stays on the WhatsApp Business app (Embedded Signup v4,
+        // featureType whatsapp_business_app_onboarding). It has its own Facebook Login for Business
+        // configuration; when META_COEXISTENCE_CONFIG_ID is empty the standard one is used.
+        // On as soon as that ID is set; META_COEXISTENCE_ENABLED=false is the platform-wide kill
+        // switch. One workspace is switched off with an entitlement override in Super Admin.
+        'coexistence_config_id' => env('META_COEXISTENCE_CONFIG_ID'),
+        'coexistence_enabled' => (bool) env('META_COEXISTENCE_ENABLED', (string) env('META_COEXISTENCE_CONFIG_ID', '') !== ''),
+        // Hours after which an import that stopped sending data is closed, so the inbox does not
+        // show "syncing" forever (Meta gives no explicit "finished" signal when a phone goes offline).
+        'coexistence_sync_stale_hours' => (int) env('META_COEXISTENCE_SYNC_STALE_HOURS', 72),
         // Onboarding stops when the WABA is still subscribed to another provider's app
         // (GET /<WABA_ID>/subscribed_apps). Comma-separated Meta app IDs listed in
         // META_ALLOWED_OTHER_APP_IDS are tolerated (e.g. a second app of your own).

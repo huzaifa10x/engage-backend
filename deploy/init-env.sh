@@ -91,7 +91,10 @@ META_APP_SECRET=
 META_GRAPH_VERSION=v25.0
 META_ES_CONFIG_ID=
 META_WEBHOOK_VERIFY_TOKEN=$VERIFY_TOKEN
-META_COEXISTENCE_ENABLED=false
+# Coexistence (WhatsApp Business app numbers): the Embedded Signup configuration ID made for it.
+# Setting the ID switches the feature on; META_COEXISTENCE_ENABLED=false switches it off again.
+META_COEXISTENCE_CONFIG_ID=
+META_COEXISTENCE_ENABLED=
 META_DELETION_STATUS_URL=https://$DOMAIN/deletion-status
 
 ENGAGE_SECRETS_KEYS=$SECRETS_KEY

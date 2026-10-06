@@ -8,6 +8,8 @@ use App\Application\Notifications\WorkspaceMailer;
 use App\Application\WhatsApp\PhoneNumberSync;
 use App\Application\WhatsApp\WhatsappCredentials;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\FeatureKey;
 use App\Domain\Templates\Jobs\SyncMessageTemplates;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
@@ -110,6 +112,13 @@ final class ProvisionWhatsappAccount implements ShouldQueue
                     if (! $number->isCoexistence() && $platform !== null && $platform !== 'CLOUD_API') {
                         throw new MetaApiException('The number is not active on the WhatsApp Cloud API yet.', 503);
                     }
+                    // Meta's own post-onboarding check for coexistence: still on the app AND on the Cloud API.
+                    // Recorded, not enforced: failing here would burn the one-time 24-hour sync window.
+                    if ($number->isCoexistence() && (($node['is_on_biz_app'] ?? null) === false || ($platform !== null && $platform !== 'CLOUD_API'))) {
+                        Log::warning('Coexistence number does not report is_on_biz_app=true + platform_type=CLOUD_API', [
+                            'phone_number_id' => $number->phone_number_id, 'is_on_biz_app' => $node['is_on_biz_app'] ?? null, 'platform_type' => $platform,
+                        ]);
+                    }
                     $number->forceFill(['status' => PhoneNumberStatus::Connected])->save();
 
                     $tenant = app(TenantContext::class)->tenantOrNull();
@@ -182,16 +191,24 @@ final class ProvisionWhatsappAccount implements ShouldQueue
         }
     }
 
-    /** Both SMB App Data syncs, immediately: Meta allows each once, within 24 hours of onboarding. */
+    /**
+     * SMB App Data syncs, immediately: Meta allows each once, within 24 hours of onboarding.
+     * Contacts are always synced. Chat history is imported only when the plan includes it
+     * (Free: live messages only); that is decided here, on the server, not in the UI.
+     */
     private function startCoexistenceSync(GraphClient $graph, PhoneNumber $number, string $token): void
     {
+        $tenant = app(TenantContext::class)->tenantOrNull();
+        $entitlement = $tenant !== null ? app(EntitlementService::class)->for($tenant)->get(FeatureKey::Coexistence) : null;
+        $withHistory = (bool) (((array) ($entitlement->config ?? []))['history'] ?? true);
+
         $number->forceFill([
             'coexistence_status' => CoexistenceStatus::SyncPending,
             'app_sync_started_at' => $number->getAttribute('app_sync_started_at') ?? now(),
             'app_sync_expires_at' => $number->app_sync_expires_at ?? now()->addDay(),
         ])->save();
 
-        foreach (['smb_app_state_sync', 'history'] as $type) {
+        foreach ($withHistory ? ['smb_app_state_sync', 'history'] : ['smb_app_state_sync'] as $type) {
             $job = CoexistenceSyncJob::query()->firstOrCreate(
                 ['phone_number_id' => $number->id, 'sync_type' => $type],
                 ['status' => 'requested'],
@@ -205,7 +222,8 @@ final class ProvisionWhatsappAccount implements ShouldQueue
             $job->forceFill(['request_id' => $requestId, 'requested_at' => now(), 'status' => 'in_progress'])->save();
         }
 
-        $number->forceFill(['coexistence_status' => CoexistenceStatus::HistorySyncing])->save();
+        // Without a history import there is nothing to wait for: the number is live straight away.
+        $number->forceFill(['coexistence_status' => $withHistory ? CoexistenceStatus::HistorySyncing : CoexistenceStatus::Synced])->save();
     }
 
     private function step(EmbeddedSignupAttempt $attempt, string $name, callable $work): void

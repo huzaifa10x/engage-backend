@@ -77,12 +77,15 @@ final class EmbeddedSignup
             $extras['sessionInfoVersion'] = '3';
         }
 
+        // Coexistence has its own Facebook Login for Business configuration (falls back to the standard one).
+        $configId = (string) (($coexistence ? config('engage.meta.coexistence_config_id') : null) ?: config('engage.meta.embedded_signup_config_id'));
+
         return ['attempt' => $attempt, 'numbers' => ['used' => $used, 'limit' => $limit], 'launch' => [
             'app_id' => (string) config('engage.meta.app_id'),
-            'config_id' => (string) config('engage.meta.embedded_signup_config_id'),
+            'config_id' => $configId,
             'graph_version' => $this->graph->version(),
             'login_options' => [
-                'config_id' => (string) config('engage.meta.embedded_signup_config_id'),
+                'config_id' => $configId,
                 'response_type' => 'code',
                 'override_default_response_type' => true,
                 'extras' => $extras,
