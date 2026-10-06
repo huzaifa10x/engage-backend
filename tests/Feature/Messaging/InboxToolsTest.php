@@ -185,4 +185,29 @@ final class InboxToolsTest extends TestCase
         $this->actingAsMember($agent);
         $this->getJson('/api/v1/notifications')->assertJsonPath('data.unread', 1)->assertJsonPath('data.items.0.type', 'assigned');
     }
+
+    public function test_the_bell_feed_lists_unread_conversations_that_are_mine_to_answer(): void
+    {
+        $agent = $this->agentWithNumberAccess();
+        $mine = $this->inbound('971501110001', 'Is this still available?');
+        $theirs = $this->inbound('971501110002', 'Hello');
+        $this->inbound('971501110003', 'Third');
+        $this->patchJson("/api/v1/conversations/{$theirs->id}", ['assigned_membership_id' => $agent->id])->assertOk();
+
+        // Unassigned + assigned-to-me conversations with unread messages; not the one given to someone else.
+        $feed = $this->getJson('/api/v1/notifications')->assertOk()->assertJsonPath('data.unread_conversations', 2)->assertJsonCount(2, 'data.messages');
+        $byId = collect($feed->json('data.messages'))->keyBy('conversation_id');
+        $this->assertSame('Is this still available?', $byId[$mine->id]['preview']);
+        $this->assertSame(1, $byId[$mine->id]['unread_count']);
+        $this->assertSame("/inbox?c={$mine->id}", $byId[$mine->id]['url']);
+        $this->assertArrayNotHasKey($theirs->id, $byId->all());
+
+        // Reading a conversation removes it; snoozing hides it; a closed one never shows.
+        $this->postJson("/api/v1/conversations/{$mine->id}/read")->assertOk();
+        $this->getJson('/api/v1/notifications')->assertJsonPath('data.unread_conversations', 1);
+
+        // The agent sees the one assigned to them plus the unassigned one.
+        $this->actingAsMember($agent);
+        $this->getJson('/api/v1/notifications')->assertOk()->assertJsonPath('data.unread_conversations', 2);
+    }
 }

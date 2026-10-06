@@ -182,16 +182,38 @@ final class InboxToolsController extends Controller
 
     // ── Notifications (the bell) ───────────────────────────────────────────────────────────
 
+    /**
+     * Everything the header bell and the desktop notifier need in one small, cheap call:
+     * the member's own notifications (assignments, mentions, returning snoozes) and the
+     * conversations with unread customer messages that are theirs to answer.
+     */
     public function notifications(): JsonResponse
     {
-        $me = $this->context->membership()?->id;
+        $membership = $this->context->membership()?->loadMissing('role') ?? abort(403);
+        $me = $membership->id;
         $items = MemberNotification::query()->where('membership_id', $me)->orderByDesc('created_at')->orderByDesc('id')->limit(30)->get();
+
+        // Unread conversations on numbers this member can use: assigned to them, or not assigned to anyone.
+        $unread = fn () => $this->access->scope(Conversation::query(), $membership, 'phone_number_id')
+            ->where('status', ConversationStatus::Open->value)->where('unread_count', '>', 0)->whereNotNull('last_inbound_at')
+            ->where(fn ($q) => $q->whereNull('assigned_membership_id')->orWhere('assigned_membership_id', $me))
+            ->where(fn ($q) => $q->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now()));
+        $conversations = $unread()->with('contact')->orderByDesc('last_inbound_at')->limit(10)->get();
 
         return response()->json(['data' => [
             'unread' => MemberNotification::query()->where('membership_id', $me)->whereNull('read_at')->count(),
             'items' => $items->map(fn (MemberNotification $n) => [
                 'id' => $n->id, 'type' => $n->type, 'title' => $n->title, 'body' => $n->body, 'url' => $n->url,
                 'read' => $n->read_at !== null, 'created_at' => $n->created_at?->toIso8601String(),
+            ]),
+            'unread_conversations' => $unread()->count(),
+            'messages' => $conversations->map(fn (Conversation $c) => [
+                'conversation_id' => $c->id,
+                'contact' => $c->contact?->displayName() ?? 'WhatsApp user',
+                'preview' => $c->last_message_direction === Message::INBOUND ? (string) $c->last_message_preview : 'New message',
+                'unread_count' => $c->unread_count,
+                'at' => $c->last_inbound_at?->toIso8601String(),
+                'url' => "/inbox?c={$c->id}",
             ]),
         ]]);
     }
