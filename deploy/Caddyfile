@@ -14,7 +14,11 @@
 	}
 }
 
-{$DOMAIN} {
+# EXTRA_DOMAINS (optional, in deploy/.env) adds more hostnames that serve the same client portal,
+# written with a leading comma: EXTRA_DOMAINS=", engage-web.10xdigital.ae". Used when the portal
+# moves to a new domain, so the old one (and the Meta / Stripe webhooks still pointing at it) keeps
+# working until everything has been switched over.
+{$DOMAIN}{$EXTRA_DOMAINS:} {
 	import common
 
 	request_body {
