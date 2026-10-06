@@ -84,8 +84,7 @@ class AppServiceProvider extends ServiceProvider
         // Agents typing in the inbox; campaigns do not go through the HTTP API.
         RateLimiter::for('messaging', fn (Request $request) => Limit::perMinute(120)->by('m:'.($request->user()?->getAuthIdentifier() ?? $request->ip())));
 
-        // Per business number throughput (Meta: 80 mps default, 20 for coexistence numbers).
-        RateLimiter::for('whatsapp-send', fn (object $job) => Limit::perSecond(max(1, (int) ($job->maxMps ?? 80)))->by('wa-send:'.($job->phoneNumberId ?? 'unknown')));
+        // Per-number message throughput is enforced in SendThroughput (called by SendWhatsappMessage).
 
         RateLimiter::for('admin-login', fn (Request $request) => Limit::perMinute(10)->by('admin:'.$request->ip()));
 

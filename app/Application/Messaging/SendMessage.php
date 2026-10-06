@@ -127,7 +127,7 @@ final class SendMessage
             return $message;
         });
 
-        SendWhatsappMessage::dispatch($message->id, $number->id, $number->max_mps)->afterCommit();
+        SendWhatsappMessage::dispatch($message->id, $number->id)->afterCommit();
         MessageStored::dispatch($message, true);
 
         return $message;

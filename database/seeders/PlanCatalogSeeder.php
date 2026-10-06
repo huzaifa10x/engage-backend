@@ -127,13 +127,16 @@ final class PlanCatalogSeeder extends Seeder
             'chatbots' => [false, 1, 5, $U, $U],
             'api_rate_limit_per_minute' => [120, 300, 600, 1200, 3000],
             'campaign_send_rate_per_hour' => [false, 500, 2000, 5000, 10000],
+            // Per connected number. A WhatsApp Business app (coexistence) number is always capped at
+            // 20 by SendThroughput, whatever the plan says here.
+            'messages_per_second' => [20, 20, 30, 40, 40],
             'media_storage_mb' => [250, 1024, 5120, 20480, $U],
             'audit_log_retention_days' => [30, 90, 180, 365, $U],
             // Monthly metered levers
             'campaign_reach_monthly' => [false, 5000, 25000, 100000, $U],
             'automation_executions_monthly' => [false, 1000, 5000, 20000, $U],
             // Inbox
-            'coexistence' => [['history' => false], ['history' => true], ['history' => true], ['history' => true], ['history' => true]],
+            'coexistence' => [['history' => true], ['history' => true], ['history' => true], ['history' => true], ['history' => true]],
             'conversation_assignment' => [false, ['level' => 'basic'], ['level' => 'standard'], ['level' => 'advanced'], ['level' => 'custom']],
             'internal_notes' => [false, true, true, true, true],
             'snooze' => [false, true, true, true, true],

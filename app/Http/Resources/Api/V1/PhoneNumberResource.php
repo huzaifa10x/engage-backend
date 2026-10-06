@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Domain\Messaging\Services\SendThroughput;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -29,7 +30,9 @@ final class PhoneNumberResource extends JsonResource
             'onboarding_type' => $this->onboarding_type->value,
             'coexistence_status' => $this->coexistence_status->value,
             'app_sync_expires_at' => $this->app_sync_expires_at?->toIso8601String(),
-            'max_mps' => $this->max_mps,
+            // What this number may actually send: plan, Meta's cap and the coexistence cap combined.
+            'max_mps' => app(SendThroughput::class)->limitFor($this->resource),
+            'meta_max_mps' => $this->max_mps,
             'capabilities' => (object) ($this->capabilities ?? []),
             'is_official_business_account' => (bool) $this->getAttribute('is_official_business_account'),
             'last_synced_at' => $this->getAttribute('last_synced_at')?->toIso8601String(),

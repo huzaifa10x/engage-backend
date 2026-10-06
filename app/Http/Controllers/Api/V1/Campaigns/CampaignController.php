@@ -11,6 +11,7 @@ use App\Domain\Campaigns\Services\Personalizer;
 use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Services\SendThroughput;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Templates\Models\MessageTemplate;
@@ -90,7 +91,7 @@ final class CampaignController extends Controller
             'messaging_limit' => ManageCampaigns::messagingLimit($number?->messaging_limit_tier),
             'messaging_limit_tier' => $number?->messaging_limit_tier,
             'quality_rating' => $number?->quality_rating,
-            'max_mps' => $number?->max_mps,
+            'max_mps' => $number !== null ? app(SendThroughput::class)->limitFor($number) : null,
             // Sending speed for this workspace's plan; not selectable by the sender.
             'send_rate_per_hour' => $this->campaigns->sendRatePerHour(),
             'frequency_cap' => $marketing ? $settings->marketingFrequencyCap : 0,

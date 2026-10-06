@@ -85,7 +85,7 @@ final class DiagnoseMessages extends Command
             // Dispatched inside the tenant context so the job is restored into the same workspace.
             // (a statement, not an arrow function: the job must be pushed before run() returns).
             $context->run($tenant, function () use ($message, $number): void {
-                SendWhatsappMessage::dispatch($message->id, $number->id, $number->max_mps);
+                SendWhatsappMessage::dispatch($message->id, $number->id);
             });
             $queued++;
         }

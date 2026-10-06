@@ -291,8 +291,9 @@ final class EmbeddedSignupTest extends TestCase
             ->assertJsonMissingPath('data.launch.login_options.extras.featureType');
     }
 
-    public function test_the_free_plan_connects_without_importing_chat_history(): void
+    public function test_chat_history_is_imported_on_the_free_plan_too(): void
     {
+        // Paid plans are covered by test_coexistence_skips_registration_and_starts_both_syncs (Pro).
         $this->configureMeta(coexistence: true);
         $this->fakeGraph();
         $this->actingAsMember($this->owner('free'));
@@ -301,15 +302,13 @@ final class EmbeddedSignupTest extends TestCase
         $this->postJson("/api/v1/whatsapp/signups/{$start->json('data.attempt.id')}/complete", $this->finish('FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING'))
             ->assertOk()->assertJsonPath('data.status', 'completed');
 
-        // Contacts are synced, history is never requested, and the number is live at once.
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/smb_app_data') && $r['sync_type'] === 'smb_app_state_sync');
-        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/smb_app_data') && $r['sync_type'] === 'history');
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/smb_app_data') && $r['sync_type'] === 'history');
         Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/register'));
 
         $number = $this->tenantContext()->bypass(fn () => PhoneNumber::query()->where('phone_number_id', self::PHONE)->first());
-        $this->assertSame('coexistence', $number?->onboarding_type->value);
-        $this->assertSame(CoexistenceStatus::Synced, $number?->coexistence_status);
-        $this->assertSame(20, $number?->max_mps);
+        $this->assertSame(CoexistenceStatus::HistorySyncing, $number?->coexistence_status);
+        $this->assertSame(2, $this->tenantContext()->bypass(fn () => CoexistenceSyncJob::query()->whereNotNull('request_id')->count()));
     }
 
     public function test_one_workspace_can_be_switched_off_and_stalled_imports_are_closed(): void
