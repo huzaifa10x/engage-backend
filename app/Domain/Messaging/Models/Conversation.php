@@ -55,6 +55,7 @@ class Conversation extends Model
             'last_inbound_at' => 'datetime',
             'window_expires_at' => 'datetime',
             'last_auto_reply_at' => 'datetime',
+            'snoozed_until' => 'datetime',
             'auto_reply_enabled' => 'boolean',
             'closed_at' => 'datetime',
         ];

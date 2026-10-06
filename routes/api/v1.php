@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\InvitationController;
 use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\Messaging\ContactController;
 use App\Http\Controllers\Api\V1\Messaging\ConversationController;
+use App\Http\Controllers\Api\V1\Messaging\InboxToolsController;
 use App\Http\Controllers\Api\V1\Messaging\MediaController;
 use App\Http\Controllers\Api\V1\Messaging\MessageController;
 use App\Http\Controllers\Api\V1\RoleController;
@@ -73,6 +74,9 @@ Route::middleware(['auth:sanctum', EnsureEmailVerified::class, 'tenant', 'thrott
 
     Route::get('tenant/entitlements', [EntitlementController::class, 'index'])->name('tenant.entitlements');
     Route::get('tenant/auto-reply', [TenantController::class, 'autoReply'])->name('tenant.auto-reply');
+    Route::get('tenant/inbox-settings', [InboxToolsController::class, 'inboxSettings'])->name('tenant.inbox-settings');
+    Route::put('tenant/inbox-settings', [InboxToolsController::class, 'updateInboxSettings'])
+        ->middleware('can:'.Permission::SettingsManage->value)->name('tenant.inbox-settings.update');
     Route::put('tenant/auto-reply', [TenantController::class, 'updateAutoReply'])
         ->middleware('can:'.Permission::SettingsManage->value)->name('tenant.auto-reply.update');
 
@@ -244,6 +248,11 @@ Route::middleware(['auth:sanctum', EnsureEmailVerified::class, 'tenant', 'thrott
     Route::middleware('can:'.Permission::InboxView->value)->group(function () {
         Route::get('conversations', [ConversationController::class, 'index'])->name('conversations.index');
         Route::get('conversations/{conversation}', [ConversationController::class, 'show'])->name('conversations.show');
+        Route::get('conversations/{conversation}/notes', [InboxToolsController::class, 'notes'])->name('conversations.notes');
+        Route::get('canned-responses', [InboxToolsController::class, 'cannedResponses'])->name('canned-responses.index');
+        Route::get('notifications', [InboxToolsController::class, 'notifications'])->name('notifications.index');
+        Route::post('notifications/read', [InboxToolsController::class, 'readNotifications'])->name('notifications.read');
+        Route::get('dashboard/summary', [InboxToolsController::class, 'dashboard'])->name('dashboard.summary');
         Route::patch('conversations/{conversation}', [ConversationController::class, 'update'])->name('conversations.update');
         Route::post('conversations/{conversation}/read', [ConversationController::class, 'read'])->name('conversations.read');
         Route::get('conversations/{conversation}/messages', [MessageController::class, 'index'])->name('conversations.messages.index');
@@ -252,6 +261,12 @@ Route::middleware(['auth:sanctum', EnsureEmailVerified::class, 'tenant', 'thrott
 
     Route::middleware(['can:'.Permission::InboxReply->value, 'throttle:messaging'])->group(function () {
         Route::post('conversations/{conversation}/messages', [MessageController::class, 'store'])->name('conversations.messages.store');
+        Route::post('conversations/{conversation}/notes', [InboxToolsController::class, 'addNote'])->name('conversations.notes.store');
+        Route::post('conversations/{conversation}/snooze', [InboxToolsController::class, 'snooze'])->name('conversations.snooze');
+        Route::delete('conversations/{conversation}/snooze', [InboxToolsController::class, 'unsnooze'])->name('conversations.unsnooze');
+        Route::post('canned-responses', [InboxToolsController::class, 'saveCannedResponse'])->name('canned-responses.store');
+        Route::put('canned-responses/{cannedResponse}', [InboxToolsController::class, 'saveCannedResponse'])->name('canned-responses.update');
+        Route::delete('canned-responses/{cannedResponse}', [InboxToolsController::class, 'deleteCannedResponse'])->name('canned-responses.destroy');
         Route::post('messages', [MessageController::class, 'start'])->name('messages.start');
         Route::post('media', [MediaController::class, 'store'])->name('media.store');
     });

@@ -18,6 +18,7 @@ final class ConversationResource extends JsonResource
             'id' => $this->id,
             'phone_number_id' => $this->phone_number_id,
             'status' => $this->status->value,
+            'snoozed_until' => ($until = $this->getAttribute('snoozed_until')) !== null && $until->isFuture() ? $until->toIso8601String() : null,
             'auto_reply_enabled' => (bool) ($this->getAttribute('auto_reply_enabled') ?? true),
             'assigned_membership_id' => $this->assigned_membership_id,
             'unread_count' => $this->unread_count,

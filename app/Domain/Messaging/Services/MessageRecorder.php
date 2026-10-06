@@ -9,6 +9,7 @@ use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Events\MessageStored;
 use App\Domain\Messaging\Jobs\DownloadInboundMedia;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -103,6 +104,11 @@ final class MessageRecorder
             $contact->forceFill(['last_inbound_at' => $at])->save();
             $this->applyConsentKeyword($contact, $message);
             app(AutoReply::class)->handle($message, $contact);
+            Conversation::query()->whereKey($message->conversation_id)->whereNotNull('snoozed_until')->update(['snoozed_until' => null]);
+            $conversation = Conversation::query()->with('contact')->find($message->conversation_id);
+            if ($conversation !== null) {
+                app(InboxTools::class)->route($conversation);
+            }
         }
 
         if ($media !== null) {

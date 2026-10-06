@@ -11,6 +11,7 @@ use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Jobs\SendReadReceipt;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
@@ -31,6 +32,7 @@ final class ConversationController extends Controller
             'status' => ['nullable', Rule::enum(ConversationStatus::class)],
             'assigned' => ['nullable', Rule::in(['me', 'unassigned', 'any'])],
             'unread' => ['nullable', 'boolean'],
+            'snoozed' => ['nullable', 'boolean'],
             'q' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
@@ -45,6 +47,8 @@ final class ConversationController extends Controller
             ->when(($data['assigned'] ?? null) === 'me', fn ($q) => $q->where('assigned_membership_id', $membership->id))
             ->when(($data['assigned'] ?? null) === 'unassigned', fn ($q) => $q->whereNull('assigned_membership_id'))
             ->when($request->boolean('unread'), fn ($q) => $q->where('unread_count', '>', 0))
+            // Snoozed conversations stay out of the way until their time (or until the customer writes).
+            ->when($request->boolean('snoozed'), fn ($q) => $q->where('snoozed_until', '>', now()), fn ($q) => $q->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now())))
             ->when($data['q'] ?? null, function ($q, string $term) {
                 $digits = preg_replace('/\D+/', '', $term);
                 $q->whereHas('contact', fn ($c) => $c->withTrashed()->where(fn ($w) => $w
@@ -97,6 +101,16 @@ final class ConversationController extends Controller
             $conversation->assigned_membership_id = $data['assigned_membership_id'];
         }
         $conversation->save();
+
+        // Tell a teammate when someone else gives them a conversation (bell + email).
+        $assignee = $data['assigned_membership_id'] ?? null;
+        if ($assignee !== null && $assignee !== $before['assigned_membership_id'] && $assignee !== $this->membership()->id) {
+            $member = TenantMembership::query()->find($assignee);
+            if ($member !== null) {
+                $by = $this->membership()->user()->value('name') ?? 'A teammate';
+                app(InboxTools::class)->notify($member, 'assigned', "{$by} assigned a conversation to you", $conversation->contact()->first()?->displayName(), "/inbox?c={$conversation->id}", email: true);
+            }
+        }
 
         $audit->record('conversation.updated', $conversation, before: $before, after: $data);
 

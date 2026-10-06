@@ -59,6 +59,7 @@ final class TenantController extends Controller
             'enabled' => ['required', 'boolean'],
             'message' => ['required_if:enabled,true', 'nullable', 'string', 'max:1000'],
             'cooldown_hours' => ['sometimes', 'integer', 'min:1', 'max:168'],
+            'when' => ['sometimes', 'in:always,outside_hours'],
         ]);
         $tenant = $this->context->tenant();
         $settings = $tenant->settings ?? [];

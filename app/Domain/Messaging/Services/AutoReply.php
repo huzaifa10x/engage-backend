@@ -23,7 +23,7 @@ final class AutoReply
 {
     public function __construct(private readonly TenantContext $context, private readonly ConsentService $consent) {}
 
-    /** @return array{enabled: bool, message: string, cooldown_hours: int} */
+    /** @return array{enabled: bool, message: string, cooldown_hours: int, when: string} */
     public static function settings(?Tenant $tenant): array
     {
         $stored = (array) (($tenant->settings ?? [])['auto_reply'] ?? []);
@@ -32,14 +32,20 @@ final class AutoReply
             'enabled' => (bool) ($stored['enabled'] ?? false),
             'message' => (string) ($stored['message'] ?? 'Thanks for your message! Our team has received it and will reply as soon as possible.'),
             'cooldown_hours' => max(1, min(168, (int) ($stored['cooldown_hours'] ?? 24))),
+            // always | outside_hours (only when the team is away, per Business hours)
+            'when' => ($stored['when'] ?? 'always') === 'outside_hours' ? 'outside_hours' : 'always',
         ];
     }
 
     public function handle(Message $inbound, Contact $contact): void
     {
-        $settings = self::settings($this->context->tenantOrNull());
+        $tenant = $this->context->tenantOrNull();
+        $settings = self::settings($tenant);
         if (! $settings['enabled'] || trim($settings['message']) === '' || $contact->isOptedOut()) {
             return;
+        }
+        if ($settings['when'] === 'outside_hours' && InboxTools::isOpen($tenant)) {
+            return; // the team is at work: a person will answer
         }
         // "STOP" / "START" already get their own confirmation.
         if (in_array($inbound->type, ['text', 'button', 'interactive'], true) && $this->consent->keywordIntent((string) $inbound->body) !== null) {
