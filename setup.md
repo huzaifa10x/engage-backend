@@ -24,3 +24,8 @@ bash /opt/engage/backend/deploy/deploy.sh backend
 Frontend only:
 
 bash /opt/engage/backend/deploy/deploy.sh web
+
+
+Restart on the Server 
+
+bash /opt/engage/backend/deploy/deploy.sh restart
