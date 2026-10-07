@@ -184,6 +184,10 @@ final class InboundMessagingTest extends TestCase
             ]],
         ]))->assertOk();
 
+        // Received records wait in the import list; the paced importer brings them in.
+        $this->inTenant(fn () => $this->assertSame(0, Message::query()->count()));
+        $this->artisan('engage:coexistence:import')->assertSuccessful();
+
         $this->inTenant(function () {
             $this->assertSame(['outbound', 'inbound'], Message::query()->orderBy('meta_timestamp')->orderBy('wamid')->pluck('direction')->all());
             $this->assertSame(MessageStatus::Read, Message::query()->where('wamid', 'wamid.H1')->sole()->status);

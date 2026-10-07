@@ -4,14 +4,11 @@ declare(strict_types=1);
 
 namespace App\Domain\Webhooks\Handlers;
 
-use App\Domain\Messaging\Enums\MessageOrigin;
-use App\Domain\Messaging\Services\ContactIdentity;
-use App\Domain\Messaging\Services\ContactResolver;
-use App\Domain\Messaging\Services\MessageRecorder;
 use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Models\CoexistenceSyncJob;
+use App\Domain\WhatsApp\Services\CoexistenceImport;
 
 /**
  * Coexistence sync webhooks:
@@ -25,8 +22,7 @@ final class CoexistenceSyncHandler implements WebhookHandler
     private const HISTORY_DECLINED = 2593109;
 
     public function __construct(
-        private readonly ContactResolver $contacts,
-        private readonly MessageRecorder $recorder,
+        private readonly CoexistenceImport $import,
     ) {}
 
     public function fields(): array
@@ -46,32 +42,27 @@ final class CoexistenceSyncHandler implements WebhookHandler
             ['status' => 'in_progress'],
         );
 
+        // Nothing is imported here: records join a waiting list and are imported at a fixed pace
+        // per workspace (CoexistenceImport), which is also what makes exact progress possible.
         if ($change->field === 'smb_app_state_sync') {
+            $records = [];
             foreach ((array) ($change->value['state_sync'] ?? []) as $item) {
                 if (($item['type'] ?? null) !== 'contact' || ($item['action'] ?? 'add') !== 'add') {
                     continue; // removals in the phone's address book never delete our contacts
                 }
-                $c = (array) ($item['contact'] ?? []);
-                $contact = $this->contacts->resolve(new ContactIdentity(
-                    isset($c['phone_number']) ? preg_replace('/\D+/', '', (string) $c['phone_number']) : null,
-                    isset($c['user_id']) ? (string) $c['user_id'] : null,
-                ), 'app_sync');
-                if ($contact !== null && $contact->name === null && ! empty($c['full_name'])) {
-                    $contact->forceFill(['name' => mb_substr((string) $c['full_name'], 0, 190)])->save();
-                }
+                $records[] = ['kind' => 'contact', 'thread_user' => null, 'payload' => (array) ($item['contact'] ?? [])];
             }
+            $this->import->enqueue($number, $job, $records);
             $job->forceFill(['status' => 'in_progress', 'chunks_received' => $job->getAttribute('chunks_received') + 1])->save();
 
             return ProcessResult::Processed;
         }
 
+        $records = [];
         // Media contents for earlier placeholders arrive as plain `messages` under field history.
         foreach ((array) ($change->value['messages'] ?? []) as $raw) {
             if (is_array($raw)) {
-                $contact = $this->contacts->resolve(ContactIdentity::fromInbound($raw, []), 'history');
-                if ($contact !== null) {
-                    $this->recorder->record($number, $contact, $raw, MessageOrigin::History);
-                }
+                $records[] = ['kind' => 'message', 'thread_user' => null, 'payload' => $raw];
             }
         }
 
@@ -88,14 +79,12 @@ final class CoexistenceSyncHandler implements WebhookHandler
 
             foreach ((array) ($chunk['threads'] ?? []) as $thread) {
                 $threadUser = isset($thread['id']) ? (string) $thread['id'] : null;
-                $isBsuid = $threadUser !== null && str_contains($threadUser, '.');
-                $contact = $this->contacts->resolve(new ContactIdentity($isBsuid ? null : $threadUser, $isBsuid ? $threadUser : null), 'history');
-                if ($contact === null) {
+                if ($threadUser === null) {
                     continue;
                 }
                 foreach ((array) ($thread['messages'] ?? []) as $raw) {
                     if (is_array($raw)) {
-                        $this->recorder->record($number, $contact, $raw, MessageOrigin::History);
+                        $records[] = ['kind' => 'message', 'thread_user' => $threadUser, 'payload' => $raw];
                     }
                 }
             }
@@ -103,19 +92,19 @@ final class CoexistenceSyncHandler implements WebhookHandler
             $meta = (array) ($chunk['metadata'] ?? []);
             $progress = max((int) $job->progress, (int) ($meta['progress'] ?? 0));
 
+            // "progress" is how much WhatsApp has SENT. The job is complete only when that is 100
+            // and everything received has also been imported (CoexistenceImport::finishIfDone).
             $job->forceFill([
-                'status' => $progress >= 100 ? 'completed' : 'in_progress',
+                'status' => 'in_progress',
                 'phase' => $meta['phase'] ?? $job->getAttribute('phase'),
                 'chunk_order' => max((int) $job->getAttribute('chunk_order'), (int) ($meta['chunk_order'] ?? 0)),
                 'progress' => $progress,
                 'chunks_received' => $job->getAttribute('chunks_received') + 1,
-                'completed_at' => $progress >= 100 ? ($job->getAttribute('completed_at') ?? now()) : null,
             ])->save();
-
-            if ($progress >= 100) {
-                $number->forceFill(['coexistence_status' => CoexistenceStatus::Synced])->save();
-            }
         }
+
+        $this->import->enqueue($number, $job, $records);
+        $this->import->finishIfDone($number);
 
         return ProcessResult::Processed;
     }

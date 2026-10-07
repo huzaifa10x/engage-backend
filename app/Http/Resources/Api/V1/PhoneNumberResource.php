@@ -6,6 +6,7 @@ namespace App\Http\Resources\Api\V1;
 
 use App\Domain\Messaging\Services\SendThroughput;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Domain\WhatsApp\Services\CoexistenceImport;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -29,6 +30,8 @@ final class PhoneNumberResource extends JsonResource
             'throughput_level' => $this->getAttribute('throughput_level'),
             'onboarding_type' => $this->onboarding_type->value,
             'coexistence_status' => $this->coexistence_status->value,
+            // Import of contacts and chat history from the WhatsApp Business app: counts, pace and time left.
+            'sync' => app(CoexistenceImport::class)->progress($this->resource),
             'app_sync_expires_at' => $this->app_sync_expires_at?->toIso8601String(),
             // What this number may actually send: plan, Meta's cap and the coexistence cap combined.
             'max_mps' => app(SendThroughput::class)->limitFor($this->resource),
