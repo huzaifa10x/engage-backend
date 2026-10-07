@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\PublicV1;
 use App\Application\Messaging\ManageContacts;
 use App\Application\Messaging\SendMessage;
 use App\Domain\Developer\Models\ApiKey;
+use App\Domain\Developer\Services\ApiMedia;
 use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Contact;
@@ -65,18 +66,23 @@ final class PublicApiController extends Controller
     // ── Messages ───────────────────────────────────────────────────────────────────────────
 
     /**
-     * Send a text (inside the customer's 24-hour window) or an approved template (any time).
+     * Send a text or a media file (inside the customer's 24-hour window) or an approved template (any time).
      * Accepted (202) means queued for WhatsApp; follow the result with GET /messages/{id} or the
      * message.* webhook events. Send an Idempotency-Key header to make a retry safe.
      */
-    public function sendMessage(Request $request, SendMessage $send): JsonResponse
+    public function sendMessage(Request $request, SendMessage $send, ApiMedia $media): JsonResponse
     {
         $data = $request->validate([
             'to' => ['required_without:contact_id', 'nullable', 'string', 'max:32'],
             'contact_id' => ['required_without:to', 'nullable', 'uuid'],
             'from' => ['nullable', 'uuid'],
-            'type' => ['required', 'in:text,template'],
+            'type' => ['required', 'in:text,template,image,video,audio,document'],
             'text' => ['required_if:type,text', 'nullable', 'string', 'max:4096'],
+            // Media: a file uploaded earlier (POST /media) or a public https address we download from.
+            'media_id' => ['nullable', 'uuid', 'prohibits:media_url'],
+            'media_url' => ['nullable', 'string', 'max:2000', 'url'],
+            'caption' => ['nullable', 'string', 'max:1024'],
+            'filename' => ['nullable', 'string', 'max:240'],
             'preview_url' => ['nullable', 'boolean'],
             'template' => ['required_if:type,template', 'nullable', 'array'],
             'template.name' => ['required_if:type,template', 'nullable', 'string', 'max:512'],
@@ -102,19 +108,46 @@ final class PublicApiController extends Controller
             }
         }
 
-        $payload = $data['type'] === 'text'
-            ? ['type' => 'text', 'body' => $data['text'], 'content' => ['preview_url' => (bool) ($data['preview_url'] ?? false)]]
-            : ['type' => 'template', 'template' => $data['template']];
+        $payload = match ($data['type']) {
+            'text' => ['type' => 'text', 'body' => $data['text'], 'content' => ['preview_url' => (bool) ($data['preview_url'] ?? false)]],
+            'template' => ['type' => 'template', 'template' => $data['template']],
+            default => $this->mediaPayload($data, $media),
+        };
 
         $key = $request->header('Idempotency-Key');
         $message = $send->toContact($number, $contact, $payload, MessageOrigin::Api, null, is_string($key) && $key !== '' ? mb_substr($key, 0, 128) : null);
 
-        return response()->json(['data' => PublicPayload::message($message->load('contact'))], 202);
+        return response()->json(['data' => PublicPayload::message($message->load(['contact', 'media']))], 202);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{type: string, body: ?string, media_id: string, content: array<string, mixed>}
+     */
+    private function mediaPayload(array $data, ApiMedia $media): array
+    {
+        if (empty($data['media_id']) && empty($data['media_url'])) {
+            throw ValidationException::withMessages(['media_id' => 'Give the file to send: "media_id" from POST /media, or "media_url" with a public https address.']);
+        }
+        if ($data['type'] === 'audio' && ! empty($data['caption'])) {
+            throw ValidationException::withMessages(['caption' => 'WhatsApp does not show captions on audio messages.']);
+        }
+        $id = $data['media_id'] ?? $media->fromUrl((string) $data['media_url'], $data['filename'] ?? null)->id;
+
+        return ['type' => $data['type'], 'body' => $data['caption'] ?? null, 'media_id' => $id, 'content' => array_filter(['filename' => $data['filename'] ?? null])];
+    }
+
+    /** Upload a file once, then send it to any number of people by its id. */
+    public function uploadMedia(Request $request, ApiMedia $media): JsonResponse
+    {
+        $request->validate(['file' => ['required', 'file', 'max:'.(100 * 1024)]]);
+
+        return response()->json(['data' => ApiMedia::describe($media->fromUpload($request->file('file')))], 201);
     }
 
     public function message(string $id): JsonResponse
     {
-        return response()->json(['data' => PublicPayload::message(Message::query()->with('contact')->findOrFail($id))]);
+        return response()->json(['data' => PublicPayload::message(Message::query()->with(['contact', 'media'])->findOrFail($id))]);
     }
 
     public function conversations(Request $request): JsonResponse
@@ -131,7 +164,7 @@ final class PublicApiController extends Controller
     {
         $data = $request->validate(['limit' => ['nullable', 'integer', 'min:1', 'max:100'], 'cursor' => ['nullable', 'string']]);
         $conversation = Conversation::query()->findOrFail($id);
-        $page = Message::query()->with('contact')->where('conversation_id', $conversation->id)->orderByDesc('created_at')->orderByDesc('id')->cursorPaginate((int) ($data['limit'] ?? 50));
+        $page = Message::query()->with(['contact', 'media'])->where('conversation_id', $conversation->id)->orderByDesc('created_at')->orderByDesc('id')->cursorPaginate((int) ($data['limit'] ?? 50));
 
         return response()->json(['data' => collect($page->items())->map(fn (Message $m) => PublicPayload::message($m)), 'next_cursor' => $page->nextCursor()?->encode()]);
     }
@@ -184,11 +217,21 @@ final class PublicApiController extends Controller
     }
 
     /** Record that the contact agreed to (opt-in) or refused (opt-out) messages. Written to the consent ledger. */
-    public function consent(Request $request, string $id, string $action, ConsentService $consent): JsonResponse
+    public function optIn(Request $request, string $id, ConsentService $consent): JsonResponse
+    {
+        return $this->consent($request, $id, true, $consent);
+    }
+
+    public function optOut(Request $request, string $id, ConsentService $consent): JsonResponse
+    {
+        return $this->consent($request, $id, false, $consent);
+    }
+
+    private function consent(Request $request, string $id, bool $in, ConsentService $consent): JsonResponse
     {
         $data = $request->validate(['note' => ['nullable', 'string', 'max:300']]);
         $contact = Contact::query()->findOrFail($id);
-        $action === 'opt-in' ? $consent->optIn($contact, 'api', $data['note'] ?? 'Recorded through the API') : $consent->optOut($contact, 'api', $data['note'] ?? 'Recorded through the API');
+        $in ? $consent->optIn($contact, 'api', $data['note'] ?? 'Recorded through the API') : $consent->optOut($contact, 'api', $data['note'] ?? 'Recorded through the API');
 
         return response()->json(['data' => PublicPayload::contact($contact->refresh())]);
     }

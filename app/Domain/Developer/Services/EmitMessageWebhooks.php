@@ -33,7 +33,7 @@ final class EmitMessageWebhooks
             return;
         }
 
-        $message->loadMissing('contact');
+        $message->loadMissing(['contact', 'media']);
         $this->webhooks->emit($message->tenant_id, $event, PublicPayload::message($message), $message->id);
     }
 }

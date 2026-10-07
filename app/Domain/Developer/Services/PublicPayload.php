@@ -42,8 +42,9 @@ final class PublicPayload
             'direction' => $message->direction,
             'type' => $message->type,
             'status' => $message->status->value,
-            'text' => $message->body,
+            'text' => $message->body, // the caption, for media messages
             'template' => $message->type === 'template' ? ['name' => $message->template['name'] ?? null, 'language' => $message->template['language'] ?? null] : null,
+            'media' => $message->media_id !== null ? ['id' => $message->media_id, 'mime_type' => $message->media?->mime_type, 'filename' => $message->media?->filename] : null,
             'whatsapp_message_id' => $message->wamid,
             'origin' => $message->origin->value,
             'contact' => $contact !== null ? ['id' => $contact->id, 'phone' => $contact->wa_id !== null ? '+'.$contact->wa_id : null, 'name' => $contact->name ?? $contact->profile_name] : null,
