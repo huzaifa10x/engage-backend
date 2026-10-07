@@ -3,7 +3,8 @@
 #  10X Engage — local development. One command for everything; no Docker knowledge needed.
 #
 #    ./dev setup     first time on a machine (safe to re-run)
-#    ./dev start     start everything and open the app        (Ctrl+C stops the frontend only)
+#    ./dev start     start everything: backend, client portal and website   (Ctrl+C stops the two frontends)
+#                    ./dev start --backend  backend only  ·  ./dev start --no-site  without the website
 #    ./dev stop      stop the backend
 #    ./dev status    what is running + addresses
 #    ./dev update    pull the latest code for both repos and apply it
@@ -13,15 +14,17 @@
 #    ./dev test      run the backend test suite
 #    ./dev artisan   run any artisan command               (./dev artisan route:list)
 #
-#  Expected layout (both repos side by side):
+#  Expected layout (the repos side by side; engage-site is optional):
 #    engage/
 #      engage-backend/   ← this repo (Laravel API + Super Admin, runs in Docker)
-#      engage-web/       ← Next.js client (runs with Node on your machine)
+#      engage-web/       ← Next.js client portal   (runs with Node on your machine, port 3000)
+#      engage-site/      ← public marketing website (runs with Node on your machine, port 3100)
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB="${ENGAGE_WEB_DIR:-$(cd "$ROOT/.." && pwd)/engage-web}"
+SITE="${ENGAGE_SITE_DIR:-$(cd "$ROOT/.." && pwd)/engage-site}"
 cd "$ROOT"
 
 # Fixed local values — identical on every machine, never used in production.
@@ -51,6 +54,7 @@ need_node() {
 }
 
 has_web() { [[ -f "$WEB/package.json" ]]; }
+has_site() { [[ -f "$SITE/package.json" ]]; }
 
 wait_for_backend() {
     printf '  waiting for the API'
@@ -108,11 +112,22 @@ web_env() {
     set_env "$f" NEXT_PUBLIC_REVERB_SCHEME http
 }
 
+site_env() {
+    has_site || return 0
+    local f="$SITE/.env.local"
+    [[ -f "$f" ]] || { : > "$f"; ok "created engage-site/.env.local"; }
+    # The website reads plans from the local API and sends "Start free trial" to the local portal.
+    set_env "$f" ENGAGE_API_URL http://127.0.0.1:8000/api/v1
+    set_env "$f" NEXT_PUBLIC_APP_URL http://localhost:3000
+    set_env "$f" NEXT_PUBLIC_SITE_URL http://localhost:3100
+}
+
 summary() {
     printf '\n'
     bold "  10X Engage is running locally"
     printf '\n'
     printf '  Client portal   http://localhost:3000      owner@engage.test / Password123!\n'
+    if has_site; then printf '  Website         http://localhost:3100      (pricing comes from the local API)\n'; fi
     printf '  Super Admin     http://localhost:8000/admin  admin@engage.test / Password123!  (authenticator app on first login)\n'
     printf '  Emails          http://localhost:8025      (every email the app sends lands here)\n'
     printf '  Queues          http://localhost:8000/horizon\n'
@@ -126,10 +141,12 @@ cmd_setup() {
     need_docker; ok "Docker is running"
     need_node; ok "Node $(node -v)"
     if has_web; then ok "engage-web found at $WEB"; else warn "engage-web not found next to this repo (expected $WEB) — backend only"; fi
+    if has_site; then ok "engage-site found at $SITE"; else warn "engage-site not found next to this repo (expected $SITE) — skipping the website"; fi
 
     step "Configuring"
     backend_env
     web_env
+    site_env
 
     step "Building the backend (first time takes a few minutes)"
     dc build app
@@ -154,6 +171,11 @@ cmd_setup() {
         (cd "$WEB" && npm ci --no-audit --no-fund)
         ok "engage-web ready"
     fi
+    if has_site; then
+        step "Installing website packages"
+        (cd "$SITE" && npm ci --no-audit --no-fund)
+        ok "engage-site ready"
+    fi
 
     printf '\n'; bold "✅ Setup complete. Next time just run:  ./dev start"
     summary
@@ -166,11 +188,28 @@ cmd_start() {
     dc up -d
     wait_for_backend
     summary
-    if has_web && [[ "${1:-}" != "--backend" ]]; then
-        need_node
+    [[ "${1:-}" == "--backend" ]] && return 0
+    has_web || has_site || return 0
+    need_node
+
+    # The website runs in the background next to the portal; both stop together on Ctrl+C.
+    SITE_PID=""
+    if has_site && [[ "${1:-}" != "--no-site" ]]; then
+        site_env
+        [[ -d "$SITE/node_modules" ]] || (cd "$SITE" && npm ci --no-audit --no-fund)
+        step "Starting the website on http://localhost:3100"
+        npm --prefix "$SITE" run dev &
+        SITE_PID=$!
+        trap 'if [[ -n "$SITE_PID" ]]; then kill "$SITE_PID" 2>/dev/null || true; fi' EXIT INT TERM
+    fi
+
+    if has_web; then
+        web_env
         [[ -d "$WEB/node_modules" ]] || (cd "$WEB" && npm ci --no-audit --no-fund)
-        step "Starting the frontend (Ctrl+C to stop it; the backend keeps running — ./dev stop)"
-        cd "$WEB" && exec npm run dev
+        step "Starting the client portal on http://localhost:3000 (Ctrl+C stops the frontends; the backend keeps running — ./dev stop)"
+        (cd "$WEB" && npm run dev) || true
+    elif [[ -n "$SITE_PID" ]]; then
+        wait "$SITE_PID" || true
     fi
 }
 
@@ -186,6 +225,9 @@ cmd_status() {
     dc ps --format 'table {{.Service}}\t{{.Status}}'
     if curl -fsS -o /dev/null http://localhost:8000/up 2>/dev/null; then ok "API answering on http://localhost:8000"; else warn "API not answering — ./dev start"; fi
     if curl -fsS -o /dev/null http://localhost:3000 2>/dev/null; then ok "Client portal on http://localhost:3000"; else warn "Frontend not running — ./dev start"; fi
+    if has_site; then
+        if curl -fsS -o /dev/null http://localhost:3100 2>/dev/null; then ok "Website on http://localhost:3100"; else warn "Website not running — ./dev start"; fi
+    fi
 }
 
 cmd_update() {
@@ -193,8 +235,10 @@ cmd_update() {
     step "Pulling the latest code"
     git pull --ff-only
     if has_web; then (cd "$WEB" && git pull --ff-only); fi
+    if has_site; then (cd "$SITE" && git pull --ff-only); fi
     backend_env >/dev/null
     web_env
+    site_env
     step "Applying it"
     dc build app
     dc up -d --wait postgres valkey
@@ -203,6 +247,7 @@ cmd_update() {
     dc run --rm --no-deps app php artisan db:seed --force
     dc up -d --force-recreate app horizon scheduler reverb vite
     if has_web; then (cd "$WEB" && npm ci --no-audit --no-fund); fi
+    if has_site; then (cd "$SITE" && npm ci --no-audit --no-fund); fi
     wait_for_backend
     bold "✅ Up to date. Run ./dev start if the frontend is not running."
 }
@@ -223,7 +268,7 @@ cmd_reset() {
 }
 
 cmd_help() {
-    sed -n '3,15p' "$0" | sed 's/^#//'
+    sed -n '3,16p' "$0" | sed 's/^#//'
 }
 
 case "${1:-help}" in
