@@ -2,6 +2,7 @@
 # Deploys the latest `main` of one or both repos on the server.
 #   deploy.sh backend   pull + build backend, migrate, restart backend services
 #   deploy.sh web       pull + build the Next.js client
+#   deploy.sh site      pull + build the public marketing website (repo engage-site in /opt/engage/site)
 #   deploy.sh all       both (first install)
 #   deploy.sh restart   restart backend containers (after editing .env)
 # Called by GitHub Actions on every push to main; safe to run by hand.
@@ -31,6 +32,12 @@ main() {
     case "$target" in
         web | all) update "$root/web" ;;
     esac
+    # The website is optional: `all` includes it only once its repository has been cloned.
+    local with_site=0
+    if [[ "$target" == site || ( "$target" == all && -d "$root/site/.git" ) ]]; then
+        with_site=1
+        update "$root/site"
+    fi
 
     if [[ "$target" == backend || "$target" == all ]]; then
         log "Building backend image"
@@ -51,6 +58,20 @@ main() {
         log "Building web image"
         "${compose[@]}" build web
         "${compose[@]}" up -d web
+    fi
+
+    if [[ "$with_site" == 1 ]]; then
+        log "Building website image"
+        "${compose[@]}" build site
+        "${compose[@]}" up -d site
+        # The image is built without access to the API, so its pricing pages start empty and
+        # refresh from the API within a minute. Do that refresh now instead of on a visitor.
+        ( sleep 65
+          for page in / /pricing; do
+              "${compose[@]}" exec -T site wget -q -O /dev/null "http://127.0.0.1:3100$page" || true
+              sleep 3
+              "${compose[@]}" exec -T site wget -q -O /dev/null "http://127.0.0.1:3100$page" || true
+          done ) 9>&- >/dev/null 2>&1 &   # 9>&-: do not hold the deploy lock while waiting
     fi
 
     if [[ "$target" == restart ]]; then

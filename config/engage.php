@@ -48,6 +48,9 @@ return [
         'window_hours' => (int) env('LOGIN_OTP_WINDOW_HOURS', 24),
     ],
 
+    // Demo and contact requests from the public website are emailed here.
+    'sales_email' => env('ENGAGE_SALES_EMAIL', env('MAIL_FROM_ADDRESS')),
+
     'plans' => [
         // Tenants without a live subscription resolve entitlements from this plan.
         'fallback' => 'free',

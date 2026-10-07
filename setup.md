@@ -29,3 +29,9 @@ bash /opt/engage/backend/deploy/deploy.sh web
 Restart on the Server 
 
 bash /opt/engage/backend/deploy/deploy.sh restart
+
+To Update ENV on live server
+Open the file on the server:
+   nano /opt/engage/backend/.env
+
+bash /opt/engage/backend/deploy/deploy.sh restart

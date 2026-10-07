@@ -1,6 +1,7 @@
 # Edge proxy: automatic HTTPS (Let's Encrypt) for both domains.
 #
 #   {$DOMAIN}        client portal: /api /sanctum /up → Laravel, /app/* → Reverb, rest → Next.js
+#   {$SITE_DOMAIN}   public marketing website → Next.js (engage-site)
 #   {$ADMIN_DOMAIN}  Super Admin + Horizon: everything → Laravel (/ redirects to /admin)
 {
 	email {$ACME_EMAIL}
@@ -37,6 +38,16 @@
 
 	handle {
 		reverse_proxy web:3000
+	}
+}
+
+# Public marketing website (engage-site). SITE_DOMAIN is set in deploy/.env once the site is live;
+# until then Compose passes a placeholder name nobody can reach, so nothing changes.
+{$SITE_DOMAIN} {
+	import common
+
+	handle {
+		reverse_proxy site:3100
 	}
 }
 

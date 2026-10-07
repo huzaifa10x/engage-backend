@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\Messaging\ConversationController;
 use App\Http\Controllers\Api\V1\Messaging\InboxToolsController;
 use App\Http\Controllers\Api\V1\Messaging\MediaController;
 use App\Http\Controllers\Api\V1\Messaging\MessageController;
+use App\Http\Controllers\Api\V1\PublicSiteController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
 use App\Http\Controllers\Api\V1\Templates\TemplateController;
@@ -38,6 +39,14 @@ use Illuminate\Support\Facades\Route;
 | Guest
 |--------------------------------------------------------------------------
 */
+/*
+| Public website (no sign-in): the live plan catalog for the pricing page, and the demo/contact form.
+*/
+Route::prefix('public')->name('public.')->group(function () {
+    Route::get('plans', [PublicSiteController::class, 'plans'])->middleware('throttle:120,1')->name('plans');
+    Route::post('leads', [PublicSiteController::class, 'lead'])->middleware('throttle:6,1')->name('leads');
+});
+
 Route::middleware('throttle:auth')->prefix('auth')->name('auth.')->group(function () {
     Route::post('register', [AuthController::class, 'register'])->name('register');
     Route::post('login', [AuthController::class, 'login'])->name('login');

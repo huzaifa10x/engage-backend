@@ -56,12 +56,32 @@ services:
     healthcheck: { disable: true }
     logging: *logging
 
+  # Public marketing website (repo: engage-site, checked out at /opt/engage/site).
+  # Only built and started by `deploy.sh site`; it reads plans from the API over the internal network.
+  site:
+    image: engage-site:latest
+    pull_policy: never
+    build:
+      context: ../../site
+      args:
+        NEXT_PUBLIC_SITE_URL: https://${SITE_DOMAIN:-engage.10xdigital.ae}
+        NEXT_PUBLIC_APP_URL: https://${DOMAIN}
+        NEXT_PUBLIC_WHATSAPP_NUMBER: ${SITE_WHATSAPP_NUMBER:-}
+        NEXT_PUBLIC_CONTACT_EMAIL: ${SITE_CONTACT_EMAIL:-}
+    environment:
+      ENGAGE_API_URL: http://app:8000/api/v1
+    restart: unless-stopped
+    healthcheck: { disable: true }
+    logging: *logging
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     ports: ["80:80", "443:443", "443:443/udp"]
     environment:
       DOMAIN: ${DOMAIN}
+      # Until the website has a domain, its proxy entry listens on a name nobody can reach.
+      SITE_DOMAIN: ${SITE_DOMAIN:-http://site.internal}
       EXTRA_DOMAINS: ${EXTRA_DOMAINS:-}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}

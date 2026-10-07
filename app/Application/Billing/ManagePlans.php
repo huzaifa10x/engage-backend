@@ -15,6 +15,8 @@ use App\Domain\Plans\Models\PlanVersion;
 use App\Domain\Plans\Models\PlanVersionFeature;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
+use App\Http\Controllers\Api\V1\PublicSiteController;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -35,6 +37,8 @@ final class ManagePlans
      */
     public function create(string $key, array $data): Plan
     {
+        Cache::forget(PublicSiteController::CACHE_KEY); // the public pricing page reads this catalog
+
         return DB::transaction(function () use ($key, $data): Plan {
             $plan = Plan::query()->create([
                 'key' => $key,
@@ -60,6 +64,8 @@ final class ManagePlans
      */
     public function update(Plan $plan, array $data, bool $applyToSubscribers): array
     {
+        Cache::forget(PublicSiteController::CACHE_KEY); // the public pricing page reads this catalog
+
         return DB::transaction(function () use ($plan, $data, $applyToSubscribers): array {
             $plan->fill([
                 'name' => $data['name'],
@@ -95,6 +101,7 @@ final class ManagePlans
 
     public function setActive(Plan $plan, bool $active): void
     {
+        Cache::forget(PublicSiteController::CACHE_KEY); // the public pricing page reads this catalog
         $plan->forceFill(['is_active' => $active])->save();
         $this->audit->record($active ? 'plan.activated' : 'plan.deactivated', null, meta: ['plan' => $plan->key]);
     }
