@@ -14,19 +14,14 @@ use App\Domain\WhatsApp\Models\CoexistenceSyncJob;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\RateLimiter;
 use Throwable;
 
 /**
- * The paced import of WhatsApp Business app data (coexistence).
+ * Import of WhatsApp Business app data (coexistence): contacts and chat history.
  *
- *   receive  → webhooks put each contact and each history message into a waiting list, counted
- *   import   → a scheduled run takes records off the list at a fixed rate per workspace
- *   progress → received / imported / remaining, plus how far WhatsApp is with sending
- *
- * The rate is a hard ceiling per workspace per hour (default 200), spread evenly across the hour
- * rather than spent in one burst. It is enforced here, on the server; nothing a browser sends can
- * change it.
+ * Records are imported as soon as WhatsApp delivers them; nothing is held back or paced here.
+ * How fast an import goes is decided by WhatsApp, which sends history in batches over time.
+ * This class also counts what has been imported, so the portal can show real progress.
  */
 final class CoexistenceImport
 {
@@ -34,45 +29,41 @@ final class CoexistenceImport
 
     public function __construct(private readonly ContactResolver $contacts, private readonly MessageRecorder $recorder) {}
 
-    public static function perHour(): int
-    {
-        return max(1, (int) config('engage.meta.coexistence_import_per_hour', 200));
-    }
-
     /**
-     * Adds received records to the waiting list.
+     * Imports records the moment they arrive, and counts them.
      *
      * @param  list<array{kind: string, thread_user: ?string, payload: array<string, mixed>}>  $records
      */
-    public function enqueue(PhoneNumber $number, CoexistenceSyncJob $job, array $records): void
+    public function record(PhoneNumber $number, CoexistenceSyncJob $job, array $records): void
     {
         if ($records === []) {
             return;
         }
-        foreach (array_chunk($records, 500) as $chunk) {
-            DB::table('coexistence_sync_items')->insert(array_map(fn (array $r) => [
-                'tenant_id' => $number->tenant_id, 'phone_number_id' => $number->id, 'kind' => $r['kind'],
-                'thread_user' => $r['thread_user'], 'payload' => json_encode($r['payload'], JSON_UNESCAPED_UNICODE), 'created_at' => now(),
-            ], $chunk));
+        foreach ($records as $record) {
+            try {
+                $this->import($number, $record['kind'], $record['thread_user'], $record['payload']);
+            } catch (Throwable $e) {
+                // One unreadable record must not stop the rest of the batch.
+                Log::warning('Coexistence record skipped', ['phone_number' => $number->id, 'error' => $e->getMessage()]);
+            }
         }
-        CoexistenceSyncJob::query()->whereKey($job->id)->update(['records_received' => DB::raw('records_received + '.count($records))]);
+        $count = count($records);
+        CoexistenceSyncJob::query()->whereKey($job->id)->update([
+            'records_received' => DB::raw("records_received + {$count}"), 'records_imported' => DB::raw("records_imported + {$count}"), 'last_imported_at' => now(),
+        ]);
     }
 
     /**
-     * Imports the next records for one workspace, within its hourly allowance.
-     * Must run inside that workspace's tenant context. Returns how many were imported.
+     * Records that were still waiting in the list of the earlier, paced version are imported here,
+     * a large batch at a time with no hourly limit, until the list is empty. New records never
+     * enter that list any more. Must run inside the workspace's tenant context.
      */
-    public function importNext(Tenant $tenant, int $runsPerHour = 60): int
+    public function drainWaitingList(Tenant $tenant, int $batch = 1000): int
     {
-        $limit = self::perHour();
-        $key = 'coex-import:'.$tenant->id;
-        // An even pace: each run takes its share of the hour, never more than what is left of the allowance.
-        $take = min((int) ceil($limit / $runsPerHour), RateLimiter::remaining($key, $limit));
-        if ($take <= 0) {
+        $items = DB::table('coexistence_sync_items')->where('tenant_id', $tenant->id)->orderBy('id')->limit($batch)->get();
+        if ($items->isEmpty()) {
             return 0;
         }
-
-        $items = DB::table('coexistence_sync_items')->where('tenant_id', $tenant->id)->orderBy('id')->limit($take)->get();
         $numbers = PhoneNumber::query()->whereIn('id', $items->pluck('phone_number_id')->unique())->get()->keyBy('id');
         $done = [];
 
@@ -83,10 +74,8 @@ final class CoexistenceImport
                     $this->import($number, (string) $item->kind, $item->thread_user, (array) json_decode((string) $item->payload, true));
                 }
             } catch (Throwable $e) {
-                // One unreadable record must not block the thousands behind it.
                 Log::warning('Coexistence record skipped', ['item' => $item->id, 'error' => $e->getMessage()]);
             }
-            RateLimiter::hit($key, 3600);
             $done[$item->phone_number_id][$item->kind] = ($done[$item->phone_number_id][$item->kind] ?? 0) + 1;
         }
 
@@ -104,7 +93,7 @@ final class CoexistenceImport
         return $items->count();
     }
 
-    /** History is finished when WhatsApp has sent everything AND everything received has been imported. */
+    /** History is finished when WhatsApp has sent everything (and nothing is left in the old waiting list). */
     public function finishIfDone(PhoneNumber $number): void
     {
         $history = CoexistenceSyncJob::query()->where('phone_number_id', $number->id)->where('sync_type', 'history')->first();
@@ -143,12 +132,11 @@ final class CoexistenceImport
 
         $received = $contacts['received'] + $messages['received'];
         $imported = $contacts['imported'] + $messages['imported'];
-        $remaining = $received - $imported;
-        // WhatsApp reports how far it is with SENDING history (0–100). It has finished when that is 100, or history was declined.
-        // ("completed" below 100% means the import was closed after WhatsApp went quiet: see WatchCoexistenceSync.)
+        // WhatsApp reports how far it is with SENDING history (0–100). It has finished when that is 100, history was
+        // declined, or the import was closed after WhatsApp went quiet (see WatchCoexistenceSync).
         $whatsappDone = ($history === null && $number->coexistence_status === CoexistenceStatus::Synced)
             || ($history !== null && ($history->progress >= 100 || in_array($history->status, ['declined', 'completed'], true)));
-        $perHour = self::perHour();
+        $remaining = $received - $imported; // only ever above zero while the old waiting list is being emptied
 
         return [
             'state' => match (true) {
@@ -158,17 +146,15 @@ final class CoexistenceImport
                 default => 'importing',
             },
             'history_declined' => $history?->status === 'declined',
-            'whatsapp_progress' => $history === null ? null : (int) $history->progress,   // % sent by WhatsApp so far
+            // The only measure of "how much is left" that exists: WhatsApp does not say how many records it will
+            // send, only what share of the history it has sent so far.
+            'percent' => $whatsappDone ? ($remaining === 0 ? 100 : 99) : (int) ($history->progress ?? 0),
             'whatsapp_finished' => $whatsappDone,
-            'received' => $received,
             'imported' => $imported,
-            'remaining' => $remaining,
-            // Of what has arrived so far. More may still arrive while whatsapp_finished is false.
-            'percent' => $received > 0 ? (int) floor($imported / $received * 100) : ($whatsappDone ? 100 : 0),
-            'contacts' => $contacts,
-            'messages' => $messages,
-            'per_hour' => $perHour,
-            'minutes_left' => $remaining > 0 ? (int) ceil($remaining / $perHour * 60) : 0,
+            'waiting' => $remaining,
+            'contacts' => $contacts['imported'],
+            'messages' => $messages['imported'],
+            'started_at' => $number->getAttribute('app_sync_started_at')?->toIso8601String(),
             'last_imported_at' => $jobs->max('last_imported_at')?->toIso8601String(),
         ];
     }

@@ -42,8 +42,7 @@ final class CoexistenceSyncHandler implements WebhookHandler
             ['status' => 'in_progress'],
         );
 
-        // Nothing is imported here: records join a waiting list and are imported at a fixed pace
-        // per workspace (CoexistenceImport), which is also what makes exact progress possible.
+        // Records are imported straight away and counted (CoexistenceImport), so progress can be shown.
         if ($change->field === 'smb_app_state_sync') {
             $records = [];
             foreach ((array) ($change->value['state_sync'] ?? []) as $item) {
@@ -52,7 +51,7 @@ final class CoexistenceSyncHandler implements WebhookHandler
                 }
                 $records[] = ['kind' => 'contact', 'thread_user' => null, 'payload' => (array) ($item['contact'] ?? [])];
             }
-            $this->import->enqueue($number, $job, $records);
+            $this->import->record($number, $job, $records);
             $job->forceFill(['status' => 'in_progress', 'chunks_received' => $job->getAttribute('chunks_received') + 1])->save();
 
             return ProcessResult::Processed;
@@ -92,8 +91,7 @@ final class CoexistenceSyncHandler implements WebhookHandler
             $meta = (array) ($chunk['metadata'] ?? []);
             $progress = max((int) $job->progress, (int) ($meta['progress'] ?? 0));
 
-            // "progress" is how much WhatsApp has SENT. The job is complete only when that is 100
-            // and everything received has also been imported (CoexistenceImport::finishIfDone).
+            // "progress" is how much of the history WhatsApp has sent so far.
             $job->forceFill([
                 'status' => 'in_progress',
                 'phase' => $meta['phase'] ?? $job->getAttribute('phase'),
@@ -103,7 +101,7 @@ final class CoexistenceSyncHandler implements WebhookHandler
             ])->save();
         }
 
-        $this->import->enqueue($number, $job, $records);
+        $this->import->record($number, $job, $records);
         $this->import->finishIfDone($number);
 
         return ProcessResult::Processed;
