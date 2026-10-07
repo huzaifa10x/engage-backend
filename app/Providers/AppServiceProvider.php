@@ -7,8 +7,10 @@ namespace App\Providers;
 use App\Domain\Access\Models\Role;
 use App\Domain\Billing\Models\Subscription;
 use App\Domain\Campaigns\Models\Campaign;
+use App\Domain\Developer\Services\EmitMessageWebhooks;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Identity\Models\User;
+use App\Domain\Messaging\Events\MessageStored;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
@@ -28,6 +30,7 @@ use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -40,6 +43,9 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Customer webhooks: message.* events follow the same event that updates the inbox.
+        Event::listen(MessageStored::class, EmitMessageWebhooks::class);
+
         // Short, stable morph keys — class names never leak into the database.
         Relation::enforceMorphMap([
             'user' => User::class,

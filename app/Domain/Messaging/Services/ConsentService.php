@@ -6,6 +6,8 @@ namespace App\Domain\Messaging\Services;
 
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Compliance\ComplianceSettings;
+use App\Domain\Developer\Services\PublicPayload;
+use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\ConsentEvent;
 use App\Domain\Messaging\Models\Contact;
@@ -52,6 +54,7 @@ final class ConsentService
 
         $contact->forceFill(['consent_state' => ConsentState::OptedOut, 'opted_out_at' => now()])->save();
         $this->record($contact, 'opted_out', $source, $detail, $messageId, $membershipId);
+        app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.opted_out', PublicPayload::contact($contact) + ['source' => $source]);
 
         return true;
     }
@@ -65,6 +68,7 @@ final class ConsentService
 
         $contact->forceFill(['consent_state' => ConsentState::OptedIn, 'opted_in_at' => now(), 'opted_out_at' => null])->save();
         $this->record($contact, 'opted_in', $source, $detail, $messageId, $membershipId);
+        app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.opted_in', PublicPayload::contact($contact) + ['source' => $source]);
 
         return true;
     }

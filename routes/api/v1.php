@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\V1\Billing\BillingController;
 use App\Http\Controllers\Api\V1\Campaigns\CampaignController;
 use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
+use App\Http\Controllers\Api\V1\DeveloperController;
 use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
 use App\Http\Controllers\Api\V1\InvitationController;
@@ -86,6 +87,26 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
 
     Route::get('tenant/entitlements', [EntitlementController::class, 'index'])->name('tenant.entitlements');
     Route::get('tenant/auto-reply', [TenantController::class, 'autoReply'])->name('tenant.auto-reply');
+    /*
+    | Developer: API keys, webhook endpoints, delivery log.
+    */
+    Route::middleware('can:'.Permission::DeveloperView->value)->prefix('developer')->name('developer.')->group(function () {
+        Route::get('/', [DeveloperController::class, 'overview'])->name('overview');
+        Route::get('api-keys', [DeveloperController::class, 'keys'])->name('keys');
+        Route::get('webhooks', [DeveloperController::class, 'endpoints'])->name('webhooks');
+        Route::get('deliveries', [DeveloperController::class, 'deliveries'])->name('deliveries');
+    });
+    Route::middleware('can:'.Permission::DeveloperManage->value)->prefix('developer')->name('developer.')->group(function () {
+        Route::post('api-keys', [DeveloperController::class, 'createKey'])->middleware('throttle:20,1')->name('keys.create');
+        Route::delete('api-keys/{apiKey}', [DeveloperController::class, 'revokeKey'])->name('keys.revoke');
+        Route::post('webhooks', [DeveloperController::class, 'createEndpoint'])->name('webhooks.create');
+        Route::patch('webhooks/{endpoint}', [DeveloperController::class, 'updateEndpoint'])->name('webhooks.update');
+        Route::delete('webhooks/{endpoint}', [DeveloperController::class, 'deleteEndpoint'])->name('webhooks.delete');
+        Route::post('webhooks/{endpoint}/rotate-secret', [DeveloperController::class, 'rotateSecret'])->name('webhooks.rotate');
+        Route::post('webhooks/{endpoint}/test', [DeveloperController::class, 'testEndpoint'])->middleware('throttle:20,1')->name('webhooks.test');
+        Route::post('deliveries/{delivery}/resend', [DeveloperController::class, 'resend'])->middleware('throttle:60,1')->name('deliveries.resend');
+    });
+
     Route::get('tenant/inbox-settings', [InboxToolsController::class, 'inboxSettings'])->name('tenant.inbox-settings');
     Route::put('tenant/inbox-settings', [InboxToolsController::class, 'updateInboxSettings'])
         ->middleware('can:'.Permission::SettingsManage->value)->name('tenant.inbox-settings.update');

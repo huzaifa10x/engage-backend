@@ -21,6 +21,9 @@ final class PruneWebhooks extends Command
         // Meta retries a delivery for up to 7 days; keep dedup keys a little longer.
         $expired = $context->bypass(fn () => DB::table('webhook_deliveries')->where('received_at', '<', now()->subDays(8))->delete());
 
+        // Customers' webhook delivery log (Developer → Logs): 30 days is enough to debug and resend.
+        $context->bypass(fn () => DB::table('webhook_endpoint_deliveries')->where('created_at', '<', now()->subDays(30))->delete());
+
         $retention = (int) config('engage.meta.webhook_retention_days', 90);
         $dropped = $partitions->dropOlderThan('webhook_inbound_log', CarbonImmutable::now('UTC')->subDays($retention));
 

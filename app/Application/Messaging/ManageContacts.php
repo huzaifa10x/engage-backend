@@ -6,6 +6,8 @@ namespace App\Application\Messaging;
 
 use App\Application\Crm\TagCatalog;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Developer\Services\PublicPayload;
+use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Tenancy\TenantContext;
@@ -44,6 +46,7 @@ final class ManageContacts
         }
 
         $this->audit->record('contact.created', $contact);
+        app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.created', PublicPayload::contact($contact->refresh()));
 
         return $contact;
     }
@@ -54,6 +57,7 @@ final class ManageContacts
         $before = $contact->only(['name', 'email']);
         $contact->fill($this->attributes($data))->save();
         $this->audit->record('contact.updated', $contact, before: $before, after: $contact->only(['name', 'email']));
+        app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.updated', PublicPayload::contact($contact));
 
         return $contact;
     }

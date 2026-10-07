@@ -13,6 +13,12 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('v1')->name('api.v1.')->group(base_path('routes/api/v1.php'));
 
 /*
+| Public API for customers' own systems (API-key authentication), versioned separately from the
+| portal's API so the two can change independently.
+*/
+Route::prefix('public/v1')->name('api.public.v1.')->group(base_path('routes/api/public.php'));
+
+/*
 | Meta-facing callbacks — their contract is Meta's, not ours, so they are not versioned.
 | Configure in the App Dashboard: webhook callback URL, Data Deletion and Deauthorize callbacks.
 */

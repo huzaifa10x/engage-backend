@@ -7,6 +7,8 @@ namespace App\Http\Controllers\Api\V1\Messaging;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\Permission;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Developer\Services\PublicPayload;
+use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Jobs\SendReadReceipt;
 use App\Domain\Messaging\Models\Conversation;
@@ -113,6 +115,15 @@ final class ConversationController extends Controller
         }
 
         $audit->record('conversation.updated', $conversation, before: $before, after: $data);
+
+        // Customer webhooks.
+        $conversation->loadMissing('contact');
+        if ($assignee !== null && $assignee !== $before['assigned_membership_id']) {
+            app(WebhookDispatcher::class)->emit($conversation->tenant_id, 'conversation.assigned', PublicPayload::conversation($conversation));
+        }
+        if (($data['status'] ?? null) === 'closed' && $before['status'] !== 'closed') {
+            app(WebhookDispatcher::class)->emit($conversation->tenant_id, 'conversation.closed', PublicPayload::conversation($conversation));
+        }
 
         return ConversationResource::make($conversation->load(['contact', 'phoneNumber']));
     }
