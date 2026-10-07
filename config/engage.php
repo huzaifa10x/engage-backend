@@ -95,6 +95,11 @@ return [
         // Hours after which an import that stopped sending data is closed, so the inbox does not
         // show "syncing" forever (Meta gives no explicit "finished" signal when a phone goes offline).
         'coexistence_sync_stale_hours' => (int) env('META_COEXISTENCE_SYNC_STALE_HOURS', 72),
+        // Load control for the import of WhatsApp Business app data: records are imported in batches
+        // of this size with this pause between batches, one batch at a time per workspace.
+        // 100 every 5 seconds ≈ 1,200 records a minute per workspace. Raise for speed, lower for calm.
+        'coexistence_import_batch' => (int) env('META_COEXISTENCE_IMPORT_BATCH', 100),
+        'coexistence_import_pause_seconds' => (int) env('META_COEXISTENCE_IMPORT_PAUSE_SECONDS', 5),
         // Onboarding stops when the WABA is still subscribed to another provider's app
         // (GET /<WABA_ID>/subscribed_apps). Comma-separated Meta app IDs listed in
         // META_ALLOWED_OTHER_APP_IDS are tolerated (e.g. a second app of your own).

@@ -45,7 +45,7 @@ final class MessageResource extends JsonResource
             ] : null,
             'pricing' => $this->getAttribute('pricing'),
             'sent_by_membership_id' => $this->sent_by_membership_id,
-            'timestamp' => ($this->meta_timestamp ?? $this->created_at)?->toIso8601String(),
+            'timestamp' => ($this->occurred_at ?? $this->meta_timestamp ?? $this->created_at)?->toIso8601String(),
             'sent_at' => $this->getAttribute('sent_at')?->toIso8601String(),
             'delivered_at' => $this->getAttribute('delivered_at')?->toIso8601String(),
             'read_at' => $this->getAttribute('read_at')?->toIso8601String(),

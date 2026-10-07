@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Messaging\Jobs;
 
 use App\Application\WhatsApp\WhatsappCredentials;
+use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Events\MessageStored;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
@@ -77,7 +78,9 @@ final class DownloadInboundMedia implements ShouldQueue
 
         $message = Message::query()->where('media_id', $media->id)->first();
         if ($message !== null) {
-            MessageStored::dispatch($message, false);
+            if ($message->origin !== MessageOrigin::History) { // imported history stays quiet
+                MessageStored::dispatch($message, false);
+            }
         }
     }
 }

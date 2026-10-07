@@ -49,7 +49,7 @@ final class PublicPayload
             'origin' => $message->origin->value,
             'contact' => $contact !== null ? ['id' => $contact->id, 'phone' => $contact->wa_id !== null ? '+'.$contact->wa_id : null, 'name' => $contact->name ?? $contact->profile_name] : null,
             'error' => $message->error_code !== null ? ['code' => $message->error_code, 'message' => $message->error_title] : null,
-            'created_at' => $message->created_at?->toIso8601String(),
+            'created_at' => ($message->occurred_at ?? $message->created_at)?->toIso8601String(), // when the message happened
         ];
     }
 

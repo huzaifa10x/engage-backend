@@ -164,7 +164,7 @@ final class PublicApiController extends Controller
     {
         $data = $request->validate(['limit' => ['nullable', 'integer', 'min:1', 'max:100'], 'cursor' => ['nullable', 'string']]);
         $conversation = Conversation::query()->findOrFail($id);
-        $page = Message::query()->with(['contact', 'media'])->where('conversation_id', $conversation->id)->orderByDesc('created_at')->orderByDesc('id')->cursorPaginate((int) ($data['limit'] ?? 50));
+        $page = Message::query()->with(['contact', 'media'])->where('conversation_id', $conversation->id)->orderByDesc('occurred_at')->orderByDesc('id')->cursorPaginate((int) ($data['limit'] ?? 50));
 
         return response()->json(['data' => collect($page->items())->map(fn (Message $m) => PublicPayload::message($m)), 'next_cursor' => $page->nextCursor()?->encode()]);
     }

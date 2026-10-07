@@ -33,6 +33,7 @@ use Illuminate\Support\Carbon;
  * @property ?string $error_title
  * @property ?string $sent_by_membership_id
  * @property ?Carbon $meta_timestamp
+ * @property ?Carbon $occurred_at
  * @property ?Carbon $created_at
  * @property ?Conversation $conversation
  * @property ?Contact $contact
@@ -51,8 +52,22 @@ class Message extends Model
         'tenant_id', 'conversation_id', 'phone_number_id', 'contact_id', 'direction', 'origin', 'type', 'status', 'wamid',
         'context_wamid', 'body', 'content', 'media_id', 'template', 'error_code', 'error_title', 'error_details', 'pricing',
         'sent_by_membership_id', 'idempotency_key', 'meta_timestamp', 'sent_at', 'delivered_at', 'read_at', 'failed_at',
-        'edited_at', 'revoked_at',
+        'edited_at', 'revoked_at', 'occurred_at',
     ];
+
+    /**
+     * When the message really happened: WhatsApp's timestamp if it has one (received messages,
+     * messages sent from the phone, imported history), otherwise now. Set once, on creation;
+     * conversations are sorted and paged by it.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (Message $message): void {
+            if ($message->getAttribute('occurred_at') === null) {
+                $message->setAttribute('occurred_at', $message->meta_timestamp ?? now());
+            }
+        });
+    }
 
     protected function casts(): array
     {
@@ -64,6 +79,7 @@ class Message extends Model
             'error_details' => 'array',
             'pricing' => 'array',
             'meta_timestamp' => 'datetime',
+            'occurred_at' => 'datetime',
             'sent_at' => 'datetime',
             'delivered_at' => 'datetime',
             'read_at' => 'datetime',

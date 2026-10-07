@@ -4,20 +4,27 @@ declare(strict_types=1);
 
 namespace Tests\Feature\WhatsApp;
 
+use App\Domain\Messaging\Events\MessageStored;
+use App\Domain\Messaging\Jobs\DownloadInboundMedia;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Enums\OnboardingType;
+use App\Domain\WhatsApp\Jobs\ImportCoexistenceBatch;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Domain\WhatsApp\Services\CoexistenceImport;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
 
 /**
- * Import of WhatsApp Business app data: records are imported the moment they arrive (no rate
- * limit), and the progress shown to the user reflects what has really been imported.
+ * Import of WhatsApp Business app data under load control: the webhook only buffers, a
+ * low-priority job imports in bounded batches, live messages are never held up, and the progress
+ * shown to the user adds up exactly.
  */
 final class CoexistenceImportTest extends TestCase
 {
@@ -43,14 +50,16 @@ final class CoexistenceImportTest extends TestCase
         $this->actingAsMember($this->owner);
     }
 
-    private function history(int $count, int $progress, int $offset = 0): void
+    private function history(int $count, int $progress, int $offset = 0, bool $withMedia = false): void
     {
         $threads = [];
         for ($i = 0; $i < $count; $i++) {
             $n = $offset + $i;
             $customer = '9715011'.str_pad((string) ($n % 7), 5, '0', STR_PAD_LEFT);
             $threads[$customer]['id'] = $customer;
-            $threads[$customer]['messages'][] = ['from' => $customer, 'id' => "wamid.HIST{$n}", 'timestamp' => (string) (1739230000 + $n), 'type' => 'text', 'text' => ['body' => "Old message {$n}"], 'history_context' => ['status' => 'READ']];
+            $threads[$customer]['messages'][] = $withMedia
+                ? ['from' => $customer, 'id' => "wamid.HIST{$n}", 'timestamp' => (string) (1739230000 + $n), 'type' => 'image', 'image' => ['id' => "media-{$n}", 'mime_type' => 'image/jpeg', 'sha256' => 'abc'], 'history_context' => ['status' => 'READ']]
+                : ['from' => $customer, 'id' => "wamid.HIST{$n}", 'timestamp' => (string) (1739230000 + $n), 'type' => 'text', 'text' => ['body' => "Old message {$n}"], 'history_context' => ['status' => 'READ']];
         }
         $this->postWebhook($this->webhookBody('history', ['messaging_product' => 'whatsapp', 'metadata' => self::META,
             'history' => [['metadata' => ['phase' => 1, 'chunk_order' => 1, 'progress' => $progress], 'threads' => array_values($threads)]]]))->assertOk();
@@ -73,74 +82,128 @@ final class CoexistenceImportTest extends TestCase
         return (array) $this->getJson("/api/v1/phone-numbers/{$this->number->id}")->assertOk()->json('data.sync');
     }
 
-    public function test_records_are_imported_as_they_arrive_with_no_rate_limit_and_progress_follows(): void
+    private function waiting(): int
     {
+        return $this->tenantContext()->bypass(fn () => DB::table('coexistence_sync_items')->count());
+    }
+
+    private function messages(): int
+    {
+        return $this->tenantContext()->run($this->tenant, fn () => Message::query()->count());
+    }
+
+    private function runOneBatch(): void
+    {
+        (new ImportCoexistenceBatch($this->tenant->id))->handle($this->tenantContext(), app(CoexistenceImport::class));
+        $this->actingAsMember($this->owner);
+    }
+
+    public function test_the_webhook_only_buffers_and_one_import_chain_is_queued_per_workspace(): void
+    {
+        Queue::fake([ImportCoexistenceBatch::class]);
         $this->assertSame('waiting', $this->sync()['state']);
 
-        // 30 contacts and 600 messages arrive in one go: all of them are in immediately.
+        // 30 contacts and 620 messages arrive in three webhooks, as fast as WhatsApp can send them.
         $this->contacts(30);
-        $this->history(600, progress: 40);
+        $this->history(400, progress: 40);
+        $this->history(220, progress: 70, offset: 400);
 
-        $this->assertSame(600, $this->tenantContext()->run($this->tenant, fn () => Message::query()->count()));
-        $this->assertSame(30, $this->tenantContext()->run($this->tenant, fn () => Contact::query()->where('source', 'app_sync')->count()));
-        $this->assertSame(0, $this->tenantContext()->bypass(fn () => DB::table('coexistence_sync_items')->count()), 'nothing waits in a list');
+        // Nothing has touched the messages or contacts tables: everything is in the waiting list.
+        $this->assertSame(650, $this->waiting());
+        $this->assertSame(0, $this->messages());
+        $this->assertSame(0, $this->tenantContext()->run($this->tenant, fn () => Contact::query()->count()));
+        // Three webhooks, ONE queued chain, on the low-priority queue.
+        Queue::assertPushed(ImportCoexistenceBatch::class, 1);
+        Queue::assertPushedOn('maintenance', ImportCoexistenceBatch::class);
 
         $sync = $this->sync();
         $this->assertSame('importing', $sync['state']);
-        $this->assertSame(40, $sync['percent']);          // WhatsApp has sent 40% of the history
-        $this->assertFalse($sync['whatsapp_finished']);
-        $this->assertSame(630, $sync['imported']);
-        $this->assertSame(30, $sync['contacts']);
-        $this->assertSame(600, $sync['messages']);
-        $this->assertSame(0, $sync['waiting']);
-        $this->assertNotNull($sync['last_imported_at']);
-        $this->assertArrayNotHasKey('per_hour', $sync);
-        $this->assertSame('history_syncing', $this->getJson("/api/v1/phone-numbers/{$this->number->id}")->json('data.coexistence_status'));
-
-        // WhatsApp sends the rest: complete at once.
-        $this->history(50, progress: 100, offset: 600);
-        $sync = $this->sync();
-        $this->assertEquals(['state' => 'complete', 'percent' => 100, 'imported' => 680, 'messages' => 650], array_intersect_key($sync, array_flip(['state', 'percent', 'imported', 'messages'])));
-        $this->assertSame('synced', $this->getJson("/api/v1/phone-numbers/{$this->number->id}")->json('data.coexistence_status'));
+        $this->assertEquals(['received' => 650, 'imported' => 0, 'waiting' => 650, 'percent' => 0, 'whatsapp_percent' => 70], array_intersect_key($sync, array_flip(['received', 'imported', 'waiting', 'percent', 'whatsapp_percent'])));
     }
 
-    public function test_records_left_waiting_by_the_earlier_paced_version_are_all_imported_in_one_run(): void
+    public function test_batches_are_bounded_and_chain_until_the_list_is_empty(): void
     {
-        // What the previous version left behind: a job that had received 500 records and imported 120.
-        $this->history(1, progress: 100);
-        $this->tenantContext()->bypass(function (): void {
-            DB::table('coexistence_sync_jobs')->where('phone_number_id', $this->number->id)->where('sync_type', 'history')->update(['records_received' => 500, 'records_imported' => 120, 'status' => 'in_progress']);
-            DB::table('phone_numbers')->where('id', $this->number->id)->update(['coexistence_status' => 'history_syncing']);
-            $rows = [];
-            for ($i = 0; $i < 380; $i++) {
-                $rows[] = ['tenant_id' => $this->tenant->id, 'phone_number_id' => $this->number->id, 'kind' => 'message', 'thread_user' => '971501112233',
-                    'payload' => json_encode(['from' => '971501112233', 'id' => "wamid.OLD{$i}", 'timestamp' => (string) (1739000000 + $i), 'type' => 'text', 'text' => ['body' => "Queued {$i}"]]), 'created_at' => now()];
-            }
-            DB::table('coexistence_sync_items')->insert($rows);
-        });
-        $this->assertSame(380, $this->sync()['waiting']);
-        $this->assertSame('importing', $this->sync()['state']);
+        Queue::fake([ImportCoexistenceBatch::class]);
+        $this->contacts(30);
+        $this->history(220, progress: 100);
+        $this->assertSame(250, $this->waiting());
 
-        // One run, no hourly limit: the whole list is imported.
-        $this->artisan('engage:coexistence:import')->assertSuccessful();
-        $this->actingAsMember($this->owner);
-
-        $this->assertSame(0, $this->tenantContext()->bypass(fn () => DB::table('coexistence_sync_items')->count()));
-        $this->assertSame(380, $this->tenantContext()->run($this->tenant, fn () => Message::query()->where('wamid', 'like', 'wamid.OLD%')->count()));
+        // Each run imports exactly one batch (100 by default), oldest first, and queues the next one with a pause.
+        $this->runOneBatch();
+        $this->assertSame(150, $this->waiting());
         $sync = $this->sync();
-        $this->assertEquals(['state' => 'complete', 'waiting' => 0, 'percent' => 100], array_intersect_key($sync, array_flip(['state', 'waiting', 'percent'])));
+        $this->assertEquals(['received' => 250, 'imported' => 100, 'waiting' => 150, 'percent' => 40], array_intersect_key($sync, array_flip(['received', 'imported', 'waiting', 'percent'])));
+        $this->assertSame(['received' => 30, 'imported' => 30], $sync['contacts']);
+        $this->assertSame(['received' => 220, 'imported' => 70], $sync['messages']);
+        $this->assertSame($sync['received'], $sync['imported'] + $sync['waiting']);
+        $this->assertSame('history_syncing', $this->getJson("/api/v1/phone-numbers/{$this->number->id}")->json('data.coexistence_status'), 'not synced while records wait');
+        Queue::assertPushed(ImportCoexistenceBatch::class, fn (ImportCoexistenceBatch $job) => $job->delay !== null && $job->tenantId === $this->tenant->id);
+
+        $this->runOneBatch();
+        $this->assertSame(50, $this->waiting());
+        $this->runOneBatch();
+
+        // Empty: the chain stops, the number is synced, totals are final.
+        $this->assertSame(0, $this->waiting());
+        $this->assertSame(220, $this->messages());
+        $sync = $this->sync();
+        $this->assertEquals(['state' => 'complete', 'received' => 250, 'imported' => 250, 'waiting' => 0, 'percent' => 100], array_intersect_key($sync, array_flip(['state', 'received', 'imported', 'waiting', 'percent'])));
         $this->assertSame('synced', $this->getJson("/api/v1/phone-numbers/{$this->number->id}")->json('data.coexistence_status'));
 
-        // With nothing left, the command does nothing.
-        $this->artisan('engage:coexistence:import')->assertSuccessful();
+        // The batch size is a server setting.
+        config(['engage.meta.coexistence_import_batch' => 25]);
+        $this->history(60, progress: 100, offset: 220);
+        $this->runOneBatch();
+        $this->assertSame(35, $this->waiting());
     }
 
-    public function test_live_messages_arrive_alongside_an_import(): void
+    public function test_a_broken_chain_is_restarted_by_the_scheduler(): void
     {
-        $this->history(200, progress: 60);
+        Queue::fake([ImportCoexistenceBatch::class]);
+        $this->history(150, progress: 100);
+        Queue::assertPushed(ImportCoexistenceBatch::class, 1);
+
+        // The chain is marked as running, so the every-minute check does not start a second one …
+        $this->artisan('engage:coexistence:import')->assertSuccessful();
+        Queue::assertPushed(ImportCoexistenceBatch::class, 1);
+
+        // … but if the worker died and nothing has run for five minutes, it does.
+        $this->travel(6)->minutes();
+        $this->artisan('engage:coexistence:import')->assertSuccessful();
+        Queue::assertPushed(ImportCoexistenceBatch::class, 2);
+    }
+
+    public function test_imported_history_is_quiet_and_live_messages_are_not_held_up(): void
+    {
+        Queue::fake([ImportCoexistenceBatch::class, DownloadInboundMedia::class]);
+        Event::fake([MessageStored::class]);
+
+        $this->history(40, progress: 60, withMedia: true);
+        $this->runOneBatch();
+        $this->assertSame(40, $this->messages());
+
+        // No realtime push per imported message, and their files are fetched on the slow queue.
+        Event::assertNotDispatched(MessageStored::class);
+        Queue::assertPushed(DownloadInboundMedia::class, 40);
+        Queue::assertPushed(DownloadInboundMedia::class, fn (DownloadInboundMedia $job) => $job->queue === 'maintenance');
+
+        // A customer writes while 5,000 old records are still waiting: it is in the inbox at once, with its realtime push.
+        $this->history(500, progress: 80, offset: 1000);
         $this->postWebhook($this->webhookBody('messages', $this->inboundValue(waId: '971509998877')))->assertOk();
         $this->actingAsMember($this->owner);
+        $this->assertSame(41, $this->messages());
+        $this->assertSame(500, $this->waiting());
+        Event::assertDispatched(MessageStored::class, 1);
+        $this->getJson('/api/v1/conversations?unread=1')->assertOk()->assertJsonCount(1, 'data');
+    }
 
-        $this->assertSame(201, $this->tenantContext()->run($this->tenant, fn () => Message::query()->count()));
+    public function test_one_workspace_does_not_import_another_workspaces_records(): void
+    {
+        Queue::fake([ImportCoexistenceBatch::class]);
+        $this->history(30, progress: 100);
+
+        $other = $this->createTenant();
+        (new ImportCoexistenceBatch($other->id))->handle($this->tenantContext(), app(CoexistenceImport::class));
+        $this->assertSame(30, $this->waiting());
     }
 }

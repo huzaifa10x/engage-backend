@@ -7,6 +7,7 @@ namespace App\Domain\Webhooks\Handlers;
 use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
+use App\Domain\WhatsApp\Jobs\ImportCoexistenceBatch;
 use App\Domain\WhatsApp\Models\CoexistenceSyncJob;
 use App\Domain\WhatsApp\Services\CoexistenceImport;
 
@@ -42,7 +43,9 @@ final class CoexistenceSyncHandler implements WebhookHandler
             ['status' => 'in_progress'],
         );
 
-        // Records are imported straight away and counted (CoexistenceImport), so progress can be shown.
+        // Nothing is imported in this webhook worker. Records go to a waiting list in one bulk insert
+        // and a low-priority job imports them in small batches (see CoexistenceImport): a large
+        // history must never flood the database or delay live messages.
         if ($change->field === 'smb_app_state_sync') {
             $records = [];
             foreach ((array) ($change->value['state_sync'] ?? []) as $item) {
@@ -51,7 +54,8 @@ final class CoexistenceSyncHandler implements WebhookHandler
                 }
                 $records[] = ['kind' => 'contact', 'thread_user' => null, 'payload' => (array) ($item['contact'] ?? [])];
             }
-            $this->import->record($number, $job, $records);
+            $this->import->enqueue($number, $job, $records);
+            ImportCoexistenceBatch::kick($number->tenant_id);
             $job->forceFill(['status' => 'in_progress', 'chunks_received' => $job->getAttribute('chunks_received') + 1])->save();
 
             return ProcessResult::Processed;
@@ -101,7 +105,8 @@ final class CoexistenceSyncHandler implements WebhookHandler
             ])->save();
         }
 
-        $this->import->record($number, $job, $records);
+        $this->import->enqueue($number, $job, $records);
+        ImportCoexistenceBatch::kick($number->tenant_id);
         $this->import->finishIfDone($number);
 
         return ProcessResult::Processed;

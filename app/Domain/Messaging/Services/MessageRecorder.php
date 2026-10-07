@@ -13,6 +13,7 @@ use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Support\Queue\QueueName;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -111,11 +112,21 @@ final class MessageRecorder
             }
         }
 
+        // Imported history is old news: no realtime push per message (thousands of them would make
+        // every open inbox reload over and over) and its files are fetched on the slow lane, so an
+        // import can never flood Meta's media API or the browsers. Live messages are unchanged.
+        $history = $origin === MessageOrigin::History;
+
         if ($media !== null) {
-            DownloadInboundMedia::dispatch($media->id)->afterCommit();
+            $download = DownloadInboundMedia::dispatch($media->id)->afterCommit();
+            if ($history) {
+                $download->onQueue(QueueName::Maintenance->value);
+            }
         }
 
-        MessageStored::dispatch($message, true);
+        if (! $history) {
+            MessageStored::dispatch($message, true);
+        }
 
         return $message;
     }
@@ -135,10 +146,16 @@ final class MessageRecorder
         ]);
         $message->forceFill(['type' => $parsed['type'], 'body' => $parsed['body'], 'content' => $parsed['content'] ?: null, 'media_id' => $media->id])->save();
 
+        $history = $message->origin === MessageOrigin::History;
         if ($media->meta_media_id !== null) {
-            DownloadInboundMedia::dispatch($media->id)->afterCommit();
+            $download = DownloadInboundMedia::dispatch($media->id)->afterCommit();
+            if ($history) {
+                $download->onQueue(QueueName::Maintenance->value);
+            }
         }
-        MessageStored::dispatch($message, false);
+        if (! $history) {
+            MessageStored::dispatch($message, false);
+        }
     }
 
     private function applyConsentKeyword(Contact $contact, Message $message): void

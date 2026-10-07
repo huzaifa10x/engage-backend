@@ -35,7 +35,8 @@ final class MessageController extends Controller
 
         return MessageResource::collection(
             Message::query()->with('media')->where('conversation_id', $conversation->id)
-                ->orderByDesc('created_at')->orderByDesc('id')->cursorPaginate($perPage)
+                // By when each message happened, so imported history sits where it belongs in time.
+                ->orderByDesc('occurred_at')->orderByDesc('id')->cursorPaginate($perPage)
         );
     }
 
