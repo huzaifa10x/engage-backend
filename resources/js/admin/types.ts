@@ -10,6 +10,8 @@ export type Admin = {
 export type SharedProps = {
     auth: { admin: Admin | null };
     flash: { success?: string | null; error?: string | null };
+    /** Website inquiries still marked New (sidebar badge). */
+    newInquiries?: number;
     env: string;
     errors: Record<string, string>;
 };

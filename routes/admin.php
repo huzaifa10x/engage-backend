@@ -7,6 +7,7 @@ use App\Http\Controllers\Admin\Auth\LoginController;
 use App\Http\Controllers\Admin\Auth\TwoFactorController;
 use App\Http\Controllers\Admin\CompanyController;
 use App\Http\Controllers\Admin\ImpersonationController;
+use App\Http\Controllers\Admin\InquiryController;
 use App\Http\Controllers\Admin\InvoiceController;
 use App\Http\Controllers\Admin\NumberController;
 use App\Http\Controllers\Admin\OverviewController;
@@ -98,6 +99,12 @@ Route::middleware(['auth:admin', 'admin.context', TrackAdminSession::class])->gr
         Route::patch('plans/{plan}/active', [PlanController::class, 'toggle'])->name('plans.toggle');
         Route::post('invoices/{invoice}/refund', [InvoiceController::class, 'refund'])->middleware('throttle:20,1')->name('invoices.refund');
     });
+    Route::middleware('admin.can:inquiries.view')->group(function () {
+        Route::get('inquiries', [InquiryController::class, 'index'])->name('inquiries.index');
+        Route::get('inquiries/export', [InquiryController::class, 'export'])->name('inquiries.export');
+    });
+    Route::patch('inquiries/{inquiry}', [InquiryController::class, 'update'])->middleware('admin.can:inquiries.manage')->name('inquiries.update');
+
     Route::get('audit-log', [AuditLogController::class, 'index'])->middleware('admin.can:audit.view')->name('audit.index');
 
     Route::middleware('admin.can:team.manage')->prefix('team')->name('team.')->group(function () {

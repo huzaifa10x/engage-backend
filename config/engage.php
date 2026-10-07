@@ -49,7 +49,7 @@ return [
     ],
 
     // Demo and contact requests from the public website are emailed here.
-    'sales_email' => env('ENGAGE_SALES_EMAIL', env('MAIL_FROM_ADDRESS')),
+    'sales_email' => env('ENGAGE_SALES_EMAIL', 'info@10xdigital.ae'),
 
     'plans' => [
         // Tenants without a live subscription resolve entitlements from this plan.

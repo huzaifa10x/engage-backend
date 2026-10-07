@@ -6,6 +6,7 @@ namespace App\Domain\Billing\Models;
 
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * A demo or contact request sent from the public website.
@@ -19,10 +20,21 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $topic
  * @property ?string $message
  * @property ?string $source
+ * @property string $status
+ * @property ?Carbon $handled_at
+ * @property ?Carbon $created_at
+ * @property ?string $admin_note
  */
 class SalesLead extends Model
 {
     use HasUuids;
 
-    protected $fillable = ['name', 'email', 'company', 'phone', 'team_size', 'topic', 'message', 'source', 'ip_address'];
+    public const STATUSES = ['new', 'contacted', 'closed'];
+
+    protected $fillable = ['name', 'email', 'company', 'phone', 'team_size', 'topic', 'message', 'source', 'ip_address', 'status', 'admin_note', 'handled_by_admin_id', 'handled_at'];
+
+    protected function casts(): array
+    {
+        return ['handled_at' => 'datetime'];
+    }
 }

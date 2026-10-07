@@ -21,6 +21,7 @@ const NAV: NavSection[] = [
             { label: 'Subscriptions', href: '/admin/subscriptions', ability: 'billing.view', match: '/admin/subscriptions' },
             { label: 'Plans', href: '/admin/plans', ability: 'billing.view', match: '/admin/plans' },
             { label: 'Invoices', href: '/admin/invoices', ability: 'billing.view', match: '/admin/invoices' },
+            { label: 'Inquiries', href: '/admin/inquiries', ability: 'inquiries.view', match: '/admin/inquiries' },
         ],
     },
     {
@@ -36,7 +37,7 @@ const NAV: NavSection[] = [
 ];
 
 export default function AdminLayout({ title, children }: { title: string; children: ReactNode }) {
-    const { auth, flash, env } = usePage<SharedProps>().props;
+    const { auth, flash, env, newInquiries } = usePage<SharedProps>().props;
     const url = usePage().url.split('?')[0] ?? '';
     const [toast, setToast] = useState<{ tone: 'good' | 'bad'; text: string } | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
@@ -85,6 +86,11 @@ export default function AdminLayout({ title, children }: { title: string; childr
                                                 ) : (
                                                     <Link href={item.href} className={cls} aria-current={active ? 'page' : undefined}>
                                                         {item.label}
+                                                        {item.href === '/admin/inquiries' && (newInquiries ?? 0) > 0 && (
+                                                            <span className="ml-auto rounded-full bg-warn px-1.5 text-[11px] leading-5 font-bold text-white" aria-label={`${newInquiries} new`}>
+                                                                {newInquiries}
+                                                            </span>
+                                                        )}
                                                     </Link>
                                                 )}
                                             </li>

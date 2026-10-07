@@ -16,5 +16,7 @@ enum AdminAbility: string
     case BillingManage = 'billing.manage';         // plans, prices, refunds
     case AuditView = 'audit.view';
     case SystemView = 'system.view';               // queues (Horizon), health
+    case InquiriesView = 'inquiries.view';         // website demo / contact requests
+    case InquiriesManage = 'inquiries.manage';     // status, internal notes
     case TeamManage = 'team.manage';               // platform admins
 }
