@@ -243,4 +243,32 @@ final class CoexistenceImportTest extends TestCase
         $this->assertSame(20, $sync['imported']);
         $this->assertSame('synced', $this->getJson("/api/v1/phone-numbers/{$this->number->id}")->json('data.coexistence_status'));
     }
+
+    public function test_contacts_remember_which_number_they_were_synced_from(): void
+    {
+        // Already in the workspace before any sync: added by hand.
+        $this->postJson('/api/v1/contacts', ['phone' => '+971502200000', 'name' => 'Added by hand'])->assertCreated();
+
+        // The phone's address book (which also contains that person) and some chat history are synced.
+        $this->contacts(3);
+        $this->history(6, progress: 100);
+
+        $contacts = collect($this->getJson('/api/v1/contacts')->assertOk()->json('data'))->keyBy('phone');
+        // Synced contacts carry the number, with its name for display …
+        $synced = $contacts['+971502200001'];
+        $this->assertSame('app_sync', $synced['source']);
+        $this->assertSame($this->number->id, $synced['synced_from']['id']);
+        $this->assertSame('+971 58 549 6310', $synced['synced_from']['display_phone_number']);
+        // … so do contacts first seen in imported chat history …
+        $this->assertSame($this->number->id, $contacts['+971501100000']['synced_from']['id']);
+        // … and the one that was added by hand keeps its own origin.
+        $this->assertSame('manual', $contacts['+971502200000']['source']);
+        $this->assertNull($contacts['+971502200000']['synced_from']);
+
+        // The list can be narrowed to one number's synced contacts.
+        $only = $this->getJson('/api/v1/contacts?synced_from='.$this->number->id)->assertOk();
+        $this->assertNotContains('+971502200000', array_column($only->json('data'), 'phone'));
+        $this->assertCount(count($contacts) - 1, $only->json('data'));
+        $this->getJson('/api/v1/contacts?synced_from=01a11637-76d8-7315-a1e6-a952a9445800')->assertOk()->assertJsonCount(0, 'data');
+    }
 }

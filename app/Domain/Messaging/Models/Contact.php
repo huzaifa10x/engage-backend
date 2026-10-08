@@ -6,9 +6,11 @@ namespace App\Domain\Messaging\Models;
 
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Tenancy\Concerns\BelongsToTenant;
+use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Support\Database\PgTextArray;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
 
@@ -27,6 +29,8 @@ use Illuminate\Support\Carbon;
  * @property ?array<string, mixed> $custom_fields
  * @property list<string> $tags
  * @property string $source
+ * @property ?string $synced_from_phone_number_id
+ * @property ?PhoneNumber $syncedFrom
  * @property ConsentState $consent_state
  * @property ?Carbon $opted_out_at
  * @property bool $marketing_opted_out
@@ -45,8 +49,18 @@ class Contact extends Model
 
     protected $fillable = [
         'tenant_id', 'wa_id', 'bsuid', 'parent_bsuid', 'username', 'profile_name', 'name', 'email', 'custom_fields', 'tags', 'source',
-        'consent_state', 'opted_in_at', 'opted_out_at', 'marketing_opted_out', 'last_inbound_at',
+        'consent_state', 'opted_in_at', 'opted_out_at', 'marketing_opted_out', 'last_inbound_at', 'synced_from_phone_number_id',
     ];
+
+    /**
+     * The number whose WhatsApp Business app this contact was synced from, if it came from a sync.
+     *
+     * @return BelongsTo<PhoneNumber, $this>
+     */
+    public function syncedFrom(): BelongsTo
+    {
+        return $this->belongsTo(PhoneNumber::class, 'synced_from_phone_number_id');
+    }
 
     protected function casts(): array
     {

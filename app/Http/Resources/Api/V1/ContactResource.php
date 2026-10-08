@@ -27,6 +27,13 @@ final class ContactResource extends JsonResource
             'attributes' => (object) ($this->custom_fields ?? []),
             'tags' => $this->tags,
             'source' => $this->source,
+            // Set for contacts that came from a WhatsApp Business app sync: the number they were synced from.
+            'synced_from' => $this->whenLoaded('syncedFrom', fn () => $this->syncedFrom === null ? null : [
+                'id' => $this->syncedFrom->id,
+                'display_phone_number' => $this->syncedFrom->display_phone_number,
+                'verified_name' => $this->syncedFrom->verified_name,
+                'status' => $this->syncedFrom->status->value,
+            ]),
             'consent_state' => $this->consent_state->value,
             'opted_out_at' => $this->opted_out_at?->toIso8601String(),
             'marketing_opted_out' => $this->marketing_opted_out,

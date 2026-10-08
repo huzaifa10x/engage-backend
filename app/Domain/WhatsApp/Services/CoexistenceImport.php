@@ -200,6 +200,7 @@ final class CoexistenceImport
             if ($contact !== null && $contact->name === null && ! empty($payload['full_name'])) {
                 $contact->forceFill(['name' => mb_substr((string) $payload['full_name'], 0, 190)])->save();
             }
+            $this->rememberOrigin($contact, $number);
 
             return;
         }
@@ -219,7 +220,20 @@ final class CoexistenceImport
             if ($cacheKey !== null) {
                 $this->contactCache[$cacheKey] = $contact;
             }
+            $this->rememberOrigin($contact, $number);
             $this->recorder->record($number, $contact, $payload, MessageOrigin::History);
+        }
+    }
+
+    /**
+     * Notes which number a synced contact came from: once, and only for contacts the sync itself
+     * created. A contact that was already there (added by hand, imported, or who wrote in) keeps
+     * its own origin even when it also appears in the phone's address book.
+     */
+    private function rememberOrigin(?Contact $contact, PhoneNumber $number): void
+    {
+        if ($contact !== null && $contact->synced_from_phone_number_id === null && in_array($contact->source, ['app_sync', 'history'], true)) {
+            $contact->forceFill(['synced_from_phone_number_id' => $number->id])->save();
         }
     }
 }

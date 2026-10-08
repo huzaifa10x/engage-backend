@@ -28,12 +28,14 @@ final class ContactController extends Controller
             'consent' => ['nullable', Rule::enum(ConsentState::class)],
             'tag' => ['nullable', 'string', 'max:40'],
             'segment_id' => ['nullable', 'uuid'],
+            'synced_from' => ['nullable', 'uuid'],   // a phone number id: only contacts synced from that number
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
 
-        $contacts = Contact::query()
+        $contacts = Contact::query()->with('syncedFrom')
+            ->when($data['synced_from'] ?? null, fn ($q, string $id) => $q->where('synced_from_phone_number_id', $id))
             ->when($segment, fn ($q) => $segments->apply($q, $segment->match, $segment->rules))
             ->when($data['tag'] ?? null, fn ($q, string $tag) => $q->whereRaw('tags @> ARRAY[?]::text[]', [$tag]))
             ->when($data['q'] ?? null, function ($q, string $term) {
@@ -71,7 +73,7 @@ final class ContactController extends Controller
 
     public function show(Contact $contact): ContactResource
     {
-        return ContactResource::make($contact);
+        return ContactResource::make($contact->load('syncedFrom'));
     }
 
     public function update(Request $request, Contact $contact, ManageContacts $contacts): ContactResource
