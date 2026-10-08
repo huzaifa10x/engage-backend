@@ -21,6 +21,8 @@ use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\Models\Invitation;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\WhatsApp\Events\MetaAccessRejected;
+use App\Domain\WhatsApp\Jobs\VerifyMetaAccess;
 use App\Domain\WhatsApp\Models\EmbeddedSignupAttempt;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\WabaAccount;
@@ -28,6 +30,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -45,6 +48,13 @@ class AppServiceProvider extends ServiceProvider
     {
         // Customer webhooks: message.* events follow the same event that updates the inbox.
         Event::listen(MessageStored::class, EmitMessageWebhooks::class);
+
+        // Meta refused a call for lack of access: check, once per account every few minutes, whether the customer removed us.
+        Event::listen(MetaAccessRejected::class, function (MetaAccessRejected $event): void {
+            if (Cache::add('meta-access-check:'.$event->objectId, 1, 300)) {
+                VerifyMetaAccess::dispatch($event->objectId, $event->metaCode);
+            }
+        });
 
         // Short, stable morph keys — class names never leak into the database.
         Relation::enforceMorphMap([

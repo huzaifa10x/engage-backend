@@ -237,6 +237,7 @@ final class EmbeddedSignup
             'access_token_id' => $accessToken->id,
             'meta_business_id' => $attempt->meta_business_id ?? $waba->getAttribute('meta_business_id'),
             'status' => WabaStatus::Connected,
+            'disconnect_reason' => null,
             'connected_at' => $waba->connected_at ?? now(),
             'disconnected_at' => null,
         ])->save();

@@ -59,6 +59,7 @@ class PhoneNumber extends Model
             'capabilities' => 'array',
             'max_mps' => 'integer',
             'app_sync_started_at' => 'datetime',
+            'disconnected_at' => 'datetime',
             'app_sync_expires_at' => 'datetime',
             'registered_at' => 'datetime',
             'last_synced_at' => 'datetime',

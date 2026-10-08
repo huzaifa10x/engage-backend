@@ -32,7 +32,7 @@ class WabaAccount extends Model
     protected $fillable = [
         'tenant_id', 'waba_id', 'access_token_id', 'name', 'meta_business_id', 'business_name', 'currency', 'timezone_id',
         'message_template_namespace', 'account_review_status', 'ban_state', 'health_status', 'capabilities', 'status',
-        'is_subscribed_to_webhooks', 'connected_at', 'disconnected_at', 'last_synced_at',
+        'is_subscribed_to_webhooks', 'connected_at', 'disconnected_at', 'disconnect_reason', 'last_synced_at',
     ];
 
     protected function casts(): array

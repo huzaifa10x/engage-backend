@@ -27,6 +27,8 @@ final class WabaAccountResource extends JsonResource
             'is_subscribed_to_webhooks' => $this->is_subscribed_to_webhooks,
             'connected_at' => $this->connected_at?->toIso8601String(),
             'disconnected_at' => $this->disconnected_at?->toIso8601String(),
+            // manual | partner_removed | offboarded | access_revoked
+            'disconnect_reason' => $this->getAttribute('disconnect_reason'),
             'phone_numbers' => PhoneNumberResource::collection($this->whenLoaded('phoneNumbers')),
         ];
     }

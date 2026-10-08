@@ -117,7 +117,8 @@ final class ProvisionWhatsappAccount implements ShouldQueue
                             'phone_number_id' => $number->phone_number_id, 'is_on_biz_app' => $node['is_on_biz_app'] ?? null, 'platform_type' => $platform,
                         ]);
                     }
-                    $number->forceFill(['status' => PhoneNumberStatus::Connected])->save();
+                    // Connected (again): whatever disconnected it before is history.
+                    $number->forceFill(['status' => PhoneNumberStatus::Connected, 'disconnect_reason' => null, 'disconnected_at' => null])->save();
 
                     $tenant = app(TenantContext::class)->tenantOrNull();
                     if ($tenant !== null) {

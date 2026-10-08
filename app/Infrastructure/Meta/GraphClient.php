@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Meta;
 
+use App\Application\WhatsApp\AccessRevocation;
+use App\Domain\WhatsApp\Events\MetaAccessRejected;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
@@ -494,6 +496,13 @@ final class GraphClient
         if ($response->failed() || isset($body['error'])) {
             $exception = MetaApiException::fromResponse($response->status(), is_array($body) ? $body : null);
             Log::warning('Graph API error', ['method' => $method, 'path' => $this->redactPath($path)] + $exception->context());
+
+            // An authorisation error on a call made with a customer's token may mean they removed our
+            // access at Meta. Announce it here, for every call, so no caller has to remember to check.
+            $object = explode('/', ltrim($path, '/'))[0];
+            if ($token !== null && ctype_digit($object) && AccessRevocation::looksRevoked($exception)) {
+                event(new MetaAccessRejected($object, $exception->metaCode, $exception->metaSubcode));
+            }
 
             throw $exception;
         }

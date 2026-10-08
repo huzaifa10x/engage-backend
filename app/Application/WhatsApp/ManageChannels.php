@@ -81,11 +81,13 @@ final class ManageChannels
                 $number->forceFill([
                     'status' => PhoneNumberStatus::Disconnected,
                     'coexistence_status' => $number->isCoexistence() ? CoexistenceStatus::Offboarded : $number->coexistence_status,
+                    'disconnect_reason' => 'manual',
+                    'disconnected_at' => now(),
                 ])->save();
             }
 
             $this->revokeToken($waba);
-            $waba->forceFill(['status' => WabaStatus::Disconnected, 'disconnected_at' => now(), 'is_subscribed_to_webhooks' => $stillSubscribed])->save();
+            $waba->forceFill(['status' => WabaStatus::Disconnected, 'disconnected_at' => now(), 'disconnect_reason' => 'manual', 'is_subscribed_to_webhooks' => $stillSubscribed])->save();
 
             $this->audit->record('whatsapp.disconnected', $waba, meta: [
                 'reason' => $reason,

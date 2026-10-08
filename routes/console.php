@@ -10,6 +10,7 @@ Schedule::command('horizon:snapshot')->everyFiveMinutes();
 Schedule::command('queue:prune-failed --hours=336')->daily()->onOneServer();
 // Behind Stripe's webhooks: ended or unpaid subscriptions always fall back to the Free plan.
 Schedule::command('engage:coexistence:import')->everyMinute()->onOneServer()->withoutOverlapping();
+Schedule::command('engage:whatsapp:verify-access')->hourly()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:coexistence:watch')->hourly()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:billing:reconcile')->hourly()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:retention:apply')->dailyAt('02:30')->onOneServer()->withoutOverlapping();

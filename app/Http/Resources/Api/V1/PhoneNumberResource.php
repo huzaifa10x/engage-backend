@@ -25,6 +25,8 @@ final class PhoneNumberResource extends JsonResource
             'verified_name' => $this->verified_name,
             'name_status' => $this->getAttribute('name_status'),
             'status' => $this->status->value,
+            'disconnect_reason' => $this->getAttribute('disconnect_reason'),
+            'disconnected_at' => $this->getAttribute('disconnected_at')?->toIso8601String(),
             'quality_rating' => $this->quality_rating,
             'messaging_limit_tier' => $this->messaging_limit_tier,
             'throughput_level' => $this->getAttribute('throughput_level'),

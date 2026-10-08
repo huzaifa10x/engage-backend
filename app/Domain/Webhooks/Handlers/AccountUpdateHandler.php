@@ -4,18 +4,13 @@ declare(strict_types=1);
 
 namespace App\Domain\Webhooks\Handlers;
 
-use App\Application\Notifications\WorkspaceMailer;
-use App\Application\WhatsApp\ManageChannels;
-use App\Domain\Audit\AuditLogger;
-use App\Domain\Tenancy\TenantContext;
+use App\Application\WhatsApp\AccessRevocation;
 use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
-use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Enums\WabaStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\QualityEvent;
-use App\Notifications\ReconnectRequiredNotification;
 use Illuminate\Support\Collection;
 
 /**
@@ -26,8 +21,7 @@ use Illuminate\Support\Collection;
 final class AccountUpdateHandler implements WebhookHandler
 {
     public function __construct(
-        private readonly AuditLogger $audit,
-        private readonly ManageChannels $channels,
+        private readonly AccessRevocation $revocation,
     ) {}
 
     public function fields(): array
@@ -42,42 +36,31 @@ final class AccountUpdateHandler implements WebhookHandler
             return ProcessResult::Ignored; // e.g. PARTNER_ADDED before signup completed; signup reads state itself
         }
 
-        $event = (string) ($change->value['event'] ?? 'UNKNOWN');
+        // Compared in upper case: Meta has sent these both ways ("PARTNER_REMOVED", "partner_removed").
+        $event = strtoupper((string) ($change->value['event'] ?? 'UNKNOWN'));
         $numbers = $this->affectedNumbers($change);
 
         switch ($event) {
+            // The customer took our access away, or took the number off the platform:
+            //   PARTNER_REMOVED          10X Engage removed as a partner (Meta Business Settings), API or coexistence
+            //   PARTNER_APP_UNINSTALLED  our app removed from the business
+            //   ACCOUNT_OFFBOARDED       coexistence: disconnected inside the WhatsApp Business app
+            //   ACCOUNT_DELETED          the WhatsApp Business account itself was deleted
             case 'PARTNER_REMOVED':
+            case 'PARTNER_APP_UNINSTALLED':
             case 'ACCOUNT_OFFBOARDED':
-                $tenant = app(TenantContext::class)->tenantOrNull();
-                foreach ($numbers as $number) {
-                    $wasConnected = $number->status === PhoneNumberStatus::Connected;
-                    $number->forceFill([
-                        'status' => PhoneNumberStatus::Disconnected,
-                        'coexistence_status' => $number->isCoexistence() ? CoexistenceStatus::Offboarded : $number->coexistence_status,
-                    ])->save();
-
-                    if ($wasConnected && $tenant !== null) {
-                        app(WorkspaceMailer::class)->toOwners($tenant, new ReconnectRequiredNotification($tenant->name, (string) $number->display_phone_number,
-                            $event === 'PARTNER_REMOVED' ? '10X Engage was removed as a partner on your WhatsApp Business account.' : 'The number was disconnected from the WhatsApp Business Platform.'));
-                    }
-                }
-                if ($event === 'PARTNER_REMOVED' && $numbers->count() === $waba->phoneNumbers()->count()) {
-                    // Our access to the WABA is gone: keep no usable credential for it.
-                    $this->channels->revokeToken($waba);
-                    $waba->forceFill(['status' => WabaStatus::Disconnected, 'disconnected_at' => now(), 'is_subscribed_to_webhooks' => false])->save();
-                }
-                $this->audit->record('whatsapp.partner_removed', $waba, meta: [
+            case 'ACCOUNT_DELETED':
+                $this->revocation->markDisconnected($waba, $numbers, $event === 'ACCOUNT_OFFBOARDED' ? 'offboarded' : 'partner_removed', [
                     'event' => $event,
                     'disconnection_info' => $change->value['disconnection_info'] ?? null,
-                    'numbers' => $numbers->pluck('phone_number_id')->all(),
                 ]);
                 break;
 
             case 'ACCOUNT_RECONNECTED':
                 foreach ($numbers as $number) {
-                    $number->forceFill(['status' => PhoneNumberStatus::Connected])->save();
+                    $number->forceFill(['status' => PhoneNumberStatus::Connected, 'disconnect_reason' => null, 'disconnected_at' => null])->save();
                 }
-                $waba->forceFill(['status' => WabaStatus::Connected, 'disconnected_at' => null])->save();
+                $waba->forceFill(['status' => WabaStatus::Connected, 'disconnected_at' => null, 'disconnect_reason' => null])->save();
                 break;
 
             case 'DISABLED_UPDATE':
