@@ -11,7 +11,12 @@ use Tests\TestCase;
 
 final class SimulateHistoryTest extends TestCase
 {
-    public function test_the_simulation_runs_the_real_pipeline_verifies_it_and_cleans_up(): void
+    private function historyMessages(): int
+    {
+        return (int) $this->tenantContext()->bypass(fn () => DB::table('messages')->where('wamid', 'like', 'wamid.SIM\_%')->where('wamid', 'not like', 'wamid.SIM\_LIVE%')->count());
+    }
+
+    public function test_one_workspace_runs_the_real_pipeline_and_is_verified(): void
     {
         $this->seed(PlanCatalogSeeder::class);
 
@@ -20,16 +25,34 @@ final class SimulateHistoryTest extends TestCase
             ->expectsOutputToContain('PASS: the import pipeline handled the flood.')
             ->assertSuccessful();
 
-        $tenant = $this->tenantContext()->bypass(fn () => Tenant::query()->where('slug', 'zz-history-load-test')->firstOrFail());
-        $this->assertSame(241, $this->tenantContext()->bypass(fn () => DB::table('messages')->where('tenant_id', $tenant->id)->count())); // 240 + the live probe
-        $this->assertSame(9, $this->tenantContext()->bypass(fn () => DB::table('conversations')->where('tenant_id', $tenant->id)->count()));
+        $this->assertSame(240, $this->historyMessages());
+        $this->assertSame(1, $this->tenantContext()->bypass(fn () => Tenant::query()->where('slug', 'like', 'zz-history-load-test%')->count()));
 
         // A second run reuses the workspace and still verifies cleanly (new message ids, same customers).
         $this->artisan('engage:simulate-history', ['--messages' => 60, '--chats' => 8, '--chunk' => 30, '--timeout' => 60])->assertSuccessful();
+        $this->assertSame(300, $this->historyMessages());
+    }
 
+    public function test_several_workspaces_importing_at_once_stay_separate_and_all_finish(): void
+    {
+        $this->seed(PlanCatalogSeeder::class);
+
+        $this->artisan('engage:simulate-history', ['--workspaces' => 3, '--messages' => 90, '--chats' => 6, '--chunk' => 30, '--timeout' => 60])
+            ->expectsOutputToContain('PASS: the import pipeline handled the flood.')
+            ->assertSuccessful();
+
+        // Three workspaces, each with exactly its own 90 messages and 6 conversations (plus the live-probe chat).
+        $tenants = $this->tenantContext()->bypass(fn () => Tenant::query()->where('slug', 'like', 'zz-history-load-test%')->orderBy('slug')->get());
+        $this->assertCount(3, $tenants);
+        foreach ($tenants as $tenant) {
+            $this->assertSame(90, (int) $this->tenantContext()->bypass(fn () => DB::table('messages')->where('tenant_id', $tenant->id)->where('wamid', 'not like', 'wamid.SIM\_LIVE%')->count()));
+            $this->assertSame('synced', $this->tenantContext()->bypass(fn () => DB::table('phone_numbers')->where('tenant_id', $tenant->id)->value('coexistence_status')));
+        }
+
+        // Cleanup removes all of them.
         $this->artisan('engage:simulate-history', ['--cleanup' => true])->assertSuccessful();
-        $this->assertSame(0, $this->tenantContext()->bypass(fn () => DB::table('messages')->where('tenant_id', $tenant->id)->count()));
-        $this->assertSame(0, $this->tenantContext()->bypass(fn () => DB::table('coexistence_sync_items')->where('tenant_id', $tenant->id)->count()));
+        $this->assertSame(0, (int) $this->tenantContext()->bypass(fn () => DB::table('messages')->whereIn('tenant_id', $tenants->pluck('id'))->count()));
+        $this->assertSame(0, (int) $this->tenantContext()->bypass(fn () => DB::table('coexistence_sync_items')->whereIn('tenant_id', $tenants->pluck('id'))->count()));
     }
 
     public function test_it_refuses_to_run_on_production_without_force(): void
