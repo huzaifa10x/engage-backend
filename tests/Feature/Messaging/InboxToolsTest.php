@@ -9,6 +9,7 @@ use App\Domain\Access\SystemRole;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Notifications\InboxAlertNotification;
 use Illuminate\Http\Client\Request;
@@ -209,5 +210,23 @@ final class InboxToolsTest extends TestCase
         // The agent sees the one assigned to them plus the unassigned one.
         $this->actingAsMember($agent);
         $this->getJson('/api/v1/notifications')->assertOk()->assertJsonPath('data.unread_conversations', 2);
+    }
+
+    public function test_conversations_of_a_disconnected_number_are_kept_and_say_so(): void
+    {
+        $conversation = $this->inbound('971501110001', 'Is this still available?');
+        $this->getJson("/api/v1/conversations/{$conversation->id}")->assertOk()->assertJsonPath('data.phone_number.status', 'connected');
+
+        // The number is offboarded.
+        $this->tenantContext()->run($this->tenant, fn () => $this->number->forceFill(['status' => PhoneNumberStatus::Disconnected])->save());
+
+        // Nothing is deleted: the conversation, its messages and the contact are all still there, marked as disconnected.
+        $this->getJson('/api/v1/conversations')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.phone_number.status', 'disconnected');
+        $this->getJson("/api/v1/conversations/{$conversation->id}")->assertOk()->assertJsonPath('data.phone_number.status', 'disconnected');
+        $this->getJson("/api/v1/conversations/{$conversation->id}/messages")->assertOk()->assertJsonCount(1, 'data');
+        $this->getJson('/api/v1/contacts')->assertOk()->assertJsonCount(1, 'data');
+
+        // And the server refuses to send from it, whatever the screen shows.
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hello again'])->assertStatus(409);
     }
 }

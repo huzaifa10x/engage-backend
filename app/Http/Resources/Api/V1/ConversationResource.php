@@ -34,6 +34,8 @@ final class ConversationResource extends JsonResource
                 'id' => $this->phoneNumber?->id,
                 'display_phone_number' => $this->phoneNumber?->display_phone_number,
                 'verified_name' => $this->phoneNumber?->verified_name,
+                // "disconnected" once the number was offboarded: the conversation stays readable, but nothing can be sent.
+                'status' => $this->phoneNumber?->status->value,
             ]),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
