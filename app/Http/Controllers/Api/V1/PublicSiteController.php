@@ -91,16 +91,18 @@ final class PublicSiteController extends Controller
             'topic' => ['nullable', 'in:demo,contact,enterprise,trial'],
             'message' => ['nullable', 'string', 'max:4000'],
             'source' => ['nullable', 'string', 'max:190'],
-            // Bot trap: a field people never see. Deliberately NOT called "website", "url", "company" or
-            // anything else a browser's autofill recognises: the old trap was named "website", browsers
-            // filled it in for real visitors, and their inquiries were thrown away as bots.
-            'confirm_code' => ['nullable', 'string', 'max:200'],
+            // How long the form was open before it was sent, measured by the page itself.
+            'elapsed_ms' => ['nullable', 'integer', 'min:0'],
         ]);
 
-        // Nothing a visitor sends is ever discarded. A filled trap is kept as "spam" (visible in
-        // Super Admin → Inquiries under that status) and simply not emailed.
-        $trapped = trim((string) ($data['confirm_code'] ?? '')) !== '';
-        unset($data['confirm_code']);
+        // Bot check. There is NO hidden field any more: browsers' autofill and password managers kept
+        // filling hidden fields in for real visitors (first one named "website", then "confirm_code"),
+        // and real inquiries were marked as bots. The only signal used now is one a person cannot
+        // trigger: the form being sent within a second and a half of the page opening. An inquiry
+        // without the measurement (an older cached page) is always treated as real.
+        // Either way nothing is discarded: a suspected bot is kept as "spam" and just not emailed.
+        $trapped = isset($data['elapsed_ms']) && (int) $data['elapsed_ms'] < 1500;
+        unset($data['elapsed_ms']);
 
         $lead = SalesLead::query()->create(array_merge($data, [
             'name' => $data['name'] ?? $data['email'],

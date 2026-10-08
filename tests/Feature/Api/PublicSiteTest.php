@@ -70,12 +70,20 @@ final class PublicSiteTest extends TestCase
         $this->assertSame('new', SalesLead::query()->where('email', 'real@example.com')->value('status'));
         Notification::assertSentOnDemand(SalesLeadNotification::class);
 
-        // The new trap (a field no person or autofill touches): kept as "spam", never discarded, not emailed.
+        // Hidden fields are gone: whatever an autofill or password manager adds, the inquiry is real.
         Notification::fake();
-        $this->postJson('/api/v1/public/leads', ['name' => 'Bot', 'email' => 'bot@example.com', 'confirm_code' => 'buy pills'])->assertCreated()->assertJsonPath('data.status', 'received');
+        $this->postJson('/api/v1/public/leads', ['name' => 'Autofilled', 'email' => 'auto@example.com', 'confirm_code' => 'saved-password', 'elapsed_ms' => 42000])->assertCreated();
+        $this->assertSame('new', SalesLead::query()->where('email', 'auto@example.com')->value('status'));
+        Notification::assertSentOnDemand(SalesLeadNotification::class);
+
+        // The only bot signal: sent faster than a person can read the form. Kept as "spam", not emailed, never discarded.
+        Notification::fake();
+        $this->postJson('/api/v1/public/leads', ['name' => 'Bot', 'email' => 'bot@example.com', 'elapsed_ms' => 300])->assertCreated()->assertJsonPath('data.status', 'received');
         $this->assertSame('spam', SalesLead::query()->where('email', 'bot@example.com')->value('status'));
-        $this->assertSame(3, SalesLead::query()->count());
+        $this->assertSame(4, SalesLead::query()->count());
         Notification::assertNothingSent();
+
+        Cache::flush(); // a fresh minute for the form's rate limit
 
         // The sign-up form on the website sends only an email address: recorded and emailed as a trial sign-up.
         $this->postJson('/api/v1/public/leads', ['email' => 'founder@startup.ae', 'topic' => 'trial', 'source' => '/start'])->assertCreated();
