@@ -16,4 +16,7 @@ enum QueueName: string
     case Default = 'default';
     case Notifications = 'notifications';
     case Maintenance = 'maintenance';
+
+    /** Bulk imports (WhatsApp Business app history). Its own small pool of workers: a flood here cannot touch live traffic. */
+    case Sync = 'sync';
 }

@@ -19,8 +19,9 @@ use Throwable;
  * Imports ONE batch of waiting WhatsApp Business app records for one workspace, then queues the
  * next batch after a pause, until that workspace's waiting list is empty.
  *
- *  • Low-priority queue with very few workers: an import can never crowd out live messages,
- *    the inbox, or sending.
+ *  • Its own queue ("sync") with a small fixed pool of workers: an import can never crowd out
+ *    live messages, the inbox, or sending, and can never open more than that many database
+ *    connections.
  *  • One chain per workspace: a marker in the cache says "a batch is queued or running", so
  *    however many webhooks arrive, batches never pile up or run side by side.
  *  • Small batch + pause: steady, bounded load on the database instead of one large spike.
@@ -39,7 +40,7 @@ final class ImportCoexistenceBatch implements ShouldQueue
 
     public function __construct(public readonly string $tenantId)
     {
-        $this->onQueue(QueueName::Maintenance->value);
+        $this->onQueue(QueueName::Sync->value);
     }
 
     /** Start importing for a workspace unless a batch is already queued or running for it. */

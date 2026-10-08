@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\WhatsApp\Services;
 
 use App\Domain\Messaging\Enums\MessageOrigin;
+use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\ContactIdentity;
 use App\Domain\Messaging\Services\ContactResolver;
 use App\Domain\Messaging\Services\MessageRecorder;
@@ -27,8 +28,8 @@ use Throwable;
  *                            counted. Nothing else happens in the webhook worker.
  *   2. IMPORT (queue job) — ImportCoexistenceBatch takes a small batch off the list, imports it,
  *                            pauses, and repeats until the list is empty. One batch at a time per
- *                            workspace, on the low-priority queue, so the inbox and live
- *                            messages always come first.
+ *                            workspace, on the "sync" queue, whose few workers are the hard cap
+ *                            on how much of the database an import can ever use.
  *
  * This is load control for the system, not a customer-facing limit: the batch size and pause are
  * server settings (see config/engage.php → meta.coexistence_import_*).
@@ -38,6 +39,9 @@ final class CoexistenceImport
     private const KIND_JOB = ['contact' => 'smb_app_state_sync', 'message' => 'history'];
 
     public function __construct(private readonly ContactResolver $contacts, private readonly MessageRecorder $recorder) {}
+
+    /** @var array<string, Contact> contacts already resolved in the batch being imported */
+    private array $contactCache = [];
 
     public static function batchSize(): int
     {
@@ -81,11 +85,21 @@ final class CoexistenceImport
         $numbers = PhoneNumber::query()->whereIn('id', $items->pluck('phone_number_id')->unique())->get()->keyBy('id');
         $done = [];
 
+        // Idempotent and cheap to repeat: one query finds the messages of this batch that are already
+        // stored (a retried batch, a webhook Meta sent twice, a message that also arrived live), and
+        // those are skipped without touching the conversation at all.
+        $payloads = $items->mapWithKeys(fn (object $item) => [$item->id => (array) json_decode((string) $item->payload, true)]);
+        $wamids = $payloads->map(fn (array $p) => $p['id'] ?? null)->filter()->values()->all();
+        $existing = $wamids === [] ? [] : array_flip(DB::table('messages')->whereIn('wamid', $wamids)->pluck('wamid')->all());
+        $this->contactCache = [];
+
         foreach ($items as $item) {
             $number = $numbers[$item->phone_number_id] ?? null;
+            $payload = $payloads[$item->id];
             try {
-                if ($number !== null) {
-                    $this->import($number, (string) $item->kind, $item->thread_user, (array) json_decode((string) $item->payload, true));
+                $duplicate = $item->kind === 'message' && isset($payload['id'], $existing[$payload['id']]);
+                if ($number !== null && ! $duplicate) {
+                    $this->import($number, (string) $item->kind, $item->thread_user, $payload);
                 }
             } catch (Throwable $e) {
                 // One unreadable record must not block the thousands behind it.
@@ -196,8 +210,15 @@ final class CoexistenceImport
         } else {
             $identity = ContactIdentity::fromInbound($payload, []);
         }
-        $contact = $this->contacts->resolve($identity, 'history');
+        // A chat's messages arrive together: look its contact up once per batch, not once per message.
+        $cacheKey = $threadUser ?? ($identity->waId ?? $identity->bsuid ?? null);
+        $contact = $cacheKey !== null && isset($this->contactCache[$cacheKey])
+            ? $this->contactCache[$cacheKey]
+            : $this->contacts->resolve($identity, 'history');
         if ($contact !== null) {
+            if ($cacheKey !== null) {
+                $this->contactCache[$cacheKey] = $contact;
+            }
             $this->recorder->record($number, $contact, $payload, MessageOrigin::History);
         }
     }

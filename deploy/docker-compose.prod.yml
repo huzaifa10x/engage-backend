@@ -94,6 +94,9 @@ services:
   postgres:
     image: postgres:17
     restart: unless-stopped
+    # Every queue worker and every web worker holds one connection. Horizon's maximum is ~45
+    # (config/horizon.php); 200 leaves ample room for the web server, the scheduler and psql.
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-200}"]
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       ENGAGE_DB_PASSWORD: ${ENGAGE_DB_PASSWORD}

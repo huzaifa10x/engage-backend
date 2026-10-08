@@ -120,7 +120,7 @@ final class MessageRecorder
         if ($media !== null) {
             $download = DownloadInboundMedia::dispatch($media->id)->afterCommit();
             if ($history) {
-                $download->onQueue(QueueName::Maintenance->value);
+                $download->onQueue(QueueName::Sync->value);
             }
         }
 
@@ -150,7 +150,7 @@ final class MessageRecorder
         if ($media->meta_media_id !== null) {
             $download = DownloadInboundMedia::dispatch($media->id)->afterCommit();
             if ($history) {
-                $download->onQueue(QueueName::Maintenance->value);
+                $download->onQueue(QueueName::Sync->value);
             }
         }
         if (! $history) {

@@ -47,6 +47,8 @@ return [
         'redis:webhooks' => 15,
         'redis:messaging' => 30,
         'redis:default' => 60,
+        // A deep sync queue during an import is expected (that is the buffer doing its job): only alert when it is very old.
+        'redis:sync' => 1800,
     ],
 
     'trim' => [
@@ -79,14 +81,28 @@ return [
         'supervisor-messaging' => $supervisor(['messaging'], 1, 10, 60, 5),
         'supervisor-default' => $supervisor(['default', 'notifications'], 1, 5),
         'supervisor-maintenance' => $supervisor(['maintenance'], 1, 2, 85, 1),
+        // The heavy lane: imports of WhatsApp Business app history. A fixed, small pool ("simple"
+        // balancing, no auto-scaling) is the governor that protects the database: however many
+        // records arrive, at most this many workers ever write them.
+        'supervisor-sync' => ['balance' => 'simple'] + $supervisor(['sync'], 1, 3, 180, 1),
     ],
 
+    /*
+    | Every supervisor that must run in an environment has to be LISTED for it: one that only
+    | appears in "defaults" is never started. (tests/Feature/QueueLanesTest guards this.)
+    |
+    | Production worker budget. Each worker holds one database connection, so the sum of the
+    | maximums below (default 45) plus the web server must stay under Postgres max_connections
+    | (200, set in deploy/docker-compose.prod.yml). Raise a lane with its HORIZON_* variable.
+    */
     'environments' => [
         'production' => [
-            'supervisor-critical' => ['minProcesses' => 2, 'maxProcesses' => 10],
-            'supervisor-webhooks' => ['minProcesses' => 3, 'maxProcesses' => 40],
-            'supervisor-messaging' => ['minProcesses' => 3, 'maxProcesses' => 40],
-            'supervisor-default' => ['maxProcesses' => 10],
+            'supervisor-critical' => ['minProcesses' => 2, 'maxProcesses' => (int) env('HORIZON_CRITICAL_PROCESSES', 4)],
+            'supervisor-webhooks' => ['minProcesses' => 2, 'maxProcesses' => (int) env('HORIZON_WEBHOOKS_PROCESSES', 12)],
+            'supervisor-messaging' => ['minProcesses' => 3, 'maxProcesses' => (int) env('HORIZON_MESSAGING_PROCESSES', 16)],
+            'supervisor-default' => ['maxProcesses' => (int) env('HORIZON_DEFAULT_PROCESSES', 8)],
+            'supervisor-maintenance' => ['maxProcesses' => 2],
+            'supervisor-sync' => ['maxProcesses' => (int) env('HORIZON_SYNC_PROCESSES', 3)],
         ],
         'local' => [
             'supervisor-critical' => ['maxProcesses' => 2],
@@ -94,6 +110,7 @@ return [
             'supervisor-messaging' => ['maxProcesses' => 2],
             'supervisor-default' => ['maxProcesses' => 2],
             'supervisor-maintenance' => ['maxProcesses' => 1],
+            'supervisor-sync' => ['maxProcesses' => 1],
         ],
     ],
 

@@ -112,9 +112,9 @@ final class CoexistenceImportTest extends TestCase
         $this->assertSame(650, $this->waiting());
         $this->assertSame(0, $this->messages());
         $this->assertSame(0, $this->tenantContext()->run($this->tenant, fn () => Contact::query()->count()));
-        // Three webhooks, ONE queued chain, on the low-priority queue.
+        // Three webhooks, ONE queued chain, on the capped sync lane.
         Queue::assertPushed(ImportCoexistenceBatch::class, 1);
-        Queue::assertPushedOn('maintenance', ImportCoexistenceBatch::class);
+        Queue::assertPushedOn('sync', ImportCoexistenceBatch::class);
 
         $sync = $this->sync();
         $this->assertSame('importing', $sync['state']);
@@ -185,7 +185,7 @@ final class CoexistenceImportTest extends TestCase
         // No realtime push per imported message, and their files are fetched on the slow queue.
         Event::assertNotDispatched(MessageStored::class);
         Queue::assertPushed(DownloadInboundMedia::class, 40);
-        Queue::assertPushed(DownloadInboundMedia::class, fn (DownloadInboundMedia $job) => $job->queue === 'maintenance');
+        Queue::assertPushed(DownloadInboundMedia::class, fn (DownloadInboundMedia $job) => $job->queue === 'sync');
 
         // A customer writes while 5,000 old records are still waiting: it is in the inbox at once, with its realtime push.
         $this->history(500, progress: 80, offset: 1000);
@@ -205,5 +205,27 @@ final class CoexistenceImportTest extends TestCase
         $other = $this->createTenant();
         (new ImportCoexistenceBatch($other->id))->handle($this->tenantContext(), app(CoexistenceImport::class));
         $this->assertSame(30, $this->waiting());
+    }
+
+    public function test_a_batch_that_is_delivered_or_run_twice_never_duplicates_messages(): void
+    {
+        Queue::fake([ImportCoexistenceBatch::class]);
+
+        // Meta sends the same history webhook twice (it retries when an answer is slow): the copy is dropped at the door.
+        $this->history(60, progress: 50);
+        $this->history(60, progress: 50);
+        $this->assertSame(60, $this->waiting());
+        $this->runOneBatch();
+        $this->assertSame(60, $this->messages());
+
+        // The same messages arrive again inside a different batch (WhatsApp resends a chunk): they are
+        // recognised in one query and skipped, so nothing is duplicated and the counters still add up.
+        $this->history(60, progress: 55);
+        $this->assertSame(60, $this->waiting());
+        $this->runOneBatch();
+        $this->assertSame(0, $this->waiting());
+        $this->assertSame(60, $this->messages());
+        $sync = $this->sync();
+        $this->assertSame($sync['received'], $sync['imported'] + $sync['waiting']);
     }
 }
