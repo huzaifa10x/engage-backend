@@ -165,7 +165,15 @@ final class SimulateHistory extends Command
             "select count(*) as n from (select occurred_at, lag(occurred_at) over (partition by conversation_id order by split_part(wamid, '_', 3)::int) as previous
                from messages where tenant_id = ? and wamid like ?) t where previous is not null and occurred_at < previous", [$tenant->id, "wamid.SIM_{$run}_%"]))->n ?? 0);
         $conversations = $context->bypass(fn () => DB::table('messages')->where('tenant_id', $tenant->id)->where('wamid', 'like', "wamid.SIM_{$run}_%")->distinct()->count('conversation_id'));
-        $syncStatus = $context->bypass(fn () => DB::table('phone_numbers')->where('id', $number->id)->value('coexistence_status'));
+        // The last batch marks the number as synced a moment after it empties the list: give it that moment.
+        $syncStatus = null;
+        for ($i = 0; $i < 40; $i++) {
+            $syncStatus = $context->bypass(fn () => DB::table('phone_numbers')->where('id', $number->id)->value('coexistence_status'));
+            if ($syncStatus === CoexistenceStatus::Synced->value) {
+                break;
+            }
+            usleep(500_000);
+        }
 
         $checks = [
             ['All messages imported, none lost', $stored === $total, number_format($stored).' of '.number_format($total)],

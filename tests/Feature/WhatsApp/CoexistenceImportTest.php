@@ -228,4 +228,19 @@ final class CoexistenceImportTest extends TestCase
         $sync = $this->sync();
         $this->assertSame($sync['received'], $sync['imported'] + $sync['waiting']);
     }
+
+    public function test_chunks_arriving_out_of_order_or_in_parallel_cannot_lower_whatsapps_progress(): void
+    {
+        // The final chunk (100%) is handled first; an earlier one (60%) and a stale worker's copy come after.
+        $this->history(10, progress: 100);
+        $this->history(10, progress: 60, offset: 10);
+        $this->assertSame(100, $this->tenantContext()->bypass(fn () => DB::table('coexistence_sync_jobs')->where('sync_type', 'history')->value('progress')));
+        $this->assertSame(2, (int) $this->tenantContext()->bypass(fn () => DB::table('coexistence_sync_jobs')->where('sync_type', 'history')->value('chunks_received')));
+
+        // So once everything is imported the number is synced, instead of waiting forever for a "100%" that was overwritten.
+        $sync = $this->sync();
+        $this->assertSame('complete', $sync['state']);
+        $this->assertSame(20, $sync['imported']);
+        $this->assertSame('synced', $this->getJson("/api/v1/phone-numbers/{$this->number->id}")->json('data.coexistence_status'));
+    }
 }

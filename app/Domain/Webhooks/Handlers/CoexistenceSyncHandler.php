@@ -10,6 +10,7 @@ use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Jobs\ImportCoexistenceBatch;
 use App\Domain\WhatsApp\Models\CoexistenceSyncJob;
 use App\Domain\WhatsApp\Services\CoexistenceImport;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Coexistence sync webhooks:
@@ -56,7 +57,7 @@ final class CoexistenceSyncHandler implements WebhookHandler
             }
             $this->import->enqueue($number, $job, $records);
             ImportCoexistenceBatch::kick($number->tenant_id);
-            $job->forceFill(['status' => 'in_progress', 'chunks_received' => $job->getAttribute('chunks_received') + 1])->save();
+            CoexistenceSyncJob::query()->whereKey($job->id)->update(['status' => 'in_progress', 'chunks_received' => DB::raw('chunks_received + 1')]);
 
             return ProcessResult::Processed;
         }
@@ -93,16 +94,18 @@ final class CoexistenceSyncHandler implements WebhookHandler
             }
 
             $meta = (array) ($chunk['metadata'] ?? []);
-            $progress = max((int) $job->progress, (int) ($meta['progress'] ?? 0));
 
-            // "progress" is how much of the history WhatsApp has sent so far.
-            $job->forceFill([
+            // "progress" is how much of the history WhatsApp has sent so far. Several webhook workers
+            // handle chunks at the same time and in any order, so the values are raised IN THE
+            // DATABASE (never from this worker's own, possibly older, copy of the row): a late
+            // "95%" must not overwrite the "100%" another worker has just written.
+            CoexistenceSyncJob::query()->whereKey($job->id)->where('status', '!=', 'declined')->update([
                 'status' => 'in_progress',
-                'phase' => $meta['phase'] ?? $job->getAttribute('phase'),
-                'chunk_order' => max((int) $job->getAttribute('chunk_order'), (int) ($meta['chunk_order'] ?? 0)),
-                'progress' => $progress,
-                'chunks_received' => $job->getAttribute('chunks_received') + 1,
-            ])->save();
+                'phase' => $meta['phase'] ?? DB::raw('phase'),
+                'chunk_order' => DB::raw('GREATEST(COALESCE(chunk_order, 0), '.(int) ($meta['chunk_order'] ?? 0).')'),
+                'progress' => DB::raw('GREATEST(progress, '.max(0, min(100, (int) ($meta['progress'] ?? 0))).')'),
+                'chunks_received' => DB::raw('chunks_received + 1'),
+            ]);
         }
 
         $this->import->enqueue($number, $job, $records);
