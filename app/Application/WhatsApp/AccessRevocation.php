@@ -29,7 +29,7 @@ use Throwable;
  * There are three ways we find out, and all of them end in markDisconnected():
  *   1. the account_update webhook says so (PARTNER_REMOVED, ACCOUNT_OFFBOARDED …);
  *   2. Meta refuses one of our API calls with an authorisation error (verify());
- *   3. the hourly check asks Meta whether each connected account still accepts our token.
+ *   3. a check every ten minutes asks Meta whether each connected account still accepts our token.
  *
  * Nothing is deleted: conversations, contacts and history stay, and reconnecting restores service.
  */

@@ -23,8 +23,8 @@ type Inquiry = {
 
 type Filters = { q: string; status: string; topic: string };
 
-const STATUS: Record<string, [string, Tone]> = { new: ['New', 'warn'], contacted: ['Contacted', 'info'], closed: ['Closed', 'grey'] };
-const TOPIC: Record<string, string> = { demo: 'Demo request', contact: 'Contact form', enterprise: 'Enterprise' };
+const STATUS: Record<string, [string, Tone]> = { new: ['New', 'warn'], contacted: ['Contacted', 'info'], closed: ['Closed', 'grey'], spam: ['Possible spam', 'grey'] };
+const TOPIC: Record<string, string> = { demo: 'Demo request', contact: 'Contact form', enterprise: 'Enterprise', trial: 'Trial sign-up started' };
 
 const clean = (filters: Filters) => Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== ''));
 
@@ -88,6 +88,7 @@ function Detail({ inquiry, canManage, onClose }: { inquiry: Inquiry; canManage: 
                         <option value="new">New</option>
                         <option value="contacted">Contacted</option>
                         <option value="closed">Closed</option>
+                        <option value="spam">Possible spam</option>
                     </Select>
                 </Field>
                 <Field label="Internal note" error={errors.admin_note} hint="Only the platform team sees this.">
@@ -105,7 +106,7 @@ export default function InquiriesIndex({
 }: {
     inquiries: Paginated<Inquiry>;
     filters: Filters;
-    counts: { new: number; contacted: number; closed: number; last_7_days: number };
+    counts: { new: number; contacted: number; closed: number; spam: number; last_7_days: number };
 }) {
     const canManage = (usePage<SharedProps>().props.auth.admin?.abilities ?? []).includes('inquiries.manage');
     const [open, setOpen] = useState<Inquiry | null>(null);
@@ -149,12 +150,14 @@ export default function InquiriesIndex({
                             <option value="demo">Demo requests</option>
                             <option value="contact">Contact form</option>
                             <option value="enterprise">Enterprise</option>
+                            <option value="trial">Trial sign-ups</option>
                         </Select>
                         <Select className="!w-36" aria-label="Status" value={filters.status} onChange={(e) => go({ status: e.target.value })}>
                             <option value="">All statuses</option>
                             <option value="new">New</option>
                             <option value="contacted">Contacted</option>
                             <option value="closed">Closed</option>
+                            <option value="spam">Possible spam{counts.spam > 0 ? ` (${counts.spam})` : ''}</option>
                         </Select>
                     </form>
                 }

@@ -82,26 +82,36 @@ final class PublicSiteController extends Controller
     public function lead(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'name' => ['required', 'string', 'max:120'],
+            // A trial sign-up starts with only an email address; every other form asks for a name.
+            'name' => ['required_unless:topic,trial', 'nullable', 'string', 'max:120'],
             'email' => ['required', 'email:rfc', 'max:190'],
             'company' => ['nullable', 'string', 'max:160'],
             'phone' => ['nullable', 'string', 'max:40'],
             'team_size' => ['nullable', 'string', 'max:40'],
-            'topic' => ['nullable', 'in:demo,contact,enterprise'],
+            'topic' => ['nullable', 'in:demo,contact,enterprise,trial'],
             'message' => ['nullable', 'string', 'max:4000'],
             'source' => ['nullable', 'string', 'max:190'],
-            'website' => ['nullable', 'string', 'max:10'], // honeypot: people never see or fill this field
+            // Bot trap: a field people never see. Deliberately NOT called "website", "url", "company" or
+            // anything else a browser's autofill recognises: the old trap was named "website", browsers
+            // filled it in for real visitors, and their inquiries were thrown away as bots.
+            'confirm_code' => ['nullable', 'string', 'max:200'],
         ]);
 
-        // A filled honeypot is a bot: answer as if it worked, keep nothing.
-        if (($data['website'] ?? '') === '') {
-            unset($data['website']);
-            $lead = SalesLead::query()->create($data + ['topic' => $data['topic'] ?? 'demo', 'ip_address' => $request->ip()]);
+        // Nothing a visitor sends is ever discarded. A filled trap is kept as "spam" (visible in
+        // Super Admin → Inquiries under that status) and simply not emailed.
+        $trapped = trim((string) ($data['confirm_code'] ?? '')) !== '';
+        unset($data['confirm_code']);
 
-            $to = (string) config('engage.sales_email');
-            if ($to !== '') {
-                Notification::route('mail', $to)->notify(new SalesLeadNotification($lead));
-            }
+        $lead = SalesLead::query()->create(array_merge($data, [
+            'name' => $data['name'] ?? $data['email'],
+            'topic' => $data['topic'] ?? 'demo',
+            'status' => $trapped ? 'spam' : 'new',
+            'ip_address' => $request->ip(),
+        ]));
+
+        $to = (string) config('engage.sales_email');
+        if (! $trapped && $to !== '') {
+            Notification::route('mail', $to)->notify(new SalesLeadNotification($lead));
         }
 
         return response()->json(['data' => ['status' => 'received']], 201);

@@ -32,7 +32,7 @@ final class SalesLeadNotification extends Notification implements ShouldQueue
     {
         $lead = $this->lead;
         $mail = (new MailMessage)
-            ->subject("New {$lead->topic} request: {$lead->name}".($lead->company ? " ({$lead->company})" : ''))
+            ->subject(($lead->topic === 'trial' ? 'Trial sign-up started' : "New {$lead->topic} request").": {$lead->name}".($lead->company ? " ({$lead->company})" : ''))
             ->replyTo($lead->email, $lead->name)
             ->greeting('New request from the website')
             ->line("**Name:** {$lead->name}")

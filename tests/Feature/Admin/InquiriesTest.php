@@ -81,4 +81,20 @@ final class InquiriesTest extends TestCase
         $this->patch("/admin/inquiries/{$lead->id}", ['status' => 'closed'])->assertForbidden();
         $this->get('/admin')->assertInertia(fn (Assert $page) => $page->where('newInquiries', 0));
     }
+
+    public function test_possible_spam_is_kept_out_of_the_way_but_never_lost(): void
+    {
+        $this->lead();
+        $this->lead(['name' => 'Bot', 'email' => 'bot@example.com', 'status' => 'spam']);
+        $this->actingAsAdmin(PlatformRole::SuperAdmin);
+
+        // The normal list and the "new" badge leave it out; choosing the status shows it.
+        $this->get('/admin/inquiries')->assertInertia(fn (Assert $page) => $page->has('inquiries.data', 1)->where('counts.new', 1)->where('counts.spam', 1)->where('newInquiries', 1));
+        $this->get('/admin/inquiries?status=spam')->assertInertia(fn (Assert $page) => $page->has('inquiries.data', 1)->where('inquiries.data.0.email', 'bot@example.com'));
+
+        // A real inquiry caught by mistake can be put back.
+        $bot = SalesLead::query()->where('status', 'spam')->firstOrFail();
+        $this->patch("/admin/inquiries/{$bot->id}", ['status' => 'new'])->assertRedirect();
+        $this->get('/admin/inquiries')->assertInertia(fn (Assert $page) => $page->has('inquiries.data', 2));
+    }
 }

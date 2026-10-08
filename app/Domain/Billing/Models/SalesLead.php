@@ -29,7 +29,8 @@ class SalesLead extends Model
 {
     use HasUuids;
 
-    public const STATUSES = ['new', 'contacted', 'closed'];
+    /** "spam": kept, but caught by the form's bot trap; no email is sent for it. */
+    public const STATUSES = ['new', 'contacted', 'closed', 'spam'];
 
     protected $fillable = ['name', 'email', 'company', 'phone', 'team_size', 'topic', 'message', 'source', 'ip_address', 'status', 'admin_note', 'handled_by_admin_id', 'handled_at'];
 

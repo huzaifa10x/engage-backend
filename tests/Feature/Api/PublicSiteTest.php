@@ -63,10 +63,26 @@ final class PublicSiteTest extends TestCase
         $this->assertSame('Palm Estates', $lead->company);
         Notification::assertSentOnDemand(SalesLeadNotification::class, fn (SalesLeadNotification $n, array $channels, object $notifiable) => $notifiable->routes['mail'] === 'sales@10xdigital.ae' && $n->lead->is($lead));
 
-        // A bot that fills the hidden field gets a normal answer, and nothing is kept or sent.
+        // A browser's autofill used to fill the old hidden "website" field and real inquiries were thrown
+        // away as bots. That field no longer means anything: this is a real inquiry and is treated as one.
         Notification::fake();
-        $this->postJson('/api/v1/public/leads', ['name' => 'Bot', 'email' => 'bot@example.com', 'website' => 'http://x'])->assertCreated();
-        $this->assertSame(1, SalesLead::query()->count());
+        $this->postJson('/api/v1/public/leads', ['name' => 'Real Person', 'email' => 'real@example.com', 'website' => 'https://their-company.example'])->assertCreated();
+        $this->assertSame('new', SalesLead::query()->where('email', 'real@example.com')->value('status'));
+        Notification::assertSentOnDemand(SalesLeadNotification::class);
+
+        // The new trap (a field no person or autofill touches): kept as "spam", never discarded, not emailed.
+        Notification::fake();
+        $this->postJson('/api/v1/public/leads', ['name' => 'Bot', 'email' => 'bot@example.com', 'confirm_code' => 'buy pills'])->assertCreated()->assertJsonPath('data.status', 'received');
+        $this->assertSame('spam', SalesLead::query()->where('email', 'bot@example.com')->value('status'));
+        $this->assertSame(3, SalesLead::query()->count());
         Notification::assertNothingSent();
+
+        // The sign-up form on the website sends only an email address: recorded and emailed as a trial sign-up.
+        $this->postJson('/api/v1/public/leads', ['email' => 'founder@startup.ae', 'topic' => 'trial', 'source' => '/start'])->assertCreated();
+        $trial = SalesLead::query()->where('email', 'founder@startup.ae')->firstOrFail();
+        $this->assertSame(['trial', 'founder@startup.ae', 'new'], [$trial->topic, $trial->name, $trial->status]);
+        Notification::assertSentOnDemand(SalesLeadNotification::class, fn (SalesLeadNotification $n) => $n->lead->is($trial));
+        // Other forms still need a name.
+        $this->postJson('/api/v1/public/leads', ['email' => 'x@example.com', 'topic' => 'contact'])->assertStatus(422);
     }
 }

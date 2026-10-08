@@ -82,7 +82,7 @@ FILESYSTEM_DISK=local
 
 # Emails (team invitations) are only logged until SMTP is configured — see docs/deploy-oracle.md.
 MAIL_MAILER=log
-MAIL_FROM_ADDRESS=no-reply@$DOMAIN
+MAIL_FROM_ADDRESS=noreply@engage.10xdigital.ae
 MAIL_FROM_NAME="10X Engage"
 
 # Meta — fill in from the App Dashboard, then run: deploy/deploy.sh restart

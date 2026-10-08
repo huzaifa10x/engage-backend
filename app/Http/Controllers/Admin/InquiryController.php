@@ -17,7 +17,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /** Super Admin → Inquiries: demo and contact requests sent from the public website. */
 final class InquiryController extends Controller
 {
-    private const TOPICS = ['demo', 'contact', 'enterprise'];
+    private const TOPICS = ['demo', 'contact', 'enterprise', 'trial'];
 
     public function index(Request $request): Response
     {
@@ -34,6 +34,7 @@ final class InquiryController extends Controller
             'filters' => $filters,
             'counts' => [
                 'new' => SalesLead::query()->where('status', 'new')->count(),
+                'spam' => SalesLead::query()->where('status', 'spam')->count(),
                 'contacted' => SalesLead::query()->where('status', 'contacted')->count(),
                 'closed' => SalesLead::query()->where('status', 'closed')->count(),
                 'last_7_days' => SalesLead::query()->where('created_at', '>=', now()->subDays(7))->count(),
@@ -103,7 +104,8 @@ final class InquiryController extends Controller
     private function query(array $filters): Builder
     {
         return SalesLead::query()
-            ->when($filters['status'] !== '', fn ($q) => $q->where('status', $filters['status']))
+            // Caught-by-the-bot-trap entries stay out of the way unless that status is chosen.
+            ->when($filters['status'] !== '', fn ($q) => $q->where('status', $filters['status']), fn ($q) => $q->where('status', '!=', 'spam'))
             ->when($filters['topic'] !== '', fn ($q) => $q->where('topic', $filters['topic']))
             ->when($filters['q'] !== '', function ($q) use ($filters): void {
                 $like = '%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $filters['q']).'%';
