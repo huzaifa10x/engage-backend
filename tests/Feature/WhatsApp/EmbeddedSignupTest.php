@@ -201,6 +201,40 @@ final class EmbeddedSignupTest extends TestCase
             ->assertStatus(409)->assertJsonPath('error.code', 'waba_already_connected');
     }
 
+    public function test_an_account_that_is_only_disconnected_in_another_workspace_can_be_connected_here(): void
+    {
+        $this->fakeGraph();
+
+        // The old workspace had this account and number connected, with a conversation, and then disconnected it.
+        $old = $this->createTenant(['name' => 'Old Workspace']);
+        $this->subscribe($old, 'pro');
+        $oldOwner = $this->addMember($old);
+        $oldNumber = $this->connectNumber($old, self::WABA, self::PHONE);
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue()))->assertOk();
+        $this->actingAsMember($oldOwner);
+        $wabaRow = $this->getJson('/api/v1/whatsapp/accounts')->json('data.0.id');
+        $this->deleteJson("/api/v1/whatsapp/accounts/{$wabaRow}")->assertSuccessful();
+
+        // The same business now connects it to a new workspace: no "already connected to another workspace".
+        $this->actingAsMember($this->owner());
+        $attempt = $this->postJson('/api/v1/whatsapp/signups')->json('data.attempt.id');
+        $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())->assertOk()->assertJsonPath('data.status', 'completed');
+        $this->getJson('/api/v1/whatsapp/accounts')->assertOk()->assertJsonPath('data.0.waba_id', self::WABA)->assertJsonPath('data.0.status', 'connected')
+            ->assertJsonPath('data.0.phone_numbers.0.phone_number_id', self::PHONE);
+
+        // New messages for that number now arrive in the new workspace …
+        $value = $this->inboundValue(waId: '971502223344');
+        $value['messages'][0]['id'] = 'wamid.AFTER_MOVE';
+        $this->postWebhook($this->webhookBody('messages', $value))->assertOk();
+        $this->actingAsMember($this->addMember($this->tenant));
+        $this->getJson('/api/v1/conversations')->assertOk()->assertJsonCount(1, 'data');
+
+        // … and the old workspace keeps its history, shown on a disconnected number.
+        $this->actingAsMember($oldOwner);
+        $this->getJson('/api/v1/conversations')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.phone_number.status', 'disconnected');
+        $this->getJson("/api/v1/phone-numbers/{$oldNumber->id}")->assertOk()->assertJsonPath('data.status', 'disconnected');
+    }
+
     public function test_plan_number_limit_is_enforced_at_completion(): void
     {
         $this->fakeGraph();

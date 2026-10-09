@@ -14,6 +14,13 @@ use Illuminate\Validation\ValidationException;
 
 final class LoginRequest extends FormRequest
 {
+    /**
+     * One message whether the email is unknown or the password is wrong. Saying "no such user" would
+     * let anyone test which email addresses have an account here, so the wording covers both cases and
+     * tells a newcomer what to do.
+     */
+    public const FAILED = 'The email or password is incorrect. If you have not created an account yet, sign up first.';
+
     public function authorize(): bool
     {
         return true;
@@ -50,7 +57,7 @@ final class LoginRequest extends FormRequest
         if (! Auth::guard('web')->attempt($this->only('email', 'password'), $this->boolean('remember'))) {
             RateLimiter::hit($key, 60);
 
-            throw ValidationException::withMessages(['email' => __('auth.failed')]);
+            throw ValidationException::withMessages(['email' => self::FAILED]);
         }
 
         /** @var User $user */
@@ -59,7 +66,7 @@ final class LoginRequest extends FormRequest
         if ($user->isDisabled()) {
             Auth::guard('web')->logout();
 
-            throw ValidationException::withMessages(['email' => __('auth.failed')]);
+            throw ValidationException::withMessages(['email' => self::FAILED]);
         }
 
         RateLimiter::clear($key);

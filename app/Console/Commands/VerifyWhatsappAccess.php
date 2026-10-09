@@ -13,7 +13,7 @@ use Illuminate\Console\Command;
 use Throwable;
 
 /**
- * Every ten minutes: asks Meta, for every connected WhatsApp account, whether it still accepts our access.
+ * Every two minutes: asks Meta, for every connected WhatsApp account, whether it and its numbers are still ours.
  * Catches the quiet cases: a customer removes 10X Engage in Meta Business Settings and no webhook
  * tells us, and the workspace happens not to send anything that would hit an error.
  */

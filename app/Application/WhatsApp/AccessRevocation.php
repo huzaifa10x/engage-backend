@@ -29,7 +29,8 @@ use Throwable;
  * There are three ways we find out, and all of them end in markDisconnected():
  *   1. the account_update webhook says so (PARTNER_REMOVED, ACCOUNT_OFFBOARDED …);
  *   2. Meta refuses one of our API calls with an authorisation error (verify());
- *   3. a check every ten minutes asks Meta whether each connected account still accepts our token.
+ *   3. a check every two minutes asks Meta whether each connected account, and each of its numbers,
+ *      is still ours to use.
  *
  * Nothing is deleted: conversations, contacts and history stay, and reconnecting restores service.
  */
@@ -48,6 +49,7 @@ final class AccessRevocation
         private readonly WhatsappCredentials $credentials,
         private readonly ManageChannels $channels,
         private readonly AuditLogger $audit,
+        private readonly PhoneNumberSync $sync,
     ) {}
 
     /** Does this error mean "you are no longer allowed", as opposed to a bad request or an outage? */
@@ -72,9 +74,12 @@ final class AccessRevocation
 
         if ($metaCode !== 190) {
             try {
-                $this->graph->getWaba($waba->waba_id, $this->credentials->tokenFor($waba));
+                $token = $this->credentials->tokenFor($waba);
+                $this->graph->getWaba($waba->waba_id, $token);
 
-                return false; // access is fine; the refused call was about something narrower
+                // The account still accepts us. A single number can be taken away on its own, though
+                // (disconnected inside the WhatsApp Business app, or removed from the account).
+                return $this->verifyNumbers($waba, $token);
             } catch (MetaApiException $e) {
                 if (! self::looksRevoked($e)) {
                     return false; // an outage or an unrelated error: never disconnect on that
@@ -86,6 +91,46 @@ final class AccessRevocation
         }
 
         $this->markDisconnected($waba, $waba->phoneNumbers()->get(), 'access_revoked', ['meta_code' => $metaCode]);
+
+        return true;
+    }
+
+    /**
+     * Asks Meta about each connected number of an account we still have access to, and marks as
+     * disconnected the ones that are gone. A number counts as gone only on a clear signal:
+     *   • Meta says it does not exist or we may not see it any more;
+     *   • it was on the WhatsApp Business app (coexistence) and Meta now says it is not;
+     *   • it was registered on the Cloud API and Meta now says it is registered nowhere.
+     * An outage or any other error changes nothing.
+     */
+    private function verifyNumbers(WabaAccount $waba, string $token): bool
+    {
+        $gone = collect();
+        foreach ($waba->phoneNumbers()->where('status', PhoneNumberStatus::Connected->value)->get() as $number) {
+            try {
+                $node = $this->graph->getPhoneNumber($number->phone_number_id, $token);
+            } catch (MetaApiException $e) {
+                if (self::looksRevoked($e)) {
+                    $gone->push($number);
+                }
+
+                continue;
+            } catch (Throwable) {
+                continue;
+            }
+
+            $leftTheApp = $number->isCoexistence() && $number->getAttribute('is_on_biz_app') === true && ($node['is_on_biz_app'] ?? null) === false;
+            $deregistered = $number->getAttribute('platform_type') === 'CLOUD_API' && ($node['platform_type'] ?? null) === 'NOT_APPLICABLE';
+            if ($leftTheApp || $deregistered) {
+                $gone->push($number);
+            }
+            $this->sync->applyPhoneNumber($number, $node); // remember what Meta says now, for the next comparison
+        }
+
+        if ($gone->isEmpty()) {
+            return false;
+        }
+        $this->markDisconnected($waba, $gone, 'offboarded', ['detected_by' => 'number_check']);
 
         return true;
     }

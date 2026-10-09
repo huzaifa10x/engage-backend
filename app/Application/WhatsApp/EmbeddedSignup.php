@@ -27,6 +27,7 @@ use App\Infrastructure\Secrets\SecretStore;
 use App\Support\Api\ErrorCode;
 use App\Support\Exceptions\DomainException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Embedded Signup v4, Tech Provider path:
@@ -213,7 +214,14 @@ final class EmbeddedSignup
         // WABAs are unique platform-wide: a WABA can never be attached to two workspaces.
         $owner = $this->context->bypass(fn () => WabaAccount::query()->where('waba_id', $wabaId)->lockForUpdate()->first());
         if ($owner !== null && $owner->tenant_id !== $tenant->id) {
-            throw WhatsappException::wabaOwnedByAnotherWorkspace();
+            // In active use by another workspace: refuse. But a record that is only a leftover there
+            // (disconnected, or a workspace that was closed) must not block the customer for ever:
+            // it is released, keeping that workspace's history, and connected here afresh.
+            if ($owner->status === WabaStatus::Connected) {
+                throw WhatsappException::wabaOwnedByAnotherWorkspace();
+            }
+            $this->release($owner, $tenant);
+            $owner = null;
         }
 
         $accessToken = MetaAccessToken::query()->create([
@@ -253,7 +261,11 @@ final class EmbeddedSignup
         if ($phoneNumberId !== null) {
             $number = $this->context->bypass(fn () => PhoneNumber::query()->where('phone_number_id', $phoneNumberId)->lockForUpdate()->first());
             if ($number !== null && $number->tenant_id !== $tenant->id) {
-                throw WhatsappException::wabaOwnedByAnotherWorkspace();
+                if ($number->status === PhoneNumberStatus::Connected) {
+                    throw WhatsappException::wabaOwnedByAnotherWorkspace();
+                }
+                $this->releaseNumber($number);
+                $number = null;
             }
 
             $type = $coexistence ? OnboardingType::Coexistence : OnboardingType::NewNumber;
@@ -319,6 +331,38 @@ final class EmbeddedSignup
         ]);
 
         throw WhatsappException::subscribedToAnotherApp($conflicts, $sameApp);
+    }
+
+    /**
+     * Frees a WhatsApp account's id (and its numbers' ids) from a workspace where it is no longer
+     * connected, so it can be connected to another one. The old records stay in the old workspace,
+     * still marked disconnected and with all their conversations; only the Meta ids on them are
+     * retired, because one id can belong to one record platform-wide.
+     */
+    private function release(WabaAccount $old, Tenant $newOwner): void
+    {
+        $this->context->bypass(function () use ($old, $newOwner): void {
+            foreach (PhoneNumber::query()->where('waba_account_id', $old->id)->get() as $number) {
+                $this->releaseNumber($number);
+            }
+            $released = $old->waba_id;
+            DB::table('waba_accounts')->where('id', $old->id)->update(['waba_id' => $this->retired($released), 'is_subscribed_to_webhooks' => false]);
+            Log::info('WhatsApp account released from a workspace where it was disconnected', ['waba_id' => $released, 'from_tenant' => $old->tenant_id, 'to_tenant' => $newOwner->id]);
+        });
+    }
+
+    private function releaseNumber(PhoneNumber $number): void
+    {
+        $this->context->bypass(fn () => DB::table('phone_numbers')->where('id', $number->id)->update([
+            'phone_number_id' => $this->retired($number->phone_number_id),
+            'status' => PhoneNumberStatus::Disconnected->value,
+        ]));
+    }
+
+    /** "106540352242922" → "106540352242922~r4f9c2": unique, recognisable, never matches a real Meta id again. */
+    private function retired(string $metaId): string
+    {
+        return mb_substr(explode('~', $metaId)[0], 0, 24).'~r'.bin2hex(random_bytes(3));
     }
 
     /** Has THIS installation connected the WABA (and so may legitimately hold our app's subscription)? */

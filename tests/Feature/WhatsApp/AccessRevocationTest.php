@@ -211,4 +211,64 @@ final class AccessRevocationTest extends TestCase
         // Already disconnected accounts are not asked about again.
         Http::fake(['graph.facebook.com/*/'.self::WABA.'*' => fn () => $this->fail('a disconnected account must not be checked')]);
     }
+
+    // ── 4. One number taken away while the account stays ───────────────────────────────────
+
+    public function test_a_number_disconnected_in_the_whatsapp_business_app_is_found_even_without_a_webhook(): void
+    {
+        $this->connect(OnboardingType::Coexistence);
+        $this->tenantContext()->run($this->tenant, fn () => $this->number->forceFill(['is_on_biz_app' => true])->save());
+
+        // Meta still accepts us for the account, but now reports the number as no longer on the Business app.
+        $this->meta([
+            'graph.facebook.com/*/'.self::PHONE.'*' => Http::response(['id' => self::PHONE, 'display_phone_number' => '+971 58 549 6310', 'is_on_biz_app' => false, 'platform_type' => 'CLOUD_API']),
+            'graph.facebook.com/*/'.self::WABA.'*' => Http::response(['id' => self::WABA, 'name' => 'Palm Estates']),
+        ]);
+        $this->artisan('engage:whatsapp:verify-access')->assertSuccessful();
+
+        [, , $numberStatus, $numberReason] = $this->state();
+        $this->assertSame(['disconnected', 'offboarded'], [$numberStatus, $numberReason]);
+        Notification::assertSentOnDemand(ReconnectRequiredNotification::class);
+    }
+
+    public function test_a_number_removed_from_the_account_is_found(): void
+    {
+        // Gone: Meta says the number object no longer exists for us.
+        $this->connect();
+        $this->meta([
+            'graph.facebook.com/*/'.self::PHONE.'*' => Http::response(['error' => ['message' => 'Unsupported get request. Object does not exist or missing permissions.', 'code' => 100, 'error_subcode' => 33]], 400),
+            'graph.facebook.com/*/'.self::WABA.'*' => Http::response(['id' => self::WABA]),
+        ]);
+        $this->artisan('engage:whatsapp:verify-access');
+        $this->assertSame('disconnected', $this->state()[2]);
+
+    }
+
+    public function test_a_healthy_number_is_left_alone_and_a_deregistered_one_is_found(): void
+    {
+        // Healthy: nothing changes, however often it is checked; an outage on the number call changes nothing either.
+        $this->connect();
+        $this->tenantContext()->run($this->tenant, fn () => $this->number->forceFill(['platform_type' => 'CLOUD_API'])->save());
+        $this->meta([
+            'graph.facebook.com/*/'.self::PHONE.'*' => Http::sequence()->push(['id' => self::PHONE, 'platform_type' => 'CLOUD_API'])->push(['error' => ['message' => 'Unavailable', 'code' => 2]], 503)->push(['id' => self::PHONE, 'platform_type' => 'NOT_APPLICABLE']),
+            'graph.facebook.com/*/'.self::WABA.'*' => Http::response(['id' => self::WABA]),
+        ]);
+        $this->artisan('engage:whatsapp:verify-access');
+        $this->assertSame('connected', $this->state()[2]);
+        $this->artisan('engage:whatsapp:verify-access');
+        $this->assertSame('connected', $this->state()[2], 'an outage is not a disconnection');
+        // Deregistered from the Cloud API: found on the next check.
+        $this->artisan('engage:whatsapp:verify-access');
+        $this->assertSame('disconnected', $this->state()[2]);
+    }
+
+    public function test_an_account_event_we_do_not_know_by_name_triggers_a_check_straight_away(): void
+    {
+        $this->connect();
+        // Whatever Meta calls it, if our access is gone the workspace shows it within seconds of the webhook.
+        $this->meta(['graph.facebook.com/*' => $this->authError(190)]);
+        $this->postWebhook($this->webhookBody('account_update', ['event' => 'SOME_NEW_REMOVAL_EVENT']))->assertOk();
+
+        $this->assertSame(['disconnected', 'access_revoked'], array_slice($this->state(), 0, 2));
+    }
 }

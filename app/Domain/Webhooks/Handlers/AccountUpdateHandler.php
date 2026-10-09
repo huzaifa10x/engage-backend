@@ -9,9 +9,11 @@ use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Enums\WabaStatus;
+use App\Domain\WhatsApp\Jobs\VerifyMetaAccess;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\QualityEvent;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * account_update: WABA lifecycle. PARTNER_REMOVED / ACCOUNT_OFFBOARDED disconnect (coexistence
@@ -61,6 +63,15 @@ final class AccountUpdateHandler implements WebhookHandler
                     $number->forceFill(['status' => PhoneNumberStatus::Connected, 'disconnect_reason' => null, 'disconnected_at' => null])->save();
                 }
                 $waba->forceFill(['status' => WabaStatus::Connected, 'disconnected_at' => null, 'disconnect_reason' => null])->save();
+                break;
+
+            default:
+                // An event this code does not know by name (Meta adds and renames them). Rather than wait for
+                // the periodic check, ask Meta right now whether the account and its numbers are still ours:
+                // if this was a disconnection under another name, it shows within seconds.
+                if (Cache::add('meta-access-check:'.$waba->waba_id, 1, 20)) {
+                    VerifyMetaAccess::dispatch($waba->waba_id, null);
+                }
                 break;
 
             case 'DISABLED_UPDATE':
