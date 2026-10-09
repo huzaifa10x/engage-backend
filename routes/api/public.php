@@ -38,3 +38,9 @@ Route::post('contacts', [PublicApiController::class, 'createContact'])->middlewa
 Route::patch('contacts/{id}', [PublicApiController::class, 'updateContact'])->whereUuid('id')->middleware($key('contacts:write'))->name('contacts.update');
 Route::post('contacts/{id}/opt-in', [PublicApiController::class, 'optIn'])->whereUuid('id')->middleware($key('contacts:write'))->name('contacts.opt-in');
 Route::post('contacts/{id}/opt-out', [PublicApiController::class, 'optOut'])->whereUuid('id')->middleware($key('contacts:write'))->name('contacts.opt-out');
+
+// Event subscriptions for automation platforms (Zapier, Make) and for code that manages its own webhooks.
+Route::get('webhooks', [PublicApiController::class, 'webhooks'])->middleware($key('webhooks:manage'))->name('webhooks');
+Route::post('webhooks', [PublicApiController::class, 'subscribe'])->middleware($key('webhooks:manage'))->name('webhooks.subscribe');
+Route::delete('webhooks/{id}', [PublicApiController::class, 'unsubscribe'])->whereUuid('id')->middleware($key('webhooks:manage'))->name('webhooks.unsubscribe');
+Route::get('webhooks/samples', [PublicApiController::class, 'webhookSamples'])->middleware($key('webhooks:manage'))->name('webhooks.samples');

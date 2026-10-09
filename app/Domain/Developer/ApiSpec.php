@@ -109,6 +109,7 @@ final class ApiSpec
             ['name' => 'cursor', 'type' => 'string', 'required' => false, 'description' => 'The next_cursor from the previous page.'],
         ];
         $note = [['name' => 'note', 'type' => 'string', 'required' => false, 'description' => 'Why or how consent was given, for the consent ledger. Up to 300 characters.']];
+        $subscription = ['id' => '01a11639-6666-7000-8000-000000000006', 'url' => 'https://hooks.example.com/engage/1234', 'events' => ['message.received'], 'status' => 'active', 'description' => 'Created through the API with the key "Zapier"', 'created_at' => '2026-10-07T09:40:00+00:00'];
 
         return [
             ['name' => 'Account', 'description' => 'Check a key and look up what the workspace has.', 'endpoints' => [
@@ -197,11 +198,32 @@ final class ApiSpec
                 ['id' => 'contacts.opt-out', 'method' => 'POST', 'path' => '/contacts/{id}/opt-out', 'scope' => 'contacts:write', 'summary' => 'Record opt-out', 'description' => 'Records that the contact no longer wants messages. Sending to them is refused from that moment.',
                     'path_params' => [$id], 'body' => $note, 'request' => ['example' => ['note' => 'Asked by phone']], 'response' => ['status' => 200, 'example' => ['data' => ['consent' => 'opted_out'] + self::CONTACT]]],
             ]],
+            ['name' => 'Event subscriptions', 'description' => 'Create and remove webhook endpoints from code. This is what Zapier and Make use for instant triggers: they subscribe when an automation is switched on and unsubscribe when it is switched off.', 'endpoints' => [
+                ['id' => 'webhooks', 'method' => 'GET', 'path' => '/webhooks', 'scope' => 'webhooks:manage', 'summary' => 'List subscriptions', 'description' => 'The endpoints that were created through the API. Endpoints typed in under Developer → Webhooks are managed there and are not listed.',
+                    'response' => ['status' => 200, 'example' => ['data' => [$subscription]]]],
+                ['id' => 'webhooks.subscribe', 'method' => 'POST', 'path' => '/webhooks', 'scope' => 'webhooks:manage', 'summary' => 'Subscribe to events', 'description' => 'Starts sending the chosen events to your URL. The answer contains the signing secret once; keep it to verify deliveries. Webhooks must be included in the workspace\'s plan.',
+                    'body' => [
+                        ['name' => 'url', 'type' => 'string', 'required' => true, 'description' => 'A public https address that receives the events.'],
+                        ['name' => 'events', 'type' => 'array', 'required' => true, 'description' => 'One or more event names, for example message.received. See Webhooks for the full list.'],
+                        ['name' => 'description', 'type' => 'string', 'required' => false, 'description' => 'A note shown next to the endpoint in the portal. Up to 160 characters.'],
+                    ],
+                    'request' => ['example' => ['url' => 'https://hooks.example.com/engage/1234', 'events' => ['message.received']]],
+                    'response' => ['status' => 201, 'example' => ['data' => $subscription + ['secret' => 'whsec_Zk3v8Qm1T7pLx0aN5cYbR2uWd9eHg6sJ4fKo1iVt']]]],
+                ['id' => 'webhooks.unsubscribe', 'method' => 'DELETE', 'path' => '/webhooks/{id}', 'scope' => 'webhooks:manage', 'summary' => 'Unsubscribe', 'description' => 'Stops sending events to an endpoint that was created through the API, and removes it.',
+                    'path_params' => [$id], 'response' => ['status' => 200, 'example' => ['data' => ['deleted' => true]]]],
+                ['id' => 'webhooks.samples', 'method' => 'GET', 'path' => '/webhooks/samples', 'scope' => 'webhooks:manage', 'summary' => 'Get a sample event', 'description' => 'An example of one event in exactly the shape that is delivered. Useful for mapping fields before a real event arrives.',
+                    'query' => [['name' => 'event', 'type' => 'string', 'required' => true, 'description' => 'The event name, for example message.received.']],
+                    'response' => ['status' => 200, 'example' => ['data' => [self::sampleEvent('message.received')]]]],
+            ]],
         ];
     }
 
-    /** @return array<string, mixed> */
-    private static function webhooks(): array
+    /**
+     * One example of every event, as delivered.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private static function eventExamples(): array
     {
         $envelope = fn (string $event, array $data) => ['id' => 'evt_01k2m3n4p5q6r7s8t9v0w1x2y3', 'event' => $event, 'created_at' => '2026-10-07T09:32:00+00:00', 'workspace_id' => '01a11630-0000-7000-8000-000000000000', 'data' => $data];
         $inbound = ['direction' => 'inbound', 'status' => 'received', 'origin' => 'customer', 'text' => 'Is the villa still available?', 'whatsapp_message_id' => 'wamid.HBgMOTcxNTAxMjM0NTY3FQIAEhgU'] + self::MESSAGE;
@@ -219,6 +241,20 @@ final class ApiSpec
             'conversation.closed' => ['status' => 'closed'] + self::CONVERSATION,
         ];
 
+        return collect($examples)->map(fn (array $data, string $event) => $envelope($event, $data))->all();
+    }
+
+    /** @return array<string, mixed> */
+    public static function sampleEvent(string $event): array
+    {
+        return self::eventExamples()[$event] ?? [];
+    }
+
+    /** @return array<string, mixed> */
+    private static function webhooks(): array
+    {
+        $examples = self::eventExamples();
+
         return [
             'summary' => 'Instead of asking the API again and again, give us a URL (Developer → Webhooks) and we send a request to it when something happens in your workspace.',
             'delivery' => [
@@ -227,6 +263,7 @@ final class ApiSpec
                 'After '.WebhookEndpoint::DISABLE_AFTER_FAILURES.' failures in a row the endpoint is switched off and the workspace owners are emailed.',
                 'The same event can arrive more than once. Use its "id" to ignore repeats.',
                 'The URL must be a public https address.',
+                'Zapier, Make and your own code can also create and remove endpoints through the API: see Event subscriptions.',
             ],
             'headers' => [
                 ['name' => 'X-Engage-Event', 'description' => 'The event name, for example message.received.'],
@@ -234,7 +271,7 @@ final class ApiSpec
                 ['name' => 'X-Engage-Signature', 'description' => 't=<unix time>,v1=<signature>. See "Verifying a webhook".'],
             ],
             'signature' => 'The signature is the HMAC-SHA256, as lowercase hex, of "<t>.<raw request body>" using the endpoint\'s signing secret (shown once when you create the endpoint). Recompute it and compare; also reject requests whose t is more than five minutes old.',
-            'events' => collect(WebhookEndpoint::EVENTS)->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label, 'example' => $envelope($key, $examples[$key] ?? [])])->values()->all(),
+            'events' => collect(WebhookEndpoint::EVENTS)->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label, 'example' => $examples[$key] ?? []])->values()->all(),
         ];
     }
 

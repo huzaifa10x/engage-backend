@@ -24,6 +24,8 @@ use Illuminate\Support\Carbon;
  * @property ?Carbon $last_failure_at
  * @property ?Carbon $disabled_at
  * @property ?Carbon $created_at
+ * @property string $source portal (typed in by a person) or api (created by Zapier, Make or the customer's own code)
+ * @property ?string $api_key_id
  */
 class WebhookEndpoint extends Model
 {
@@ -47,7 +49,10 @@ class WebhookEndpoint extends Model
     /** Consecutive failed deliveries after which an endpoint is switched off and the owners are told. */
     public const DISABLE_AFTER_FAILURES = 15;
 
-    protected $fillable = ['tenant_id', 'url', 'description', 'secret', 'events', 'status', 'consecutive_failures', 'last_success_at', 'last_failure_at', 'disabled_at'];
+    /** How many endpoints can be created through the API (each Zapier or Make trigger uses one). */
+    public const MAX_VIA_API = 50;
+
+    protected $fillable = ['tenant_id', 'url', 'description', 'secret', 'events', 'status', 'consecutive_failures', 'last_success_at', 'last_failure_at', 'disabled_at', 'source', 'api_key_id'];
 
     protected $hidden = ['secret'];
 

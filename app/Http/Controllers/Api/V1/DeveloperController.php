@@ -86,6 +86,8 @@ final class DeveloperController extends Controller
     {
         if ($apiKey->revoked_at === null) {
             $apiKey->forceFill(['revoked_at' => now()])->save();
+            // Subscriptions made with this key (Zapier, Make) can no longer be managed by it: stop sending to them.
+            WebhookEndpoint::query()->where('api_key_id', $apiKey->id)->delete();
             $this->audit->record('api_key.revoked', null, meta: ['api_key_id' => $apiKey->id, 'name' => $apiKey->name]);
         }
 
@@ -104,7 +106,7 @@ final class DeveloperController extends Controller
     {
         $this->entitlements->ensureEnabled($this->context->tenant(), FeatureKey::Webhooks);
         $data = $this->endpointData($request, $guard);
-        if (WebhookEndpoint::query()->count() >= self::MAX_ENDPOINTS) {
+        if (WebhookEndpoint::query()->where('source', 'portal')->count() >= self::MAX_ENDPOINTS) {
             throw ValidationException::withMessages(['url' => 'You have reached the limit of '.self::MAX_ENDPOINTS.' endpoints.']);
         }
 
@@ -215,7 +217,7 @@ final class DeveloperController extends Controller
     private function endpoint(WebhookEndpoint $e): array
     {
         return [
-            'id' => $e->id, 'url' => $e->url, 'description' => $e->description, 'events' => $e->events, 'status' => $e->status,
+            'id' => $e->id, 'url' => $e->url, 'description' => $e->description, 'events' => $e->events, 'status' => $e->status, 'source' => $e->source,
             'consecutive_failures' => $e->consecutive_failures, 'last_success_at' => $e->last_success_at?->toIso8601String(),
             'last_failure_at' => $e->last_failure_at?->toIso8601String(), 'created_at' => $e->created_at?->toIso8601String(),
         ];

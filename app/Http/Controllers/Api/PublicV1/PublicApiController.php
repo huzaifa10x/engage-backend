@@ -6,14 +6,19 @@ namespace App\Http\Controllers\Api\PublicV1;
 
 use App\Application\Messaging\ManageContacts;
 use App\Application\Messaging\SendMessage;
+use App\Domain\Developer\ApiSpec;
 use App\Domain\Developer\Models\ApiKey;
+use App\Domain\Developer\Models\WebhookEndpoint;
 use App\Domain\Developer\Services\ApiMedia;
 use App\Domain\Developer\Services\PublicPayload;
+use App\Domain\Developer\Services\UrlGuard;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\ConsentService;
+use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\FeatureKey;
 use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
@@ -21,6 +26,8 @@ use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -237,6 +244,60 @@ final class PublicApiController extends Controller
     }
 
     /** The number to send from: the one named, or the workspace's only connected number. */
+    // ── Event subscriptions (Zapier, Make, self-managed webhooks) ──────────────────────────
+
+    public function webhooks(Request $request): JsonResponse
+    {
+        return response()->json(['data' => WebhookEndpoint::query()->where('source', 'api')->orderBy('created_at')->get()->map(fn (WebhookEndpoint $e) => $this->subscription($e))]);
+    }
+
+    /** Start sending events to a URL. The signing secret is in the answer, once. */
+    public function subscribe(Request $request, UrlGuard $guard, EntitlementService $entitlements): JsonResponse
+    {
+        $entitlements->ensureEnabled($this->context->tenant(), FeatureKey::Webhooks);
+        $data = $request->validate([
+            'url' => ['required', 'string', 'max:2000', 'url'],
+            'events' => ['required', 'array', 'min:1'],
+            'events.*' => ['string', Rule::in(array_keys(WebhookEndpoint::EVENTS))],
+            'description' => ['nullable', 'string', 'max:160'],
+        ]);
+        $guard->assertPublic($data['url']);
+        if (WebhookEndpoint::query()->where('source', 'api')->count() >= WebhookEndpoint::MAX_VIA_API) {
+            throw ValidationException::withMessages(['url' => 'This workspace has reached the limit of '.WebhookEndpoint::MAX_VIA_API.' subscriptions created through the API. Delete the ones no longer in use.']);
+        }
+
+        /** @var ApiKey $key */
+        $key = $request->attributes->get('api_key');
+        $secret = 'whsec_'.Str::random(40);
+        $endpoint = WebhookEndpoint::query()->create([
+            'url' => $data['url'], 'events' => array_values(array_unique($data['events'])), 'secret' => $secret, 'status' => 'active', 'source' => 'api', 'api_key_id' => $key->id,
+            'description' => $data['description'] ?? 'Created through the API with the key "'.mb_substr($key->name, 0, 80).'"',
+        ]);
+
+        return response()->json(['data' => $this->subscription($endpoint) + ['secret' => $secret]], 201);
+    }
+
+    public function unsubscribe(string $id): JsonResponse
+    {
+        WebhookEndpoint::query()->where('source', 'api')->findOrFail($id)->delete();
+
+        return response()->json(['data' => ['deleted' => true]]);
+    }
+
+    /** Example events, in the exact shape that is delivered: automation platforms use them to set up a trigger. */
+    public function webhookSamples(Request $request): JsonResponse
+    {
+        $data = $request->validate(['event' => ['required', 'string', Rule::in(array_keys(WebhookEndpoint::EVENTS))]]);
+
+        return response()->json(['data' => [ApiSpec::sampleEvent($data['event'])]]);
+    }
+
+    /** @return array<string, mixed> */
+    private function subscription(WebhookEndpoint $e): array
+    {
+        return ['id' => $e->id, 'url' => $e->url, 'events' => $e->events, 'status' => $e->status, 'description' => $e->description, 'created_at' => $e->created_at?->toIso8601String()];
+    }
+
     private function senderNumber(?string $id): PhoneNumber
     {
         if ($id !== null) {

@@ -42,7 +42,7 @@ final class HistoryAcrossWorkspacesTest extends TestCase
         $this->artisan('engage:coexistence:import', ['--now' => true]);
     }
 
-    private function count(Tenant $tenant): int
+    private function stored(Tenant $tenant): int
     {
         return (int) $this->tenantContext()->run($tenant, fn () => Message::query()->where('wamid', 'like', 'wamid.SHARED%')->count());
     }
@@ -54,15 +54,15 @@ final class HistoryAcrossWorkspacesTest extends TestCase
         $second = $this->workspace('202290129340398', '206540352242922', '+971 58 000 0002');
 
         $this->history('102290129340398', '106540352242922', '+971 58 549 6310');
-        $this->assertSame(3, $this->count($first));
+        $this->assertSame(3, $this->stored($first));
 
         // The same messages, same ids, arrive for the second workspace: stored there too, not dropped.
         $this->history('202290129340398', '206540352242922', '+971 58 000 0002');
-        $this->assertSame(3, $this->count($second));
-        $this->assertSame(3, $this->count($first));
+        $this->assertSame(3, $this->stored($second));
+        $this->assertSame(3, $this->stored($first));
 
         // Within one workspace a repeat is still ignored.
         $this->history('202290129340398', '206540352242922', '+971 58 000 0002');
-        $this->assertSame(3, $this->count($second));
+        $this->assertSame(3, $this->stored($second));
     }
 }

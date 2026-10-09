@@ -50,6 +50,9 @@ enum Permission: string
     case DeveloperView = 'developer.view';
     case DeveloperManage = 'developer.manage';
 
+    case IntegrationsView = 'integrations.view';
+    case IntegrationsManage = 'integrations.manage';
+
     case AuditView = 'audit.view';
 
     /** @return list<string> */

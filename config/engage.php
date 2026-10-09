@@ -167,4 +167,16 @@ return [
         'login_attempts_per_minute' => 10,
     ],
 
+    /*
+    | Integrations → Shopify. The 10X Engage app is created once in Shopify's Dev Dashboard; its
+    | Client ID and secret go here. Redirect URL to allow there: <APP_URL>/api/integrations/shopify/callback
+    | Webhooks (and the three compliance webhooks) go to: <APP_URL>/api/integrations/shopify/webhook
+    */
+    'shopify' => [
+        'client_id' => env('SHOPIFY_CLIENT_ID'),
+        'client_secret' => env('SHOPIFY_CLIENT_SECRET'),
+        'scopes' => env('SHOPIFY_SCOPES', 'read_orders'),
+        'api_version' => env('SHOPIFY_API_VERSION', '2026-10'),
+    ],
+
 ];

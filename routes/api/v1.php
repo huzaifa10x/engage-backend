@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\DeveloperController;
 use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
+use App\Http\Controllers\Api\V1\IntegrationController;
 use App\Http\Controllers\Api\V1\InvitationController;
 use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\Messaging\ContactController;
@@ -105,6 +106,23 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::post('webhooks/{endpoint}/rotate-secret', [DeveloperController::class, 'rotateSecret'])->name('webhooks.rotate');
         Route::post('webhooks/{endpoint}/test', [DeveloperController::class, 'testEndpoint'])->middleware('throttle:20,1')->name('webhooks.test');
         Route::post('deliveries/{delivery}/resend', [DeveloperController::class, 'resend'])->middleware('throttle:60,1')->name('deliveries.resend');
+    });
+
+    /*
+    | Integrations: connected stores (Shopify, WooCommerce) and the message each store event sends.
+    */
+    Route::middleware('can:'.Permission::IntegrationsView->value)->prefix('integrations')->name('integrations.')->group(function () {
+        Route::get('/', [IntegrationController::class, 'index'])->name('index');
+        Route::get('{integration}', [IntegrationController::class, 'show'])->whereUuid('integration')->name('show');
+        Route::get('{integration}/events', [IntegrationController::class, 'events'])->whereUuid('integration')->name('events');
+    });
+    Route::middleware('can:'.Permission::IntegrationsManage->value)->prefix('integrations')->name('integrations.')->group(function () {
+        Route::post('shopify/install', [IntegrationController::class, 'shopifyInstall'])->middleware('throttle:20,1')->name('shopify.install');
+        Route::post('woocommerce', [IntegrationController::class, 'connectWooCommerce'])->middleware('throttle:20,1')->name('woocommerce.connect');
+        Route::patch('{integration}', [IntegrationController::class, 'update'])->whereUuid('integration')->name('update');
+        Route::delete('{integration}', [IntegrationController::class, 'destroy'])->whereUuid('integration')->name('destroy');
+        Route::put('{integration}/rules/{event}', [IntegrationController::class, 'saveRule'])->whereUuid('integration')->name('rules.save');
+        Route::post('{integration}/rules/{event}/test', [IntegrationController::class, 'testRule'])->whereUuid('integration')->middleware('throttle:10,1')->name('rules.test');
     });
 
     Route::get('tenant/inbox-settings', [InboxToolsController::class, 'inboxSettings'])->name('tenant.inbox-settings');

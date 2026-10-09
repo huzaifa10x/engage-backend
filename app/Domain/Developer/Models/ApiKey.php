@@ -36,6 +36,7 @@ class ApiKey extends Model
         'contacts:read' => 'Read contacts',
         'contacts:write' => 'Create and update contacts, record opt-in and opt-out',
         'templates:read' => 'List message templates and phone numbers',
+        'webhooks:manage' => 'Subscribe to events (needed by Zapier and Make triggers)',
     ];
 
     protected $fillable = ['tenant_id', 'name', 'prefix', 'key_hash', 'scopes', 'expires_at', 'last_used_at', 'last_used_ip', 'revoked_at', 'created_by_membership_id'];
