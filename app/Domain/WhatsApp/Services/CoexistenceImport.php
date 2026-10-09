@@ -90,7 +90,8 @@ final class CoexistenceImport
         // those are skipped without touching the conversation at all.
         $payloads = $items->mapWithKeys(fn (object $item) => [$item->id => (array) json_decode((string) $item->payload, true)]);
         $wamids = $payloads->map(fn (array $p) => $p['id'] ?? null)->filter()->values()->all();
-        $existing = $wamids === [] ? [] : array_flip(DB::table('messages')->whereIn('wamid', $wamids)->pluck('wamid')->all());
+        // Within THIS workspace only: another workspace may hold the same ids (the number was connected there before).
+        $existing = $wamids === [] ? [] : array_flip(DB::table('messages')->where('tenant_id', $tenant->id)->whereIn('wamid', $wamids)->pluck('wamid')->all());
         $this->contactCache = [];
 
         foreach ($items as $item) {

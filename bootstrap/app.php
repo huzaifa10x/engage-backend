@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Middleware\FirstPartyMediaLink;
 use App\Http\Middleware\Admin\EnsureAbility as AdminAbility;
 use App\Http\Middleware\Admin\HandleInertiaRequests as AdminInertia;
 use App\Http\Middleware\Admin\PlatformContext as AdminPlatformContext;
@@ -42,6 +43,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->trustProxies(at: '*');
 
         $middleware->prepend(AssignRequestId::class);
+        // Must run before Sanctum decides whether a request is from the portal (see the class).
+        $middleware->prepend(FirstPartyMediaLink::class);
         $middleware->append(SecurityHeaders::class);
 
         // Sanctum SPA cookie auth for the Next.js client.

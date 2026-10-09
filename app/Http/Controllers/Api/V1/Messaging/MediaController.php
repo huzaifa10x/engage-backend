@@ -21,6 +21,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class MediaController extends Controller
 {
+    private const SHOWN_IN_BROWSER = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/3gpp', 'application/pdf'];
+
     /** Upload an attachment before sending it. Validated against Cloud API type/size limits. */
     public function store(Request $request, MediaStorage $storage, TenantContext $context, EntitlementService $entitlements): JsonResponse
     {
@@ -78,10 +80,16 @@ final class MediaController extends Controller
             $access->ensureCanAccess($context->membership()?->loadMissing('role') ?? abort(403), PhoneNumber::query()->findOrFail($message->phone_number_id));
         }
 
+        // Customers can send any file. Only types a browser shows without running anything are opened
+        // in the page; everything else (HTML, SVG, office files …) is downloaded, so a file sent by a
+        // stranger can never run as a page of this site.
+        $mime = (string) $media->mime_type;
+        $inline = in_array($mime, self::SHOWN_IN_BROWSER, true) || str_starts_with($mime, 'audio/');
+
         return Storage::disk((string) $media->disk)->response((string) $media->path, $media->filename ?? basename((string) $media->path), [
-            'Content-Type' => (string) $media->mime_type,
+            'Content-Type' => $mime,
             'Cache-Control' => 'private, max-age=3600',
             'X-Content-Type-Options' => 'nosniff',
-        ]);
+        ], $inline ? 'inline' : 'attachment');
     }
 }

@@ -16,14 +16,28 @@ use Illuminate\Support\Facades\DB;
  */
 final class ReplayWebhooks extends Command
 {
-    protected $signature = 'engage:webhooks:replay {--status=failed : failed|deferred} {--field=} {--waba=} {--since=} {--limit=5000}';
+    /** Webhooks that are safe to process a second time: the import skips what a workspace already has. */
+    private const REPLAYABLE_WHEN_PROCESSED = ['history', 'smb_app_state_sync'];
+
+    protected $signature = 'engage:webhooks:replay
+        {--status=failed : failed|deferred, or processed (only with --field=history or --field=smb_app_state_sync)}
+        {--field=} {--waba=} {--phone= : Meta phone number id} {--since=} {--limit=5000}';
 
     protected $description = 'Re-dispatch stored Meta webhooks for processing (oldest first).';
 
     public function handle(TenantContext $context): int
     {
         $status = (string) $this->option('status');
-        if (! in_array($status, ['failed', 'deferred'], true)) {
+        // Already-processed webhooks are replayed only for the WhatsApp Business app import (chat history
+        // and contacts), and only for one account or number: used to import again history that was
+        // received but could not be stored. Everything else stays limited to failed / deferred.
+        $again = $status === 'processed';
+        if ($again && (! in_array((string) $this->option('field'), self::REPLAYABLE_WHEN_PROCESSED, true) || (! $this->option('waba') && ! $this->option('phone')))) {
+            $this->components->error('--status=processed needs --field=history (or smb_app_state_sync) and --waba or --phone.');
+
+            return self::FAILURE;
+        }
+        if (! $again && ! in_array($status, ['failed', 'deferred'], true)) {
             $this->components->error('--status must be failed or deferred.');
 
             return self::FAILURE;
@@ -33,6 +47,7 @@ final class ReplayWebhooks extends Command
             ->where('process_status', $status)
             ->when($this->option('field'), fn ($q, $f) => $q->where('field', $f))
             ->when($this->option('waba'), fn ($q, $w) => $q->where('waba_id', $w))
+            ->when($this->option('phone'), fn ($q, $p) => $q->where('phone_number_id', $p))
             ->when($this->option('since'), fn ($q, $s) => $q->where('received_at', '>=', Carbon::parse($s)))
             ->orderBy('received_at')
             ->limit((int) $this->option('limit'))
