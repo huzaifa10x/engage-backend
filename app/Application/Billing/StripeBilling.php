@@ -264,6 +264,8 @@ final class StripeBilling
             'amount_due_minor' => max(0, $due),
             // A change that costs less than the unused credit: the rest stays on the account for future invoices.
             'credit_kept_minor' => $total < 0 ? -$total : 0,
+            // What the wallet will hold once this change is made (earlier credit included).
+            'wallet_after_minor' => max(0, -(int) ($invoice['ending_balance'] ?? 0)),
             'renews_at' => ($interval === 'yearly' ? now()->addYear() : now()->addMonth())->toIso8601String(),
             'has_payment_method' => $this->paymentMethods($tenant) !== [],
         ];
@@ -434,7 +436,7 @@ final class StripeBilling
     /**
      * The next renewal charge of the running subscription, as Stripe will invoice it.
      *
-     * @return ?array{amount_due_minor: int, currency: string, date: ?string}
+     * @return ?array{amount_due_minor: int, total_minor: int, credit_applied_minor: int, currency: string, date: ?string}
      */
     public function upcoming(Tenant $tenant): ?array
     {
@@ -448,11 +450,52 @@ final class StripeBilling
             return null; // nothing upcoming
         }
         $at = $invoice['next_payment_attempt'] ?? $invoice['period_end'] ?? null;
+        $total = (int) ($invoice['total'] ?? $invoice['amount_due'] ?? 0);
 
         return [
             'amount_due_minor' => (int) ($invoice['amount_due'] ?? 0),
+            // The renewal price, and how much of it the wallet credit pays.
+            'total_minor' => $total,
+            'credit_applied_minor' => max(0, $total - (int) ($invoice['amount_due'] ?? 0)),
             'currency' => strtoupper((string) ($invoice['currency'] ?? 'usd')),
             'date' => is_numeric($at) ? Carbon::createFromTimestamp((int) $at)->toIso8601String() : null,
+        ];
+    }
+
+    /**
+     * The workspace's wallet: credit on its Stripe customer balance. It comes from the unused part
+     * of a plan after a downgrade (never paid back to the card) and Stripe takes it off the next
+     * invoices by itself: renewals, upgrades and interval changes alike.
+     *
+     * @return array{balance_minor: int, currency: string, entries: list<array<string, mixed>>}
+     */
+    public function wallet(Tenant $tenant): array
+    {
+        $empty = ['balance_minor' => 0, 'currency' => 'USD', 'entries' => []];
+        if ($tenant->stripe_customer_id === null) {
+            return $empty;
+        }
+        try {
+            $customer = $this->stripe->get("customers/{$tenant->stripe_customer_id}");
+            $history = (array) ($this->stripe->get("customers/{$tenant->stripe_customer_id}/balance_transactions", ['limit' => 20])['data'] ?? []);
+        } catch (StripeException) {
+            return $empty;
+        }
+        $currency = strtoupper((string) ($customer['currency'] ?? 'usd'));
+
+        return [
+            // Stripe keeps credit as a negative balance.
+            'balance_minor' => max(0, -(int) ($customer['balance'] ?? 0)),
+            'currency' => $currency,
+            'entries' => array_map(fn (array $t) => [
+                'id' => (string) ($t['id'] ?? ''),
+                // Positive = credit added to the wallet, negative = credit used on an invoice.
+                'amount_minor' => -(int) ($t['amount'] ?? 0),
+                'balance_after_minor' => max(0, -(int) ($t['ending_balance'] ?? 0)),
+                'kind' => -(int) ($t['amount'] ?? 0) >= 0 ? 'added' : 'used',
+                'currency' => strtoupper((string) ($t['currency'] ?? $currency)),
+                'created_at' => isset($t['created']) ? Carbon::createFromTimestamp((int) $t['created'])->toIso8601String() : null,
+            ], array_values($history)),
         ];
     }
 

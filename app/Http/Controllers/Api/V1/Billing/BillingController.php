@@ -119,7 +119,7 @@ final class BillingController extends Controller
         return response()->json(['data' => $this->billing->preview($this->context->tenant(), $data['plan'], $data['interval'], $this->context->membership())]);
     }
 
-    /** Card payments (succeeded, failed, refunded) and the next renewal charge. */
+    /** Card payments (succeeded, failed, refunded), the next renewal charge, and the wallet (credit kept from downgrades). */
     public function payments(): JsonResponse
     {
         $configured = $this->stripe->configured();
@@ -127,6 +127,7 @@ final class BillingController extends Controller
         return response()->json(['data' => [
             'payments' => $configured ? $this->billing->payments($this->context->tenant()) : [],
             'upcoming' => $configured ? $this->billing->upcoming($this->context->tenant()) : null,
+            'wallet' => $configured ? $this->billing->wallet($this->context->tenant()) : ['balance_minor' => 0, 'currency' => 'USD', 'entries' => []],
         ]]);
     }
 

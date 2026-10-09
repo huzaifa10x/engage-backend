@@ -45,6 +45,9 @@ final class StripeBillingTest extends TestCase
 
     private bool $changeDeclined = false;
 
+    /** Stripe keeps credit as a negative customer balance. */
+    private int $customerBalance = 0;
+
     /** @var array<string, mixed> the last upcoming-invoice query the app sent */
     private array $previewQuery = [];
 
@@ -71,7 +74,11 @@ final class StripeBillingTest extends TestCase
         return match (true) {
             $path === 'customers' => [['id' => 'cus_1']],
             $path === 'customers/cus_1' && $method === 'POST' => [$this->updateCustomer($r)],
-            $path === 'customers/cus_1' => [['id' => 'cus_1', 'invoice_settings' => ['default_payment_method' => $this->defaultCard]]],
+            $path === 'customers/cus_1' => [['id' => 'cus_1', 'balance' => $this->customerBalance, 'currency' => 'usd', 'invoice_settings' => ['default_payment_method' => $this->defaultCard]]],
+            $path === 'customers/cus_1/balance_transactions' => [['data' => $this->customerBalance === 0 ? [] : [
+                ['id' => 'cbtxn_2', 'amount' => 2900, 'ending_balance' => $this->customerBalance, 'currency' => 'usd', 'created' => now()->timestamp],
+                ['id' => 'cbtxn_1', 'amount' => $this->customerBalance - 2900, 'ending_balance' => $this->customerBalance - 2900, 'currency' => 'usd', 'created' => now()->timestamp],
+            ]]],
             $path === 'customers/cus_1/tax_ids' => [$method === 'GET' ? ['data' => []] : ['id' => 'txi_1']],
             $path === 'customers/cus_1/payment_methods' => [['data' => array_values($this->cards)]],
             $path === 'setup_intents' => [['id' => 'seti_1', 'client_secret' => 'seti_1_secret_abc']],
@@ -141,7 +148,10 @@ final class StripeBillingTest extends TestCase
                 'lines' => ['data' => [['description' => '1 × plan', 'amount' => $amount, 'proration' => false]]]];
         }
         if (! isset($q['subscription_items'])) {
-            return ['currency' => 'usd', 'amount_due' => 8295, 'next_payment_attempt' => now()->addMonth()->timestamp]; // plain renewal
+            $renewal = $this->customerBalance === 0 ? 8295 : $this->currentPrice(); // plain renewal, less whatever credit the customer holds
+            $applied = min($renewal, -$this->customerBalance);
+
+            return ['currency' => 'usd', 'total' => $renewal, 'amount_due' => $renewal - $applied, 'next_payment_attempt' => now()->addMonth()->timestamp];
         }
 
         // Half the current period is unused → half its price comes back as credit.
@@ -149,8 +159,11 @@ final class StripeBillingTest extends TestCase
         $subtotal = $amount - $credit;
         $tax = $subtotal > 0 && ! empty($this->remoteSubscription['default_tax_rates']) ? (int) round($subtotal * 0.05) : 0;
 
-        return ['currency' => 'usd', 'subtotal' => $subtotal, 'tax' => $tax, 'total' => $subtotal + $tax, 'amount_due' => max(0, $subtotal + $tax),
-            'starting_balance' => 0, 'ending_balance' => min(0, $subtotal),
+        $total = $subtotal + $tax;
+        $ending = $total < 0 ? $this->customerBalance + $total : min(0, $this->customerBalance + $total); // credit grows, or is used up
+
+        return ['currency' => 'usd', 'subtotal' => $subtotal, 'tax' => $tax, 'total' => $total, 'amount_due' => max(0, $total + $this->customerBalance),
+            'starting_balance' => $this->customerBalance, 'ending_balance' => $ending,
             'lines' => ['data' => [
                 ['description' => 'Unused time on current plan', 'amount' => -$credit, 'proration' => true],
                 ['description' => '1 × new plan', 'amount' => $amount, 'proration' => false],
@@ -193,6 +206,9 @@ final class StripeBillingTest extends TestCase
                     return array_merge($this->remoteSubscription, ['latest_invoice' => ['id' => 'in_2', 'payment_intent' => ['id' => 'pi_2', 'client_secret' => 'pi_2_secret',
                         'status' => $this->changeDeclined ? 'requires_payment_method' : 'requires_action', 'last_payment_error' => ['message' => 'Your card has insufficient funds.']]]]);
                 }
+                // Proration: what is unused of the old plan pays for the new one; anything left over stays as credit.
+                $newPrice = (int) substr($r['items'][0]['price'], (int) strrpos($r['items'][0]['price'], '_') + 1);
+                $this->customerBalance += min(0, $newPrice - (int) round($this->currentPrice() / 2));
                 $this->remoteSubscription['items']['data'][0]['price']['id'] = $r['items'][0]['price'];
                 $this->remoteSubscription['current_period_start'] = now()->timestamp;
                 $this->remoteSubscription['current_period_end'] = (str_contains($r['items'][0]['price'], 'year') ? now()->addYear() : now()->addMonth())->timestamp;
@@ -417,6 +433,33 @@ final class StripeBillingTest extends TestCase
         // Yearly → cheaper monthly plan: the unused credit is larger than the new price → nothing to pay, the rest stays as credit.
         $this->postJson('/api/v1/billing/preview', ['plan' => 'starter', 'interval' => 'monthly'])->assertOk()
             ->assertJsonPath('data.amount_due_minor', 0)->assertJsonPath('data.credit_kept_minor', 39500 - 2900);
+    }
+
+    public function test_a_downgrade_refunds_nothing_and_keeps_the_unused_amount_in_the_wallet_for_later_payments(): void
+    {
+        $this->billingCountry('PK');
+        $this->subscribeAndPay('pro'); // $139 / month
+        $this->getJson('/api/v1/billing/payments')->assertOk()->assertJsonPath('data.wallet.balance_minor', 0)->assertJsonPath('data.wallet.entries', []);
+
+        // Half of Pro is unused ($69.50). Starter costs $29: paid from that, and $40.50 stays in the wallet.
+        $this->postJson('/api/v1/billing/preview', ['plan' => 'starter', 'interval' => 'monthly'])->assertOk()
+            ->assertJsonPath('data.unused_credit_minor', 6950)->assertJsonPath('data.amount_due_minor', 0)
+            ->assertJsonPath('data.credit_kept_minor', 4050)->assertJsonPath('data.wallet_after_minor', 4050);
+
+        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'starter', 'interval' => 'monthly'])->assertOk()->assertJsonPath('data.status', 'active');
+        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'starter');
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/refunds')); // nothing goes back to the card
+
+        // The wallet shows the credit, and the next renewal ($29) is paid from it: nothing to charge.
+        $this->getJson('/api/v1/billing/payments')->assertOk()
+            ->assertJsonPath('data.wallet.balance_minor', 4050)->assertJsonPath('data.wallet.currency', 'USD')
+            ->assertJsonPath('data.wallet.entries.0.kind', 'used')->assertJsonPath('data.wallet.entries.0.amount_minor', -2900)
+            ->assertJsonPath('data.wallet.entries.1.kind', 'added')->assertJsonPath('data.wallet.entries.1.amount_minor', 6950)
+            ->assertJsonPath('data.upcoming.total_minor', 2900)->assertJsonPath('data.upcoming.credit_applied_minor', 2900)->assertJsonPath('data.upcoming.amount_due_minor', 0);
+
+        // Upgrading again uses the wallet too: Growth costs $64.50 after proration, $40.50 comes from the wallet, $24 from the card.
+        $this->postJson('/api/v1/billing/preview', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()
+            ->assertJsonPath('data.balance_applied_minor', 4050)->assertJsonPath('data.amount_due_minor', 2400)->assertJsonPath('data.wallet_after_minor', 0);
     }
 
     public function test_the_plan_only_changes_after_the_payment_has_succeeded(): void
