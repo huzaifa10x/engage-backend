@@ -23,6 +23,8 @@ use App\Notifications\PaymentFailedNotification;
 use App\Notifications\PaymentReceiptNotification;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -200,9 +202,11 @@ final class StripeBilling
     /**
      * The billing summary shown before the customer confirms: exactly what Stripe will invoice.
      *
-     * New subscription → the plan price (+ VAT). Plan or interval change → Stripe's own proration:
-     * the unused part of the current period comes back as a credit, the new plan is charged in
-     * full, and a new billing period starts today. Nothing here is calculated by us.
+     * New subscription → the plan price (+ VAT). Plan or interval change → the new plan is charged
+     * in full today and a new billing period starts; what is unused of the current period is not
+     * deducted from today's charge and never refunded, it becomes account credit that comes off
+     * the next invoice (see unusedCredit()). Only when that unused amount covers the whole new
+     * price is nothing charged: Stripe's proration then applies it and keeps the rest as credit.
      *
      * @return array<string, mixed>
      */
@@ -224,23 +228,22 @@ final class StripeBilling
             }
 
             $remote = $this->stripe->get("subscriptions/{$live->provider_subscription_id}");
+            $itemId = $remote['items']['data'][0]['id'] ?? null;
+            $prorated = $this->changePreview($customer, $live->provider_subscription_id, $itemId, $price, 'always_invoice');
+            $unused = $this->unusedCredit($prorated, $tenant);
+            if (! $this->creditGoesToNextInvoice($prorated, $unused)) {
+                return $prorated + ['__unused' => $unused, '__deferred' => false];
+            }
 
-            return $this->stripe->get('invoices/upcoming', [
-                'customer' => $customer,
-                'subscription' => $live->provider_subscription_id,
-                'subscription_items' => [['id' => $remote['items']['data'][0]['id'] ?? null, 'price' => $price]],
-                'subscription_proration_behavior' => 'always_invoice',
-                'subscription_billing_cycle_anchor' => 'now',
-            ]);
+            return $this->changePreview($customer, $live->provider_subscription_id, $itemId, $price, 'none') + ['__unused' => $unused, '__deferred' => true];
         });
 
         $lines = [];
-        $credit = 0;
         foreach ((array) ($invoice['lines']['data'] ?? []) as $line) {
-            $amount = (int) ($line['amount'] ?? 0);
-            $credit += $amount < 0 ? -$amount : 0;
-            $lines[] = ['description' => (string) ($line['description'] ?? ''), 'amount_minor' => $amount, 'proration' => (bool) ($line['proration'] ?? false)];
+            $lines[] = ['description' => (string) ($line['description'] ?? ''), 'amount_minor' => (int) ($line['amount'] ?? 0), 'proration' => (bool) ($line['proration'] ?? false)];
         }
+        $credit = (int) ($invoice['__unused']['net'] ?? 0);
+        $deferred = (bool) ($invoice['__deferred'] ?? false);
         $total = (int) ($invoice['total'] ?? 0);
         $due = (int) ($invoice['amount_due'] ?? max(0, $total));
         $current = $live?->planVersion()->with('plan')->first();
@@ -255,6 +258,8 @@ final class StripeBilling
             'from' => $live === null ? null : ['plan' => $current?->plan?->name, 'interval' => $live->billing_interval],
             'lines' => $lines,
             'unused_credit_minor' => $credit,
+            // The unused amount (with its VAT) that is taken off the next invoice instead of today's charge.
+            'credit_next_invoice_minor' => $deferred ? (int) $invoice['__unused']['gross'] : 0,
             'subtotal_minor' => (int) ($invoice['subtotal'] ?? 0),
             'tax_minor' => (int) ($invoice['tax'] ?? 0),
             'tax_percent' => self::vatApplies($tenant) ? (float) config('engage.stripe.uae_vat_percent', 5) : 0,
@@ -273,8 +278,10 @@ final class StripeBilling
      * Carry out what preview() showed, after the customer confirmed.
      *
      * New subscription → first invoice + PaymentIntent, confirmed by the browser. Change → the
-     * subscription is updated with `pending_if_incomplete`: Stripe invoices the prorated amount
-     * NOW and only applies the new plan once that payment has succeeded.
+     * subscription is updated with `pending_if_incomplete`: Stripe invoices the new plan in full
+     * NOW and only applies it once that payment has succeeded. The unused amount of the old plan
+     * is noted on the subscription and turned into account credit when the change has gone
+     * through (settleUpgradeCredit), so it reduces the next invoice and is never paid out.
      *
      * @return array{status: string, updated: bool, client_secret: ?string, payment_method: ?string}
      */
@@ -311,17 +318,32 @@ final class StripeBilling
                 ]);
             }
 
+            // What is unused of the current period, worked out by Stripe before anything changes.
+            $before = $this->stripe->get("subscriptions/{$live->provider_subscription_id}");
+            $itemId = $before['items']['data'][0]['id'] ?? null;
+            $prorated = $this->changePreview($customer, $live->provider_subscription_id, $itemId, $price, 'always_invoice');
+            $unused = $this->unusedCredit($prorated, $tenant);
+            $deferred = ($before['items']['data'][0]['price']['id'] ?? null) !== $price && $this->creditGoesToNextInvoice($prorated, $unused);
+
             // Settings that may not travel with a pending update go first (they change no money).
             $remote = $this->stripe->post("subscriptions/{$live->provider_subscription_id}", [
                 'cancel_at_period_end' => 'false',
                 'collection_method' => 'charge_automatically',
                 'default_payment_method' => $method,
                 'default_tax_rates' => $taxRates === [] ? '' : $taxRates,
+                // The credit to give once this change has been paid for ('' removes a note left by an earlier attempt).
+                'metadata' => [
+                    'upgrade_credit_minor' => $deferred ? (string) $unused['gross'] : '',
+                    'upgrade_credit_price' => $deferred ? $price : '',
+                    'upgrade_credit_ref' => $deferred ? Str::lower(Str::random(20)) : '',
+                ],
             ]);
 
             return $this->stripe->post("subscriptions/{$live->provider_subscription_id}", [
-                'items' => [['id' => $remote['items']['data'][0]['id'] ?? null, 'price' => $price]],
-                'proration_behavior' => 'always_invoice',   // charge the difference today …
+                'items' => [['id' => $remote['items']['data'][0]['id'] ?? $itemId, 'price' => $price]],
+                // Charge the new plan in full today; the unused amount comes off the next invoice instead.
+                // (When the unused amount covers the whole price, Stripe's proration applies it and nothing is charged.)
+                'proration_behavior' => $deferred ? 'none' : 'always_invoice',
                 'billing_cycle_anchor' => 'now',            // … and start a new period on the new plan
                 'payment_behavior' => 'pending_if_incomplete', // the plan changes only after the payment succeeds
                 'expand' => ['latest_invoice.payment_intent'],
@@ -342,6 +364,7 @@ final class StripeBilling
         if ($live !== null && ($intent['status'] ?? null) === 'requires_payment_method') {
             // The card was declined outright: withdraw the invoice, the current plan stays as it is.
             $this->voidInvoice($subscription['latest_invoice']['id'] ?? null);
+            $this->forgetUpgradeCredit((string) $subscription['id']);
             $reason = (string) ($intent['last_payment_error']['message'] ?? 'Your card was declined.');
 
             throw ValidationException::withMessages(['payment_method' => "{$reason} Your plan was not changed."]);
@@ -454,6 +477,114 @@ final class StripeBilling
             'currency' => strtoupper((string) ($invoice['currency'] ?? 'usd')),
             'date' => is_numeric($at) ? Carbon::createFromTimestamp((int) $at)->toIso8601String() : null,
         ];
+    }
+
+    /**
+     * What Stripe would invoice today for moving the subscription to another price, with a new
+     * billing period starting now.
+     *
+     * @param  'always_invoice'|'none'  $proration  none = the new price in full, nothing deducted
+     * @return array<string, mixed>
+     */
+    private function changePreview(string $customer, string $subscriptionId, mixed $itemId, string $price, string $proration): array
+    {
+        return $this->stripe->get('invoices/upcoming', [
+            'customer' => $customer,
+            'subscription' => $subscriptionId,
+            'subscription_items' => [['id' => $itemId, 'price' => $price]],
+            'subscription_proration_behavior' => $proration,
+            'subscription_billing_cycle_anchor' => 'now',
+        ]);
+    }
+
+    /**
+     * The unused part of the current period, taken from Stripe's own proration preview.
+     * "net" is before VAT; "gross" includes the VAT the customer paid on it, and is what goes
+     * onto the account (account credit is applied after tax, so it has to carry its VAT).
+     *
+     * @param  array<string, mixed>  $prorated
+     * @return array{net: int, gross: int}
+     */
+    private function unusedCredit(array $prorated, Tenant $tenant): array
+    {
+        $net = 0;
+        $tax = 0;
+        $taxKnown = false;
+        foreach ((array) ($prorated['lines']['data'] ?? []) as $line) {
+            $amount = (int) ($line['amount'] ?? 0);
+            if ($amount >= 0) {
+                continue;
+            }
+            $net += -$amount;
+            if (is_array($line['tax_amounts'] ?? null)) {
+                $taxKnown = true;
+                foreach ($line['tax_amounts'] as $t) {
+                    $tax += ($t['inclusive'] ?? false) ? 0 : -(int) ($t['amount'] ?? 0);
+                }
+            }
+        }
+        if (! $taxKnown && self::vatApplies($tenant)) {
+            $tax = (int) round($net * (float) config('engage.stripe.uae_vat_percent', 5) / 100);
+        }
+
+        return ['net' => $net, 'gross' => $net + max(0, $tax)];
+    }
+
+    /**
+     * The rule for a plan or interval change: if it costs anything today, the new plan is charged
+     * in full and the unused amount is kept for the next invoice. If the unused amount covers the
+     * whole new price there is nothing to charge, and Stripe's proration handles it as before.
+     *
+     * @param  array<string, mixed>  $prorated
+     * @param  array{net: int, gross: int}  $unused
+     */
+    private function creditGoesToNextInvoice(array $prorated, array $unused): bool
+    {
+        return $unused['net'] > 0 && (int) ($prorated['total'] ?? 0) > 0;
+    }
+
+    /**
+     * Gives the credit noted by subscribe() once the plan change has really happened, and removes
+     * the note. Called on every sync (after the in-page payment, and from Stripe's webhooks), so
+     * it must be safe to run twice: Stripe's idempotency key makes the credit a single one.
+     * A change that was abandoned or declined leaves the old price in place: no credit, note removed.
+     *
+     * @param  array<string, mixed>  $remote
+     */
+    private function settleUpgradeCredit(array $remote, Tenant $tenant): void
+    {
+        $meta = (array) ($remote['metadata'] ?? []);
+        $credit = (int) ($meta['upgrade_credit_minor'] ?? 0);
+        if ($credit <= 0 || ! empty($remote['pending_update'])) {
+            return; // nothing noted, or the payment for the change is still open
+        }
+
+        $changed = ($remote['items']['data'][0]['price']['id'] ?? null) === ($meta['upgrade_credit_price'] ?? '') && ($remote['status'] ?? '') === 'active';
+        try {
+            if ($changed) {
+                $currency = (string) ($remote['currency'] ?? $remote['items']['data'][0]['price']['currency'] ?? 'usd');
+                $this->stripe->post("customers/{$remote['customer']}/balance_transactions", [
+                    'amount' => -$credit, // negative = credit in the customer's favour
+                    'currency' => $currency,
+                    'description' => 'Unused time on the previous plan, applied to the next invoice',
+                    'metadata' => ['subscription' => (string) $remote['id'], 'reason' => 'plan_change_unused_time'],
+                ], 'upgrade-credit-'.$remote['id'].'-'.($meta['upgrade_credit_ref'] ?? ''));
+                $this->audit->record('billing.unused_time_credited', $tenant, meta: ['amount_minor' => $credit, 'currency' => strtoupper($currency)]);
+            }
+            $this->forgetUpgradeCredit((string) $remote['id']);
+        } catch (StripeException $e) {
+            // The note stays on the subscription, so the next sync tries again.
+            Log::warning('Unused-time credit could not be settled', ['subscription' => $remote['id'] ?? null, 'error' => $e->getMessage()]);
+        }
+    }
+
+    private function forgetUpgradeCredit(string $subscriptionId): void
+    {
+        try {
+            $this->stripe->post("subscriptions/{$subscriptionId}", ['metadata' => ['upgrade_credit_minor' => '', 'upgrade_credit_price' => '', 'upgrade_credit_ref' => '']]);
+        } catch (StripeException $e) {
+            Log::warning('Unused-time credit note could not be removed', ['subscription' => $subscriptionId, 'error' => $e->getMessage()]);
+        }
     }
 
     /** @return array{0: PlanVersion, 1: Plan} */
@@ -608,6 +739,7 @@ final class StripeBilling
         if ($stripeStatus === 'incomplete') {
             return; // first payment not confirmed yet
         }
+        $this->settleUpgradeCredit($remote, $tenant);
 
         $priceId = (string) ($remote['items']['data'][0]['price']['id'] ?? '');
         $version = PlanVersion::query()->where('stripe_price_monthly_id', $priceId)->orWhere('stripe_price_yearly_id', $priceId)->orderByDesc('version')->first()

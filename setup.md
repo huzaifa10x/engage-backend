@@ -44,3 +44,16 @@ It lists the account, each workspace marked DELETE or KEEP, and the counts of co
 
 If the preview is what you expect, delete:
    docker compose --project-directory /opt/engage/backend/deploy -f /opt/engage/backend/deploy/docker-compose.prod.yml exec app php artisan engage:client:delete teamdubai103@gmail.com --force
+
+
+Shopify setup (your side)
+
+Shopify shows as “Coming soon” until these are set. WooCommerce and Zapier/Make work without them.
+
+Create the app in Shopify’s Dev Dashboard.
+Set App URL to https://app.10xdigital.ae/api/integrations/shopify/app.
+Set the redirect URL to https://app.10xdigital.ae/api/integrations/shopify/callback.
+Point the three compliance webhooks at https://app.10xdigital.ae/api/integrations/shopify/webhook.
+Set the scope to read_orders.
+Add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET to the backend .env and redeploy.
+Request protected customer data access (name, phone, email, address). Without it, a public app receives orders with the phone number removed and nothing can be sent.
