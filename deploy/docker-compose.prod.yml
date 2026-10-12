@@ -1,9 +1,15 @@
-# Production stack on one Oracle Cloud VM. Run through deploy/deploy.sh.
+# The application stack. Run it through deploy/deploy.sh, never by hand with plain `up`.
 # Values like ${DOMAIN} come from deploy/.env (created by deploy/init-env.sh, never committed).
+#
+# Production:  /opt/engage/backend/deploy,          project "engage"          (this file)
+# Staging:     /opt/engage-staging/backend/deploy,  project "engage-staging"  (this file + docker-compose.staging.yml)
+# Each project has its own containers, database, Valkey, storage volume and images. Only
+# production's Caddy publishes ports 80/443; it hands the staging domains to the staging stack's
+# own gateway over the shared "engage-edge" network, which no database or cache is attached to.
 name: engage
 
 x-backend: &backend
-  image: engage-backend:latest
+  image: ${IMAGE_PREFIX:-engage}-backend:latest
   pull_policy: never # built locally by deploy.sh
   restart: unless-stopped
   volumes:
@@ -41,7 +47,7 @@ services:
     command: ["sh", "-c", "php artisan optimize && exec php artisan reverb:start --host=0.0.0.0 --port=8080"]
 
   web:
-    image: engage-web:latest
+    image: ${IMAGE_PREFIX:-engage}-web:latest
     pull_policy: never
     build:
       context: ../../web
@@ -59,7 +65,7 @@ services:
   # Public marketing website (repo: engage-site, checked out at /opt/engage/site).
   # Only built and started by `deploy.sh site`; it reads plans from the API over the internal network.
   site:
-    image: engage-site:latest
+    image: ${IMAGE_PREFIX:-engage}-site:latest
     pull_policy: never
     build:
       context: ../../site
@@ -82,13 +88,18 @@ services:
       DOMAIN: ${DOMAIN}
       # Until the website has a domain, its proxy entry listens on a name nobody can reach.
       SITE_DOMAIN: ${SITE_DOMAIN:-http://site.internal}
+      SITE_REDIRECT_DOMAINS: ${SITE_REDIRECT_DOMAINS:-http://site-redirect.internal}
       EXTRA_DOMAINS: ${EXTRA_DOMAINS:-}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
+      # Staging hostnames, comma separated (st-app…, st-engage-admin…, st-engage…). Their HTTPS
+      # certificates live here; the requests go on to the staging stack's gateway.
+      STAGING_DOMAINS: ${STAGING_DOMAINS:-http://staging.internal}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks: [default, edge]
     logging: *logging
 
   postgres:
@@ -131,3 +142,10 @@ volumes:
   valkeydata:
   caddy_data:
   caddy_config:
+
+networks:
+  # Shared with the staging stack's gateway only (created by deploy.sh). Nothing else joins it,
+  # so the service names of one stack (app, postgres, valkey…) never resolve in the other.
+  edge:
+    name: engage-edge
+    external: true

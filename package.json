@@ -4,7 +4,15 @@
     "scripts": {
         "dev": "vite",
         "build": "tsc --noEmit && vite build",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc --noEmit",
+        "deploy:staging": "bash scripts/release.sh deploy staging",
+        "deploy:production": "bash scripts/release.sh deploy production",
+        "release:promote": "bash scripts/release.sh promote",
+        "release:sync": "bash scripts/release.sh sync",
+        "release:status": "bash scripts/release.sh status",
+        "release:init": "bash scripts/release.sh init",
+        "rollback:staging": "bash scripts/release.sh rollback staging",
+        "rollback:production": "bash scripts/release.sh rollback production"
     },
     "dependencies": {
         "@inertiajs/react": "^3.7.1",

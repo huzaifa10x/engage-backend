@@ -1,5 +1,8 @@
 # Deploying 10X Engage on Oracle Cloud (Frankfurt)
 
+> Staging and production, branches, one-command deploys and rollbacks: see [environments.md](environments.md).
+> This page covers building the server itself.
+
 One Oracle Cloud VM runs everything with Docker:
 
 ```

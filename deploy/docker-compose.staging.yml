@@ -1,0 +1,34 @@
+# Staging = the production stack definition plus these changes. Used only by deploy.sh as
+#   docker compose -p engage-staging -f docker-compose.prod.yml -f docker-compose.staging.yml
+# from /opt/engage-staging/backend/deploy, with its own deploy/.env and Laravel .env.
+#
+# The staging stack has its own database, Valkey, storage and images (IMAGE_PREFIX=engage-staging
+# in its deploy/.env), and no public ports: production's Caddy terminates HTTPS for the staging
+# domains and passes them to the gateway below over the "engage-edge" network.
+
+services:
+  # Only one process can own ports 80/443 on the server: production's Caddy.
+  caddy:
+    profiles: ["never"]
+
+  # Plain-HTTP router inside the staging stack: staging domains → staging app / web / site.
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN}
+      SITE_DOMAIN: ${SITE_DOMAIN:-site.internal}
+    volumes:
+      - ./Caddyfile.staging:/etc/caddy/Caddyfile:ro
+    networks:
+      default: {}
+      edge:
+        aliases: [engage-staging-gateway]
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  # A smaller database: staging runs a handful of queue workers (config/horizon.php → staging).
+  postgres:
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-60}"]

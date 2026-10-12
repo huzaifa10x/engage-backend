@@ -80,8 +80,10 @@ class AppServiceProvider extends ServiceProvider
 
         // Strict mode minus preventAccessingMissingAttributes: freshly created models only hold the
         // columns they were inserted with, so nullable columns would throw on read after create().
-        Model::preventLazyLoading(! $this->app->isProduction());
-        Model::preventSilentlyDiscardingAttributes(! $this->app->isProduction());
+        // Staging behaves exactly like production, so what passes there behaves the same when released.
+        $productionLike = $this->app->environment('production', 'staging');
+        Model::preventLazyLoading(! $productionLike);
+        Model::preventSilentlyDiscardingAttributes(! $productionLike);
         DB::prohibitDestructiveCommands($this->app->isProduction());
 
         $this->configureRateLimiting();

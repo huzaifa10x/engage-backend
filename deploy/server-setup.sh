@@ -27,7 +27,7 @@ sudo netfilter-persistent save
 echo "▸ Nightly backups at 03:15"
 mkdir -p /opt/engage/backups
 # `crontab -l` fails when no crontab exists yet; that must not abort the script (set -e).
-{ crontab -l 2>/dev/null | grep -v engage/backend/deploy/backup.sh || true; echo "15 3 * * * bash /opt/engage/backend/deploy/backup.sh >> /opt/engage/backups/backup.log 2>&1"; } | crontab -
+{ crontab -l 2>/dev/null | grep -v 'deploy/backup.sh >>' || true; echo "15 3 * * * bash /opt/engage/backend/deploy/backup.sh >> /opt/engage/backups/backup.log 2>&1"; } | crontab -
 
 echo "▸ 'dc' shortcut for the production stack (e.g. dc ps, dc logs -f app)"
 grep -q "alias dc=" ~/.bashrc || echo "alias dc='docker compose --project-directory /opt/engage/backend/deploy -f /opt/engage/backend/deploy/docker-compose.prod.yml'" >> ~/.bashrc

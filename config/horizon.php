@@ -104,6 +104,15 @@ return [
             'supervisor-maintenance' => ['maxProcesses' => 2],
             'supervisor-sync' => ['maxProcesses' => (int) env('HORIZON_SYNC_PROCESSES', 3)],
         ],
+        // Staging shares the server with production: every lane runs, but with one or two workers.
+        'staging' => [
+            'supervisor-critical' => ['maxProcesses' => 2],
+            'supervisor-webhooks' => ['maxProcesses' => 2],
+            'supervisor-messaging' => ['maxProcesses' => 2],
+            'supervisor-default' => ['maxProcesses' => 2],
+            'supervisor-maintenance' => ['maxProcesses' => 1],
+            'supervisor-sync' => ['maxProcesses' => 1],
+        ],
         'local' => [
             'supervisor-critical' => ['maxProcesses' => 2],
             'supervisor-webhooks' => ['maxProcesses' => 2],

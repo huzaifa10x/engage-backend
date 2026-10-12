@@ -1,0 +1,6 @@
+# Copy to .deploy.local (never committed) and adjust. Used by `npm run deploy:*` and `npm run release:*`.
+# How to reach the server: user@ip, or a Host alias from ~/.ssh/config.
+ENGAGE_SSH=ubuntu@92.5.91.81
+# Your local clones of the other two repositories (relative to engage-backend).
+WEB_DIR=../engage-web
+SITE_DIR=../engage-site

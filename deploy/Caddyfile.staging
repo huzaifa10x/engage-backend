@@ -1,0 +1,65 @@
+# Staging gateway (runs inside the staging stack, plain HTTP). Production's Caddy has already
+# handled HTTPS for the staging domains and forwards them here with the original Host header.
+# Routing is the same as production's Caddyfile; additionally nothing on staging is indexed by
+# search engines.
+{
+	auto_https off
+	admin off
+	servers {
+		# Keep X-Forwarded-Proto/-For from production's Caddy, so Laravel sees https and the real visitor IP.
+		trusted_proxies static private_ranges
+	}
+}
+
+(staging) {
+	header {
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+	@robots path /robots.txt
+	handle @robots {
+		respond `User-agent: *
+Disallow: /
+` 200
+	}
+}
+
+http://{$DOMAIN} {
+	import staging
+
+	request_body {
+		max_size 110MB
+	}
+
+	@laravel path /api/* /sanctum/* /up
+	handle @laravel {
+		reverse_proxy app:8000
+	}
+
+	@sockets path /app/*
+	handle @sockets {
+		reverse_proxy reverb:8080
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+http://{$SITE_DOMAIN} {
+	import staging
+
+	handle {
+		reverse_proxy site:3100
+	}
+}
+
+http://{$ADMIN_DOMAIN} {
+	import staging
+
+	redir / /admin 302
+
+	handle {
+		reverse_proxy app:8000
+	}
+}

@@ -1,8 +1,10 @@
-# Edge proxy: automatic HTTPS (Let's Encrypt) for both domains.
+# Edge proxy (production stack): automatic HTTPS (Let's Encrypt) for every domain on the server.
 #
-#   {$DOMAIN}        client portal: /api /sanctum /up → Laravel, /app/* → Reverb, rest → Next.js
-#   {$SITE_DOMAIN}   public marketing website → Next.js (engage-site)
-#   {$ADMIN_DOMAIN}  Super Admin + Horizon: everything → Laravel (/ redirects to /admin)
+#   {$DOMAIN}           client portal: /api /sanctum /up → Laravel, /app/* → Reverb, rest → Next.js
+#   {$SITE_DOMAIN}      public marketing website → Next.js (engage-site)
+#   {$ADMIN_DOMAIN}     Super Admin + Horizon: everything → Laravel (/ redirects to /admin)
+#   {$STAGING_DOMAINS}  staging portal, admin and website → the staging stack's gateway
+#                       (deploy/Caddyfile.staging), which routes them inside the staging stack
 {
 	email {$ACME_EMAIL}
 }
@@ -51,6 +53,13 @@
 	}
 }
 
+# Old website addresses (e.g. engage-site.10xdigital.ae) → the website's real domain, permanently,
+# so links and search rankings carry over. SITE_REDIRECT_DOMAINS in deploy/.env, comma separated.
+{$SITE_REDIRECT_DOMAINS} {
+	import common
+	redir https://{$SITE_DOMAIN}{uri} 301
+}
+
 {$ADMIN_DOMAIN} {
 	import common
 
@@ -59,4 +68,16 @@
 	handle {
 		reverse_proxy app:8000
 	}
+}
+
+# Staging (separate stack, separate database). HTTPS ends here; the staging gateway does the
+# routing. Until STAGING_DOMAINS is set in deploy/.env, Compose passes a placeholder name.
+{$STAGING_DOMAINS} {
+	import common
+
+	request_body {
+		max_size 110MB
+	}
+
+	reverse_proxy engage-staging-gateway:80
 }

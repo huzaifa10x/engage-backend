@@ -28,7 +28,7 @@ final class WhatsAppServiceProvider extends ServiceProvider
         $this->app->singleton(Keyring::class, fn ($app) => new Keyring(
             config('engage.secrets.keys'),
             (string) config('app.key'),
-            $app->isProduction(),
+            $app->environment('production', 'staging'), // a dedicated key is required on both
         ));
 
         $this->app->singleton(SecretStore::class, DatabaseSecretStore::class);

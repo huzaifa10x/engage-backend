@@ -19,17 +19,34 @@ use Tests\TestCase;
  */
 final class QueueLanesTest extends TestCase
 {
-    /** @return array<string, array<string, mixed>> supervisor name → effective production options */
-    private function production(): array
+    /** @return array<string, array<string, mixed>> supervisor name → effective options in that environment */
+    private function production(string $environment = 'production'): array
     {
         $defaults = (array) config('horizon.defaults');
         $lanes = [];
         // Exactly what Horizon does: only supervisors LISTED for the environment run, each merged over its defaults.
-        foreach ((array) config('horizon.environments.production') as $name => $overrides) {
+        foreach ((array) config("horizon.environments.{$environment}") as $name => $overrides) {
             $lanes[$name] = array_merge($defaults[$name] ?? [], $overrides);
         }
 
         return $lanes;
+    }
+
+    /** Staging runs the same lanes as production (so it tests the same thing), with few workers, next to production. */
+    public function test_staging_reads_every_queue_with_a_small_pool_that_fits_its_database(): void
+    {
+        $staging = $this->production('staging');
+        $consumed = collect($staging)->flatMap(fn (array $lane) => (array) ($lane['queue'] ?? []))->unique()->values()->all();
+        foreach (QueueName::cases() as $queue) {
+            $this->assertContains($queue->value, $consumed, "Jobs sent to the \"{$queue->value}\" queue would never run on staging.");
+        }
+        $this->assertSame(array_keys($this->production()), array_keys($staging), 'Staging must run the same supervisors as production.');
+
+        $workers = collect($staging)->sum(fn (array $lane) => (int) $lane['maxProcesses']);
+        $override = (string) file_get_contents(base_path('deploy/docker-compose.staging.yml'));
+        $this->assertSame(1, preg_match('/max_connections=\$\{POSTGRES_MAX_CONNECTIONS:-(\d+)\}/', $override, $m));
+        $this->assertLessThanOrEqual((int) floor((int) $m[1] * 0.6), $workers);
+        $this->assertLessThanOrEqual(12, $workers, 'Staging shares the server with production: keep its worker pool small.');
     }
 
     public function test_every_queue_has_a_worker_in_production(): void
