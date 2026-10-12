@@ -35,7 +35,7 @@ final class AutoReplyAndEmailsTest extends TestCase
         $this->connectNumber($this->tenant);
         $this->actingAsMember($this->owner);
 
-        Http::fake(['graph.facebook.com/v25.0/106540352242922/messages*' => fn () => Http::response([
+        Http::fake(['graph.facebook.com/v26.0/106540352242922/messages*' => fn () => Http::response([
             'messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '971501234567']], 'messages' => [['id' => 'wamid.AUTO'.bin2hex(random_bytes(6))]],
         ])]);
     }
@@ -98,7 +98,7 @@ final class AutoReplyAndEmailsTest extends TestCase
 
     public function test_the_owner_is_emailed_when_meta_rejects_a_template(): void
     {
-        Http::fake(['graph.facebook.com/v25.0/102290129340398/message_templates*' => Http::response(['data' => [
+        Http::fake(['graph.facebook.com/v26.0/102290129340398/message_templates*' => Http::response(['data' => [
             ['id' => '900002', 'name' => 'promo_june', 'language' => 'en_US', 'status' => 'PENDING', 'category' => 'MARKETING', 'components' => [['type' => 'BODY', 'text' => 'Sale now on']]],
         ]])]);
         $this->postJson('/api/v1/templates/sync')->assertOk();

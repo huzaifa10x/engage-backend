@@ -63,7 +63,7 @@ final class EmbeddedSignupTest extends TestCase
         $start = $this->postJson('/api/v1/whatsapp/signups')
             ->assertCreated()
             ->assertJsonPath('data.launch.config_id', '555000')
-            ->assertJsonPath('data.launch.graph_version', 'v25.0')
+            ->assertJsonPath('data.launch.graph_version', 'v26.0')
             ->assertJsonPath('data.launch.login_options.response_type', 'code');
 
         $attempt = $start->json('data.attempt.id');
@@ -415,7 +415,7 @@ final class EmbeddedSignupTest extends TestCase
     public function test_permanent_registration_failure_frees_the_plan_slot(): void
     {
         // Registered first so it wins over the generic fakes (e.g. a number with another BSP's PIN).
-        Http::fake(['graph.facebook.com/v25.0/'.self::PHONE.'/register*' => Http::response(['error' => [
+        Http::fake(['graph.facebook.com/v26.0/'.self::PHONE.'/register*' => Http::response(['error' => [
             'message' => 'Two step verification PIN Mismatch', 'code' => 133005, 'fbtrace_id' => 'X1',
         ]], 400)]);
         $this->fakeGraph();

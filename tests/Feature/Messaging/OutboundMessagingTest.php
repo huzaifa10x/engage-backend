@@ -24,7 +24,7 @@ final class OutboundMessagingTest extends TestCase
 {
     use InteractsWithWhatsapp;
 
-    private const SEND = 'graph.facebook.com/v25.0/106540352242922/messages*';
+    private const SEND = 'graph.facebook.com/v26.0/106540352242922/messages*';
 
     private Tenant $tenant;
 
@@ -171,7 +171,7 @@ final class OutboundMessagingTest extends TestCase
         Storage::fake('local');
         $conversation = $this->thread();
         Http::fake([
-            'graph.facebook.com/v25.0/106540352242922/media*' => Http::response(['id' => 'META-MEDIA-1']),
+            'graph.facebook.com/v26.0/106540352242922/media*' => Http::response(['id' => 'META-MEDIA-1']),
             self::SEND => Http::response(['messaging_product' => 'whatsapp', 'contacts' => [['input' => '971501234567', 'wa_id' => '971501234567']], 'messages' => [['id' => 'wamid.IMG1']]]),
         ]);
         $this->actingAsMember($this->owner);

@@ -28,9 +28,9 @@ final class TemplatesTest extends TestCase
 
     private const WABA = '102290129340398';
 
-    private const LIST = 'graph.facebook.com/v25.0/102290129340398/message_templates*';
+    private const LIST = 'graph.facebook.com/v26.0/102290129340398/message_templates*';
 
-    private const SEND = 'graph.facebook.com/v25.0/106540352242922/messages*';
+    private const SEND = 'graph.facebook.com/v26.0/106540352242922/messages*';
 
     private Tenant $tenant;
 
@@ -166,8 +166,8 @@ final class TemplatesTest extends TestCase
         $this->actingAsMember($this->owner);
         Http::fake([
             // Real session ids carry their own signature in a query string.
-            'graph.facebook.com/v25.0/1234567890/uploads*' => Http::response(['id' => 'upload:MTphdHRhY2htZW50?sig=ARZqkGCA_uQMxC8nHKI']),
-            'graph.facebook.com/v25.0/upload:MTphdHRhY2htZW50*' => fn (Request $r) => str_contains($r->url(), 'sig=ARZqkGCA_uQMxC8nHKI')
+            'graph.facebook.com/v26.0/1234567890/uploads*' => Http::response(['id' => 'upload:MTphdHRhY2htZW50?sig=ARZqkGCA_uQMxC8nHKI']),
+            'graph.facebook.com/v26.0/upload:MTphdHRhY2htZW50*' => fn (Request $r) => str_contains($r->url(), 'sig=ARZqkGCA_uQMxC8nHKI')
                 ? Http::response(['h' => '4:aGVhZGVy:handle'])
                 : Http::response(['debug_info' => ['retriable' => false, 'type' => 'InvalidSignature', 'message' => 'Signature missing']], 400),
             self::LIST => Http::response(['id' => '777002', 'status' => 'PENDING', 'category' => 'MARKETING']),

@@ -41,11 +41,11 @@ final class CampaignSafeguardsTest extends TestCase
         $this->actingAsMember($this->owner);
 
         Http::fake([
-            'graph.facebook.com/v25.0/102290129340398/message_templates*' => Http::response(['data' => [
+            'graph.facebook.com/v26.0/102290129340398/message_templates*' => Http::response(['data' => [
                 ['id' => '900001', 'name' => 'summer_offer', 'language' => 'en', 'status' => 'APPROVED', 'category' => 'MARKETING',
                     'components' => [['type' => 'BODY', 'text' => 'Hi {{1}}, enjoy {{2}} off this week.'], ['type' => 'FOOTER', 'text' => 'Reply STOP to opt out']]],
             ]]),
-            'graph.facebook.com/v25.0/106540352242922/messages*' => fn () => Http::response([
+            'graph.facebook.com/v26.0/106540352242922/messages*' => fn () => Http::response([
                 'messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '0']], 'messages' => [['id' => 'wamid.S'.bin2hex(random_bytes(6))]],
             ]),
         ]);
@@ -184,7 +184,7 @@ final class CampaignSafeguardsTest extends TestCase
         $id = $this->draft();
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
 
-        Http::fake(['graph.facebook.com/v25.0/106540352242922*' => Http::response(['id' => '106540352242922', 'quality_rating' => 'YELLOW'])]);
+        Http::fake(['graph.facebook.com/v26.0/106540352242922*' => Http::response(['id' => '106540352242922', 'quality_rating' => 'YELLOW'])]);
         $this->postWebhook($this->webhookBody('phone_number_quality_update', ['display_phone_number' => preg_replace('/\D+/', '', (string) $this->number->display_phone_number), 'event' => 'FLAGGED', 'current_limit' => 'TIER_1K']))->assertOk();
 
         $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.status', 'paused')

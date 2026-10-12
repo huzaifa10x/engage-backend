@@ -80,7 +80,7 @@ return [
     'meta' => [
         'app_id' => env('META_APP_ID'),
         'app_secret' => env('META_APP_SECRET'),
-        'graph_version' => env('META_GRAPH_VERSION', 'v25.0'),
+        'graph_version' => env('META_GRAPH_VERSION', 'v26.0'),
         'graph_url' => rtrim((string) env('META_GRAPH_URL', 'https://graph.facebook.com'), '/'),
         // Facebook Login for Business configuration used by Embedded Signup v4.
         'embedded_signup_config_id' => env('META_ES_CONFIG_ID'),

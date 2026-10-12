@@ -36,7 +36,7 @@ final class ComplianceTest extends TestCase
         $this->connectNumber($this->tenant);
         $this->actingAsMember($this->owner);
 
-        Http::fake(['graph.facebook.com/v25.0/106540352242922/messages*' => fn () => Http::response([
+        Http::fake(['graph.facebook.com/v26.0/106540352242922/messages*' => fn () => Http::response([
             'messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '971501234567']], 'messages' => [['id' => 'wamid.OUT'.bin2hex(random_bytes(6))]],
         ])]);
     }

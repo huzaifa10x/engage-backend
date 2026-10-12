@@ -44,7 +44,7 @@ final class CampaignsTest extends TestCase
         $this->actingAsMember($this->owner);
 
         Http::fake([
-            'graph.facebook.com/v25.0/102290129340398/message_templates*' => Http::response(['data' => [
+            'graph.facebook.com/v26.0/102290129340398/message_templates*' => Http::response(['data' => [
                 ['id' => '900001', 'name' => 'summer_offer', 'language' => 'en', 'status' => 'APPROVED', 'category' => 'MARKETING',
                     'components' => [['type' => 'BODY', 'text' => 'Hi {{1}}, enjoy {{2}} off this week.']]],
                 ['id' => '900002', 'name' => 'class_reminder', 'language' => 'en', 'status' => 'APPROVED', 'category' => 'UTILITY',
@@ -52,7 +52,7 @@ final class CampaignsTest extends TestCase
                 ['id' => '900003', 'name' => 'in_review', 'language' => 'en', 'status' => 'PENDING', 'category' => 'MARKETING',
                     'components' => [['type' => 'BODY', 'text' => 'Soon']]],
             ]]),
-            'graph.facebook.com/v25.0/106540352242922/messages*' => fn () => Http::response([
+            'graph.facebook.com/v26.0/106540352242922/messages*' => fn () => Http::response([
                 'messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '0']], 'messages' => [['id' => 'wamid.C'.bin2hex(random_bytes(6))]],
             ]),
         ]);

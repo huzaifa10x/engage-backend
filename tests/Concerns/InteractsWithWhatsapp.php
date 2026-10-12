@@ -62,7 +62,7 @@ trait InteractsWithWhatsapp
      */
     protected function fakeGraph(string $wabaId = '102290129340398', string $phoneNumberId = '106540352242922', ?array $grantedWabas = null, array $subscribedApps = []): void
     {
-        $v = 'graph.facebook.com/v25.0';
+        $v = 'graph.facebook.com/v26.0';
         $granted = $grantedWabas ?? [$wabaId];
 
         // GET lists the apps subscribed to the WABA; POST / DELETE (un)subscribe ours.

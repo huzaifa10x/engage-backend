@@ -38,7 +38,7 @@ final class InboxToolsTest extends TestCase
         $this->owner = $this->addMember($this->tenant);
         $this->number = $this->connectNumber($this->tenant);
         $this->actingAsMember($this->owner);
-        Http::fake(['graph.facebook.com/v25.0/106540352242922/messages*' => fn () => Http::response([
+        Http::fake(['graph.facebook.com/v26.0/106540352242922/messages*' => fn () => Http::response([
             'messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '0']], 'messages' => [['id' => 'wamid.X'.bin2hex(random_bytes(6))]],
         ])]);
     }

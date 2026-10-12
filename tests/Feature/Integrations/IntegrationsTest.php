@@ -53,7 +53,7 @@ final class IntegrationsTest extends TestCase
         });
 
         Http::fake([
-            'graph.facebook.com/v25.0/102290129340398/message_templates*' => Http::response(['data' => [
+            'graph.facebook.com/v26.0/102290129340398/message_templates*' => Http::response(['data' => [
                 ['id' => '900001', 'name' => 'order_confirmed', 'language' => 'en', 'status' => 'APPROVED', 'category' => 'UTILITY',
                     'components' => [['type' => 'BODY', 'text' => 'Hi {{1}}, we received order {{2}} for {{3}}.']]],
                 ['id' => '900002', 'name' => 'come_back', 'language' => 'en', 'status' => 'APPROVED', 'category' => 'MARKETING',
