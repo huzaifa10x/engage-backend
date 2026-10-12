@@ -31,6 +31,11 @@ http://{$DOMAIN} {
 		max_size 110MB
 	}
 
+	# The policy pages live on the website. Their addresses also work here (Meta app settings,
+	# links in e-mails), leading to the website's page.
+	@legal path /privacy-policy /terms-of-service /user-data-deletion /legal /legal/*
+	redir @legal https://{$SITE_DOMAIN}{uri} 301
+
 	@laravel path /api/* /sanctum/* /up
 	handle @laravel {
 		reverse_proxy app:8000

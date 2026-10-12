@@ -173,9 +173,9 @@ main() {
     fi
 
     if [[ "$env" == production ]]; then
-        "${compose[@]}" up -d caddy
+        refresh_proxy caddy "$here/Caddyfile"
     else
-        "${compose[@]}" up -d gateway
+        refresh_proxy gateway "$here/Caddyfile.staging"
     fi
 
     health_checks
@@ -204,6 +204,19 @@ on_failure() {
     release_line failed "$action" || true
     notify "❌ 10X Engage $env: $action FAILED. Check the deployment log." || true
     exit "$code"
+}
+
+# Starts the edge proxy, and restarts it when its Caddyfile changed: the file is mounted into the
+# container, and a running Caddy keeps serving the version it started with.
+refresh_proxy() {
+    local service="$1" file="$2" running
+    running="$("${compose[@]}" exec -T "$service" sha256sum /etc/caddy/Caddyfile 2>/dev/null | cut -d' ' -f1 || true)"
+    if [[ -n "$running" && "$running" != "$(sha256sum "$file" | cut -d' ' -f1)" ]]; then
+        log "Proxy configuration changed: restarting $service"
+        "${compose[@]}" up -d --force-recreate "$service"
+    else
+        "${compose[@]}" up -d "$service"
+    fi
 }
 
 update() {

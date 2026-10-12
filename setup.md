@@ -57,3 +57,8 @@ Point the three compliance webhooks at https://app.10xdigital.ae/api/integration
 Set the scope to read_orders.
 Add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET to the backend .env and redeploy.
 Request protected customer data access (name, phone, email, address). Without it, a public app receives orders with the phone number removed and nothing can be sent.
+
+
+
+Restart Staging
+bash /opt/engage-staging/backend/deploy/deploy.sh restart
