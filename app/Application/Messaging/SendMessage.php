@@ -50,14 +50,17 @@ final class SendMessage
         if ($number->status !== PhoneNumberStatus::Connected) {
             throw MessagingException::numberUnavailable();
         }
-        // The one message an opted-out contact may still receive: the confirmation of their opt-out.
-        if ($contact->isOptedOut() && ! $consentNotice) {
+        $freeForm = in_array($data['type'], self::FREE_FORM, true);
+        // Opted out: nothing the business starts (templates). Replies are allowed only inside a window the
+        // customer opened by writing to us after opting out, plus the confirmation of the opt-out itself.
+        if ($contact->isOptedOut() && ! $consentNotice && ! ($freeForm && $conversation->acceptsFreeFormFrom($contact))) {
             throw MessagingException::optedOut();
         }
         if ($contact->wa_id === null && $contact->bsuid === null) {
             throw MessagingException::noRecipient();
         }
-        if (in_array($data['type'], self::FREE_FORM, true) && ! $conversation->isWindowOpen()) {
+        // Free-form needs the 24-hour window, whatever the consent state; templates do not.
+        if ($freeForm && ! $conversation->isWindowOpen()) {
             throw MessagingException::windowClosed();
         }
 

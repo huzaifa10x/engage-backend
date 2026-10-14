@@ -28,6 +28,8 @@ final class ConversationResource extends JsonResource
             'window' => [
                 'open' => $this->isWindowOpen(),
                 'expires_at' => $this->window_expires_at?->toIso8601String(),
+                // Whether a normal message can be sent now (window open, and for an opted-out contact: they wrote after opting out).
+                'replies_allowed' => $this->relationLoaded('contact') && $this->contact !== null ? $this->acceptsFreeFormFrom($this->contact) : $this->isWindowOpen(),
             ],
             'contact' => ContactResource::make($this->whenLoaded('contact')),
             'phone_number' => $this->whenLoaded('phoneNumber', fn () => [

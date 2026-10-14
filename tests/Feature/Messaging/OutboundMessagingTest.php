@@ -118,11 +118,56 @@ final class OutboundMessagingTest extends TestCase
     public function test_opted_out_contacts_cannot_be_messaged(): void
     {
         $conversation = $this->thread();
-        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->update(['consent_state' => ConsentState::OptedOut]));
+        // Opted out after their last message (here: by an agent): nothing can be sent, not even inside the window.
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->update(['consent_state' => ConsentState::OptedOut, 'opted_out_at' => now()->addSecond()]));
         $this->actingAsMember($this->owner);
 
         $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hi'])
             ->assertStatus(422)->assertJsonPath('error.code', 'contact_opted_out');
+        $this->getJson("/api/v1/conversations/{$conversation->id}")->assertOk()
+            ->assertJsonPath('data.window.open', true)->assertJsonPath('data.window.replies_allowed', false);
+    }
+
+    public function test_an_opted_out_customer_who_writes_again_can_be_answered_inside_the_window(): void
+    {
+        // Two sends (the opt-out confirmation and the reply): each needs its own WhatsApp message id.
+        Http::fake([self::SEND => fn () => Http::response(['messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '971501234567']], 'messages' => [['id' => 'wamid.OUT'.bin2hex(random_bytes(6))]]])]);
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => 'STOP']])))->assertOk();
+        $conversation = $this->tenantContext()->run($this->tenant, fn () => Conversation::query()->firstOrFail());
+        $this->actingAsMember($this->owner);
+
+        // Their STOP opened the window, but it is the opt-out itself: no replies on the strength of it.
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Sorry to see you go'])
+            ->assertStatus(422)->assertJsonPath('error.code', 'contact_opted_out');
+
+        // Later the customer writes to us again (without START): they started this conversation, so we may answer.
+        $this->travel(5)->minutes();
+        $this->app['auth']->forgetGuards();
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => 'Where is my order?']])))->assertOk();
+        $this->actingAsMember($this->owner);
+
+        $this->getJson("/api/v1/conversations/{$conversation->id}")->assertOk()->assertJsonPath('data.window.replies_allowed', true)
+            ->assertJsonPath('data.contact.consent_state', 'opted_out');
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'It ships today.'])->assertStatus(202);
+        Http::assertSent(fn (Request $r) => ($r['text']['body'] ?? null) === 'It ships today.');
+
+        // Still opted out: nothing the business starts, and nothing once the window closes.
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", [
+            'type' => 'template', 'template' => ['name' => 'order_update', 'language' => 'en', 'components' => []],
+        ])->assertStatus(422)->assertJsonPath('error.code', 'contact_opted_out');
+        $this->travel(25)->hours();
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Following up'])
+            ->assertStatus(422)->assertJsonPath('error.code', 'contact_opted_out');
+        $this->getJson("/api/v1/conversations/{$conversation->id}")->assertJsonPath('data.window.replies_allowed', false);
+    }
+
+    public function test_a_contact_who_never_opted_in_can_be_answered_while_the_window_is_open(): void
+    {
+        $conversation = $this->thread();
+        $this->fakeSend();
+        $this->actingAsMember($this->owner);
+        $this->getJson("/api/v1/conversations/{$conversation->id}")->assertJsonPath('data.contact.consent_state', 'unknown')->assertJsonPath('data.window.replies_allowed', true);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Happy to help'])->assertStatus(202);
     }
 
     public function test_idempotency_key_prevents_duplicate_sends(): void

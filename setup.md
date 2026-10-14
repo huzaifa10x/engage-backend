@@ -7,8 +7,6 @@ docker compose down
 ./dev setup
 ./dev start
 
-
-
 Redeploy
 Commands on the server
 
@@ -24,7 +22,6 @@ Frontend only:
 
 bash /opt/engage/backend/deploy/deploy.sh web
 
-
 Restart on the Server 
 
 bash /opt/engage/backend/deploy/deploy.sh restart
@@ -35,7 +32,6 @@ Open the file on the server:
 
 bash /opt/engage/backend/deploy/deploy.sh restart
 
-
 To delete a workspace
 Preview (changes nothing):
    docker compose --project-directory /opt/engage/backend/deploy -f /opt/engage/backend/deploy/docker-compose.prod.yml exec app php artisan engage:client:delete teamdubai103@gmail.com
@@ -44,7 +40,6 @@ It lists the account, each workspace marked DELETE or KEEP, and the counts of co
 
 If the preview is what you expect, delete:
    docker compose --project-directory /opt/engage/backend/deploy -f /opt/engage/backend/deploy/docker-compose.prod.yml exec app php artisan engage:client:delete teamdubai103@gmail.com --force
-
 
 Shopify setup (your side)
 
@@ -57,8 +52,6 @@ Point the three compliance webhooks at https://app.10xdigital.ae/api/integration
 Set the scope to read_orders.
 Add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET to the backend .env and redeploy.
 Request protected customer data access (name, phone, email, address). Without it, a public app receives orders with the phone number removed and nothing can be sent.
-
-
 
 Restart Staging
 bash /opt/engage-staging/backend/deploy/deploy.sh restart

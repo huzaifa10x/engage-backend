@@ -66,6 +66,27 @@ class Conversation extends Model
         return $this->window_expires_at !== null && $this->window_expires_at->isFuture();
     }
 
+    /**
+     * May a normal (free-form) message be sent in this conversation right now?
+     *
+     * The rule is the 24-hour customer service window: open → yes, closed → only a template.
+     * An opted-out contact is not messaged by the business, but a customer who writes to us
+     * AFTER opting out has started that conversation themselves, so we may answer them inside the
+     * window it opened. The message that opted them out (STOP) does not count: it arrived before
+     * the opt-out was recorded. Templates, campaigns and automations stay blocked for them.
+     */
+    public function acceptsFreeFormFrom(Contact $contact): bool
+    {
+        if (! $this->isWindowOpen()) {
+            return false;
+        }
+        if (! $contact->isOptedOut()) {
+            return true;
+        }
+
+        return $this->last_inbound_at !== null && $contact->opted_out_at !== null && $this->last_inbound_at->gt($contact->opted_out_at);
+    }
+
     /** @return BelongsTo<Contact, $this> */
     public function contact(): BelongsTo
     {
