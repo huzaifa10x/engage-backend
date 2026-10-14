@@ -23,6 +23,7 @@ use App\Notifications\PaymentFailedNotification;
 use App\Notifications\PaymentReceiptNotification;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -37,6 +38,9 @@ use Illuminate\Validation\ValidationException;
 final class StripeBilling
 {
     public const VAT_COUNTRY = 'AE';
+
+    /** @var array<string, bool> subscription id → exists in the Stripe account in use (per request) */
+    private array $known = [];
 
     public function __construct(
         private readonly StripeClient $stripe,
@@ -876,10 +880,36 @@ final class StripeBilling
 
     // ── Lookups ────────────────────────────────────────────────────────────────────────────
 
+    /**
+     * The workspace's running Stripe subscription, as long as the Stripe account in use knows it.
+     *
+     * A subscription made with other keys (test ↔ live, or another Stripe account) does not exist
+     * here: it is ignored, so the next plan choice starts a fresh subscription, which then replaces
+     * it. The workspace keeps its current plan until then; nothing is cancelled just by looking.
+     */
     public function liveStripeSubscription(Tenant $tenant): ?Subscription
     {
-        return $this->context->bypass(fn () => Subscription::query()->where('tenant_id', $tenant->id)->live()
+        $live = $this->context->bypass(fn () => Subscription::query()->where('tenant_id', $tenant->id)->live()
             ->where('provider', BillingProvider::Stripe->value)->whereNotNull('provider_subscription_id')->first());
+        if ($live === null) {
+            return null;
+        }
+
+        $id = (string) $live->provider_subscription_id;
+        if (! array_key_exists($id, $this->known)) {
+            try {
+                $this->stripe->get("subscriptions/{$id}");
+                $this->known[$id] = true;
+            } catch (StripeException $e) {
+                if ($e->stripeCode !== 'resource_missing') {
+                    throw $e;
+                }
+                Log::warning('Stripe subscription not found with the current keys; treating the workspace as unsubscribed.', ['tenant_id' => $tenant->id, 'subscription' => $id]);
+                $this->known[$id] = false;
+            }
+        }
+
+        return $this->known[$id] ? $live : null;
     }
 
     private function tenantFor(mixed $tenantId, mixed $customerId): ?Tenant

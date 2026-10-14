@@ -9,6 +9,7 @@ use App\Domain\Billing\Models\Subscription;
 use App\Domain\Billing\SubscriptionService;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\Tenancy\TenantContext;
 use App\Notifications\PaymentFailedNotification;
 use App\Notifications\PaymentReceiptNotification;
 use Illuminate\Http\Client\Request;
@@ -89,6 +90,7 @@ final class StripeBillingTest extends TestCase
             $path === 'subscriptions' && $method === 'POST' => [$this->createSubscription($r)],
             $path === 'subscriptions' => [['data' => $this->remoteSubscription === [] ? [] : [$this->remoteSubscription]]],
             $path === 'subscriptions/sub_1' => [$this->subscription($r)],
+            $path === 'subscriptions/sub_other_mode' => [['error' => ['code' => 'resource_missing', 'message' => "No such subscription: 'sub_other_mode'"]], 404],
             $path === 'invoices/upcoming' => [$this->upcoming($r)],
             $path === 'invoices/in_2/void' => [$this->voidPending()],
             $path === 'charges' => [['data' => [
@@ -433,6 +435,29 @@ final class StripeBillingTest extends TestCase
         // Yearly → cheaper monthly plan: the unused credit is larger than the new price → nothing to pay, the rest stays as credit.
         $this->postJson('/api/v1/billing/preview', ['plan' => 'starter', 'interval' => 'monthly'])->assertOk()
             ->assertJsonPath('data.amount_due_minor', 0)->assertJsonPath('data.credit_kept_minor', 39500 - 2900);
+    }
+
+    public function test_a_subscription_made_with_other_stripe_keys_does_not_block_choosing_a_plan(): void
+    {
+        $this->billingCountry('PK');
+        $this->subscribeAndPay('starter');
+        // The keys changed (test → live, or another account): Stripe no longer knows the stored subscription.
+        $bypass = fn (callable $q) => app(TenantContext::class)->bypass($q);
+        $bypass(fn () => Subscription::query()->where('provider_subscription_id', 'sub_1')->update(['provider_subscription_id' => 'sub_other_mode']));
+        $this->remoteSubscription = [];
+
+        // The summary is that of a new subscription, and nothing was cancelled by looking at it.
+        $this->postJson('/api/v1/billing/preview', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()
+            ->assertJsonPath('data.change', false)->assertJsonPath('data.amount_due_minor', 7900);
+        $this->getJson('/api/v1/billing')->assertOk()->assertJsonPath('data.plan.key', 'starter');
+
+        // Subscribing starts a fresh Stripe subscription, which replaces the stale one.
+        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()->assertJsonPath('data.status', 'requires_confirmation');
+        $this->remoteSubscription['status'] = 'active';
+        $this->postJson('/api/v1/billing/refresh')->assertOk()->assertJsonPath('data.status', 'active');
+        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'growth');
+        $this->assertSame(1, $bypass(fn () => Subscription::query()->where('tenant_id', $this->tenant->id)->live()->count()));
+        $this->assertSame('sub_1', $bypass(fn () => Subscription::query()->where('tenant_id', $this->tenant->id)->live()->value('provider_subscription_id')));
     }
 
     public function test_a_downgrade_refunds_nothing_and_keeps_the_unused_amount_in_the_wallet_for_later_payments(): void
