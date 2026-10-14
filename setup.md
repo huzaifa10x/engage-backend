@@ -57,3 +57,14 @@ Restart Staging
 bash /opt/engage-staging/backend/deploy/deploy.sh restart
 
 huzaifa@10xuae.com Wv-N=8&j2S.T
+
+
+Deploy To Staging
+npm run deploy:staging
+
+Then run to production
+npm run release:promote
+
+
+npm run release:promote        # type: promote
+npm run deploy:production      # type: production
