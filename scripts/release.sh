@@ -98,10 +98,10 @@ deploy() {
             deployed="$(remote "git -C /opt/engage/$(short "$name") rev-parse HEAD 2>/dev/null" || true)"
             printf '  %s\n' "$name"
             if [[ -n "$deployed" ]] && git -C "$dir" cat-file -e "$deployed" 2>/dev/null; then
-                git -C "$dir" log --oneline --no-decorate "$deployed..origin/main" | sed 's/^/      /' | head -40
+                git -C "$dir" log --oneline --no-decorate --max-count=40 "$deployed..origin/main" | sed 's/^/      /'
                 [[ -n "$(git -C "$dir" log --oneline "$deployed..origin/main")" ]] || echo "      (no changes)"
             else
-                git -C "$dir" log --oneline --no-decorate -5 origin/main | sed 's/^/      /'
+                git -C "$dir" log --oneline --no-decorate --max-count=5 origin/main | sed 's/^/      /'
             fi
         done
         confirm production "This deploys to PRODUCTION (live customers)."
@@ -143,7 +143,7 @@ promote() {
     for entry in "${repos[@]}"; do
         name="${entry%%:*}" dir="${entry#*:}"
         printf '  %s:\n' "$name"
-        git -C "$dir" log --oneline --no-decorate origin/main..origin/staging | sed 's/^/      /' | head -40
+        git -C "$dir" log --oneline --no-decorate --max-count=40 origin/main..origin/staging | sed 's/^/      /'
     done
     confirm promote "main will be moved to what is on staging now (nothing is deployed yet)."
     for entry in "${repos[@]}"; do
