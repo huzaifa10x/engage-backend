@@ -183,6 +183,6 @@ final class EntitlementService
 
     private function cacheKey(Tenant $tenant): string
     {
-        return "entitlements:v1:{$tenant->getKey()}";
+        return "entitlements:v2:{$tenant->getKey()}"; // v2: custom field limits changed (2026-10)
     }
 }

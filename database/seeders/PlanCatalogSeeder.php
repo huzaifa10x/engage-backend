@@ -122,7 +122,8 @@ final class PlanCatalogSeeder extends Seeder
             'message_templates' => [3, $U, $U, $U, $U],
             'saved_segments' => [false, 3, 10, $U, $U],
             'tags' => [5, 25, 100, $U, $U],
-            'custom_fields' => [2, 10, 25, $U, $U],
+            // Pro: unlimited under a fair-use ceiling. Enterprise: also extra field types and validation rules.
+            'custom_fields' => [5, 25, 100, ['fair_use' => 500], ['advanced' => true]],
             'whatsapp_flows' => [false, 1, 5, $U, $U],
             'chatbots' => [false, 1, 5, $U, $U],
             'api_rate_limit_per_minute' => [120, 300, 600, 1200, 3000],

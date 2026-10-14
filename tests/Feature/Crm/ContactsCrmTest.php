@@ -56,7 +56,7 @@ final class ContactsCrmTest extends TestCase
     public function test_the_plan_limits_tags_and_custom_fields(): void
     {
         $free = $this->createTenant();
-        $this->actingAsMember($this->addMember($free)); // Free: 5 tags, 2 custom fields, no saved segments
+        $this->actingAsMember($this->addMember($free)); // Free: 5 tags, 5 custom fields, no saved segments
 
         $this->postJson('/api/v1/contacts', ['phone' => '+971501110001', 'tags' => ['a', 'b', 'c', 'd', 'e']])->assertCreated();
         $this->postJson('/api/v1/contacts', ['phone' => '+971501110002', 'tags' => ['a', 'f']])
@@ -64,7 +64,11 @@ final class ContactsCrmTest extends TestCase
 
         $this->postJson('/api/v1/contact-fields', ['label' => 'Membership tier'])->assertCreated()->assertJsonPath('data.key', 'membership_tier');
         $this->postJson('/api/v1/contact-fields', ['label' => 'Renewal date', 'type' => 'date'])->assertCreated();
-        $this->postJson('/api/v1/contact-fields', ['label' => 'City'])->assertStatus(402);
+        foreach (['City', 'Branch', 'Source'] as $label) {
+            $this->postJson('/api/v1/contact-fields', ['label' => $label])->assertCreated();
+        }
+        $this->postJson('/api/v1/contact-fields', ['label' => 'Agent'])->assertStatus(402); // Free: 5 custom fields
+        $this->getJson('/api/v1/contact-fields')->assertOk()->assertJsonPath('meta.limit', 5)->assertJsonPath('meta.used', 5)->assertJsonPath('meta.advanced', false);
 
         $this->postJson('/api/v1/segments', ['name' => 'VIPs', 'match' => 'all', 'rules' => [['field' => 'tags', 'op' => 'has', 'value' => 'a']]])
             ->assertStatus(403)->assertJsonPath('error.code', 'feature_not_available');

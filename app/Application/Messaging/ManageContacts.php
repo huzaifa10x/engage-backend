@@ -6,6 +6,7 @@ namespace App\Application\Messaging;
 
 use App\Application\Crm\TagCatalog;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Models\Contact;
@@ -31,6 +32,9 @@ final class ManageContacts
         if ($existing !== null && ! $existing->trashed()) {
             throw ValidationException::withMessages(['phone' => 'A contact with this number already exists.']);
         }
+
+        // Required custom fields apply to new contacts too, even when no attributes were sent.
+        $data['attributes'] ??= [];
 
         // Contacts are uncapped on every plan (blueprint v2); no entitlement check here.
         if ($existing !== null) {
@@ -79,7 +83,8 @@ final class ManageContacts
     {
         $out = array_intersect_key($data, array_flip(['name', 'email']));
         if (array_key_exists('attributes', $data)) {
-            $out['custom_fields'] = $data['attributes'];
+            // Values of the workspace's custom fields are checked against their type and rules.
+            $out['custom_fields'] = app(CustomFields::class)->values((array) ($data['attributes'] ?? [])) ?: null;
         }
         if (array_key_exists('tags', $data)) {
             $out['tags'] = $this->tags->ensure((array) $data['tags']);

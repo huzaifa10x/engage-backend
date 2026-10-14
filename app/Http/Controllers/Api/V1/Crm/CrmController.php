@@ -10,6 +10,7 @@ use App\Domain\Audit\AuditLogger;
 use App\Domain\Crm\Models\ContactField;
 use App\Domain\Crm\Models\ContactTag;
 use App\Domain\Crm\Models\Segment;
+use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\Contact;
@@ -89,37 +90,87 @@ final class CrmController extends Controller
 
     // ── Custom fields ──────────────────────────────────────────────────────────────────────
 
-    public function fields(): JsonResponse
+    /** The workspace's custom fields, and what its plan allows (for the "3 of 5 fields" line and the type picker). */
+    public function fields(CustomFields $custom): JsonResponse
     {
-        return response()->json(['data' => ContactField::query()->orderBy('label')->get(['id', 'key', 'label', 'type'])]);
+        $allowance = $custom->allowance($this->context->tenant());
+
+        return response()->json([
+            'data' => ContactField::query()->orderBy('label')->get()->map(fn (ContactField $f) => $this->field($f)),
+            'meta' => $allowance + ['used' => ContactField::query()->count()],
+        ]);
     }
 
-    public function storeField(Request $request): JsonResponse
+    public function storeField(Request $request, CustomFields $custom): JsonResponse
     {
         $data = $request->validate([
             'label' => ['required', 'string', 'max:60'],
-            'type' => ['nullable', Rule::in(['text', 'number', 'date'])],
+            'type' => ['nullable', 'string', Rule::in([...CustomFields::BASIC_TYPES, ...CustomFields::ADVANCED_TYPES])],
+            'options' => ['nullable', 'array', 'max:50'],
+            'options.*' => ['nullable', 'string', 'max:80'],
+            'rules' => ['nullable', 'array'],
         ]);
+        $tenant = $this->context->tenant();
+        $type = $data['type'] ?? 'text';
         $key = trim((string) preg_replace('/[^a-z0-9]+/', '_', mb_strtolower($data['label'])), '_');
-        if ($key === '' || in_array($key, ['phone', 'name', 'email', 'tags', 'opted_in'], true)) {
+        if ($key === '' || in_array($key, CustomFields::RESERVED, true)) {
             throw ValidationException::withMessages(['label' => 'Choose a different field name.']);
         }
-        if (ContactField::query()->where('key', $key)->exists()) {
+        if (ContactField::query()->where('key', mb_substr($key, 0, 40))->exists()) {
             throw ValidationException::withMessages(['label' => 'A field with this name already exists.']);
         }
+        $definition = $custom->definition($tenant, $type, $data);
 
-        $field = $this->entitlements->withinLimit($this->context->tenant(), FeatureKey::CustomFields, 1,
-            fn () => ContactField::query()->create(['key' => mb_substr($key, 0, 40), 'label' => $data['label'], 'type' => $data['type'] ?? 'text']));
+        $field = $this->entitlements->withinLimit($tenant, FeatureKey::CustomFields, 1, function () use ($custom, $tenant, $key, $data, $type, $definition) {
+            // "Unlimited" plans are unlimited within fair use; beyond it, support raises the ceiling.
+            $fairUse = $custom->allowance($tenant)['fair_use'];
+            if ($fairUse !== null && ContactField::query()->count() >= $fairUse) {
+                throw ValidationException::withMessages(['label' => "You have {$fairUse} custom fields, the fair-use ceiling of your plan. Contact support if you need more."]);
+            }
 
-        return response()->json(['data' => $field->only(['id', 'key', 'label', 'type'])], 201);
+            return ContactField::query()->create(['key' => mb_substr($key, 0, 40), 'label' => $data['label'], 'type' => $type] + $definition);
+        });
+        $this->audit->record('contact_field.created', null, after: $this->field($field), meta: ['field_id' => $field->id]);
+
+        return response()->json(['data' => $this->field($field)], 201);
+    }
+
+    /**
+     * Rename a field or change its choices and rules. The key (where values are stored) and the type
+     * stay, so values already on contacts keep their meaning.
+     */
+    public function updateField(Request $request, ContactField $field, CustomFields $custom): JsonResponse
+    {
+        $data = $request->validate([
+            'label' => ['sometimes', 'string', 'max:60'],
+            'options' => ['sometimes', 'nullable', 'array', 'max:50'],
+            'options.*' => ['nullable', 'string', 'max:80'],
+            'rules' => ['sometimes', 'nullable', 'array'],
+        ]);
+        $before = $this->field($field);
+        $definition = $custom->definition($this->context->tenant(), $field->type, [
+            'options' => array_key_exists('options', $data) ? $data['options'] : $field->options,
+            'rules' => array_key_exists('rules', $data) ? $data['rules'] : $field->rules,
+        ]);
+        $field->forceFill(array_filter(['label' => $data['label'] ?? null]) + $definition)->save();
+        $this->audit->record('contact_field.updated', null, before: $before, after: $this->field($field), meta: ['field_id' => $field->id]);
+
+        return response()->json(['data' => $this->field($field)]);
     }
 
     /** Removes the definition; values already stored on contacts are kept. */
     public function destroyField(ContactField $field): JsonResponse
     {
+        $this->audit->record('contact_field.deleted', null, before: $this->field($field), meta: ['field_id' => $field->id]);
         $field->delete();
 
         return response()->json(null, 204);
+    }
+
+    /** @return array<string, mixed> */
+    private function field(ContactField $f): array
+    {
+        return ['id' => $f->id, 'key' => $f->key, 'label' => $f->label, 'type' => $f->type, 'options' => $f->options, 'rules' => (object) ($f->rules ?? [])];
     }
 
     // ── Segments ───────────────────────────────────────────────────────────────────────────

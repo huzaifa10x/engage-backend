@@ -14,6 +14,8 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $key
  * @property string $label
  * @property string $type
+ * @property ?list<string> $options
+ * @property ?array<string, mixed> $rules
  */
 class ContactField extends Model
 {
@@ -21,5 +23,10 @@ class ContactField extends Model
 
     protected $table = 'contact_fields';
 
-    protected $fillable = ['tenant_id', 'key', 'label', 'type'];
+    protected $fillable = ['tenant_id', 'key', 'label', 'type', 'options', 'rules'];
+
+    protected function casts(): array
+    {
+        return ['options' => 'array', 'rules' => 'array'];
+    }
 }

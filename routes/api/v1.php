@@ -274,6 +274,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::delete('tags/{tag}', [CrmController::class, 'destroyTag'])->name('tags.destroy');
         Route::post('contacts/bulk-tag', [CrmController::class, 'bulkTag'])->name('contacts.bulk-tag');
         Route::post('contact-fields', [CrmController::class, 'storeField'])->name('contact-fields.store');
+        Route::patch('contact-fields/{field}', [CrmController::class, 'updateField'])->name('contact-fields.update');
         Route::delete('contact-fields/{field}', [CrmController::class, 'destroyField'])->name('contact-fields.destroy');
         Route::post('segments', [CrmController::class, 'storeSegment'])->name('segments.store');
         Route::patch('segments/{segment}', [CrmController::class, 'updateSegment'])->name('segments.update');

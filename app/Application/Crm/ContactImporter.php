@@ -6,6 +6,7 @@ namespace App\Application\Crm;
 
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Crm\Models\ContactField;
+use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\ConsentService;
@@ -36,6 +37,7 @@ final class ContactImporter
         private readonly ConsentService $consent,
         private readonly TenantContext $context,
         private readonly AuditLogger $audit,
+        private readonly CustomFields $customFields,
     ) {}
 
     /**
@@ -137,6 +139,8 @@ final class ContactImporter
                     'email' => $email !== '' ? $email : null,
                 ], fn ($v) => $v !== null));
                 $contact->tags = array_values(array_unique(array_merge($contact->tags ?? [], $rowTags, $extra)));
+                // Values that do not fit their field's type or rules are left out, not the whole row.
+                $attributes = $attributes !== [] ? $this->customFields->lenient($attributes) : [];
                 if ($attributes !== []) {
                     $contact->custom_fields = array_merge($contact->custom_fields ?? [], $attributes);
                 }
