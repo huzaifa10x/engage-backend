@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\Billing\BillingController;
 use App\Http\Controllers\Api\V1\Campaigns\CampaignController;
+use App\Http\Controllers\Api\V1\ChatbotController;
 use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\DeveloperController;
@@ -123,6 +124,29 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::delete('{integration}', [IntegrationController::class, 'destroy'])->whereUuid('integration')->name('destroy');
         Route::put('{integration}/rules/{event}', [IntegrationController::class, 'saveRule'])->whereUuid('integration')->name('rules.save');
         Route::post('{integration}/rules/{event}/test', [IntegrationController::class, 'testRule'])->whereUuid('integration')->middleware('throttle:10,1')->name('rules.test');
+    });
+
+    /*
+    | Chatbots & Flows: per-number bots built on a canvas, tested, published and switched on.
+    */
+    Route::middleware('can:'.Permission::ChatbotsView->value)->prefix('chatbots')->name('chatbots.')->group(function () {
+        Route::get('/', [ChatbotController::class, 'index'])->name('index');
+        Route::get('options', [ChatbotController::class, 'options'])->name('options');
+        Route::get('secrets', [ChatbotController::class, 'secrets'])->name('secrets');
+        Route::get('{flow}', [ChatbotController::class, 'show'])->whereUuid('flow')->name('show');
+        Route::get('{flow}/analytics', [ChatbotController::class, 'analytics'])->whereUuid('flow')->name('analytics');
+        Route::post('{flow}/test', [ChatbotController::class, 'test'])->whereUuid('flow')->middleware('throttle:120,1')->name('test');
+    });
+    Route::middleware('can:'.Permission::ChatbotsManage->value)->prefix('chatbots')->name('chatbots.')->group(function () {
+        Route::post('/', [ChatbotController::class, 'store'])->name('store');
+        Route::put('secrets', [ChatbotController::class, 'saveSecret'])->middleware('throttle:30,1')->name('secrets.save');
+        Route::delete('secrets/{name}', [ChatbotController::class, 'deleteSecret'])->name('secrets.delete');
+        Route::patch('{flow}', [ChatbotController::class, 'update'])->whereUuid('flow')->name('update');
+        Route::delete('{flow}', [ChatbotController::class, 'destroy'])->whereUuid('flow')->name('destroy');
+        Route::post('{flow}/publish', [ChatbotController::class, 'publish'])->whereUuid('flow')->name('publish');
+        Route::post('{flow}/activate', [ChatbotController::class, 'activate'])->whereUuid('flow')->name('activate');
+        Route::post('{flow}/duplicate', [ChatbotController::class, 'duplicate'])->whereUuid('flow')->name('duplicate');
+        Route::post('{flow}/versions/{version}/restore', [ChatbotController::class, 'restore'])->whereUuid('flow')->whereNumber('version')->name('versions.restore');
     });
 
     Route::get('tenant/inbox-settings', [InboxToolsController::class, 'inboxSettings'])->name('tenant.inbox-settings');
@@ -313,6 +337,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
 
     Route::middleware(['can:'.Permission::InboxReply->value, 'throttle:messaging'])->group(function () {
         Route::post('conversations/{conversation}/messages', [MessageController::class, 'store'])->name('conversations.messages.store');
+        Route::post('conversations/{conversation}/bot/take-over', [ConversationController::class, 'takeOver'])->name('conversations.bot.take-over');
+        Route::post('conversations/{conversation}/bot/hand-back', [ConversationController::class, 'handBack'])->name('conversations.bot.hand-back');
         Route::post('conversations/{conversation}/notes', [InboxToolsController::class, 'addNote'])->name('conversations.notes.store');
         Route::post('conversations/{conversation}/snooze', [InboxToolsController::class, 'snooze'])->name('conversations.snooze');
         Route::delete('conversations/{conversation}/snooze', [InboxToolsController::class, 'unsnooze'])->name('conversations.unsnooze');

@@ -23,3 +23,5 @@ Schedule::command('engage:templates:sync')->everyFiveMinutes()->onOneServer()->w
 Schedule::command('engage:webhooks:prune')->dailyAt('02:30')->onOneServer()->withoutOverlapping();
 // Integrations: abandoned-checkout reminders go out when their waiting time has passed.
 Schedule::command('engage:integrations:run')->everyMinute()->onOneServer()->withoutOverlapping();
+// Chatbots: reminders to customers who stopped answering, abandonment, and Delay blocks.
+Schedule::command('engage:chatbots:tick')->everyMinute()->onOneServer()->withoutOverlapping();

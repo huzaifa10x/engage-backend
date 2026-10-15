@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Services;
 
+use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Contact;
@@ -69,6 +70,14 @@ final class ConversationTracker
             if ($conversation->status === ConversationStatus::Closed) {
                 $updates += ['status' => ConversationStatus::Open, 'closed_at' => null];
             }
+        }
+
+        // A person answered (agent, API client, or the WhatsApp Business app): from now on the
+        // conversation is theirs, and any chatbot reply still being prepared is discarded. Decided
+        // here, under the same row lock the bot takes right before each of its messages.
+        if ($message->direction === Message::OUTBOUND && in_array($message->origin, [MessageOrigin::Agent, MessageOrigin::Api, MessageOrigin::AppEcho], true)
+            && ($message->origin !== MessageOrigin::AppEcho || $isNewest)) {
+            $updates += app(Chatbots::class)->humanReplied($conversation);
         }
 
         if ($updates !== []) {

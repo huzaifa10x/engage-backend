@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\Usage\CampaignReachCounter;
 use App\Domain\Plans\Usage\CannedResponsesCounter;
+use App\Domain\Plans\Usage\ChatbotsCounter;
 use App\Domain\Plans\Usage\CustomFieldsCounter;
 use App\Domain\Plans\Usage\MediaStorageCounter;
 use App\Domain\Plans\Usage\MessageTemplatesCounter;
@@ -50,6 +51,7 @@ final class TenancyServiceProvider extends ServiceProvider
             $app->make(TagsCounter::class),
             $app->make(CannedResponsesCounter::class),
             $app->make(CustomFieldsCounter::class),
+            $app->make(ChatbotsCounter::class),
             $app->make(SavedSegmentsCounter::class),
             $app->make(CampaignReachCounter::class),
             $app->make(MediaStorageCounter::class),

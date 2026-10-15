@@ -88,31 +88,10 @@ final class InboxTools
                 || ! $this->entitlements->for($tenant)->allows(FeatureKey::AutoRouting)) {
                 return;
             }
-            $number = PhoneNumber::query()->find($conversation->phone_number_id);
-            if ($number === null) {
+            $pick = $this->pickAgent($conversation);
+            if ($pick === null) {
                 return;
             }
-
-            $candidates = TenantMembership::query()->active()->with('role')->get()->filter(function (TenantMembership $m) use ($number): bool {
-                if ($m->role === null || ! $m->role->grants(Permission::InboxReply)) {
-                    return false;
-                }
-                try {
-                    $this->access->ensureCanAccess($m, $number);
-
-                    return true;
-                } catch (Throwable) {
-                    return false;
-                }
-            });
-            if ($candidates->isEmpty()) {
-                return;
-            }
-
-            $load = Conversation::query()->where('status', ConversationStatus::Open->value)->whereIn('assigned_membership_id', $candidates->pluck('id'))
-                ->selectRaw('assigned_membership_id, count(*) AS total')->groupBy('assigned_membership_id')->toBase()->pluck('total', 'assigned_membership_id');
-            /** @var TenantMembership $pick */
-            $pick = $candidates->sortBy(fn (TenantMembership $m) => [(int) ($load[$m->id] ?? 0), $m->id])->first();
 
             $claimed = Conversation::query()->whereKey($conversation->id)->whereNull('assigned_membership_id')->update(['assigned_membership_id' => $pick->id]);
             if ($claimed === 1) {
@@ -121,6 +100,40 @@ final class InboxTools
         } catch (Throwable $e) {
             Log::warning('Auto-routing failed', ['conversation' => $conversation->id, 'error' => $e->getMessage()]);
         }
+    }
+
+    /**
+     * The teammate who can reply on the conversation's number and has the fewest open
+     * conversations right now (auto-routing, and chatbots handing a customer to a person).
+     */
+    public function pickAgent(Conversation $conversation): ?TenantMembership
+    {
+        $number = PhoneNumber::query()->find($conversation->phone_number_id);
+        if ($number === null) {
+            return null;
+        }
+
+        $candidates = TenantMembership::query()->active()->with('role')->get()->filter(function (TenantMembership $m) use ($number): bool {
+            if ($m->role === null || ! $m->role->grants(Permission::InboxReply)) {
+                return false;
+            }
+            try {
+                $this->access->ensureCanAccess($m, $number);
+
+                return true;
+            } catch (Throwable) {
+                return false;
+            }
+        });
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        $load = Conversation::query()->where('status', ConversationStatus::Open->value)->whereIn('assigned_membership_id', $candidates->pluck('id'))
+            ->selectRaw('assigned_membership_id, count(*) AS total')->groupBy('assigned_membership_id')->toBase()->pluck('total', 'assigned_membership_id');
+
+        /** @var TenantMembership */
+        return $candidates->sortBy(fn (TenantMembership $m) => [(int) ($load[$m->id] ?? 0), $m->id])->first();
     }
 
     /** In-app notification (the bell), optionally with an email copy. */

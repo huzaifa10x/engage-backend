@@ -33,7 +33,7 @@ enum SystemRole: string
             ],
             self::Viewer => [
                 Permission::InboxView->value, Permission::ContactsView->value, Permission::TemplatesView->value,
-                Permission::CampaignsView->value, Permission::AnalyticsView->value,
+                Permission::CampaignsView->value, Permission::AnalyticsView->value, Permission::ChatbotsView->value,
             ],
         };
     }

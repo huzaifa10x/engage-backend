@@ -71,7 +71,12 @@ final class SendMessage
                 throw MessagingException::mediaNotReady();
             }
         }
-        if (in_array($data['type'], self::MEDIA_TYPES, true)) {
+        // Chatbot media blocks send a public https file by its link (Meta fetches it) instead of an upload.
+        $link = in_array($data['type'], ['image', 'video', 'document'], true) && $media === null ? ($data['content']['link'] ?? null) : null;
+        if (is_string($link) && ! str_starts_with(strtolower($link), 'https://')) {
+            throw MessagingException::mediaNotReady();
+        }
+        if (in_array($data['type'], self::MEDIA_TYPES, true) && $link === null) {
             // The file decides the message type (an .mp3 is audio, a .pdf a document), never the client.
             if ($media === null) {
                 throw MessagingException::mediaNotReady();

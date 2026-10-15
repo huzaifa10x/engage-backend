@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Services;
 
+use App\Domain\Chatbots\Jobs\RunChatbot;
+use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Events\MessageStored;
@@ -104,11 +106,19 @@ final class MessageRecorder
         if ($inbound && $origin === MessageOrigin::Customer) {
             $contact->forceFill(['last_inbound_at' => $at])->save();
             $this->applyConsentKeyword($contact, $message);
-            app(AutoReply::class)->handle($message, $contact);
             Conversation::query()->whereKey($message->conversation_id)->whereNotNull('snoozed_until')->update(['snoozed_until' => null]);
             $conversation = Conversation::query()->with('contact')->find($message->conversation_id);
-            if ($conversation !== null) {
-                app(InboxTools::class)->route($conversation);
+            // The number's chatbot answers in its own job, after this message is in the inbox. While
+            // it handles the conversation, the generic auto-reply and auto-routing stay out of its way
+            // (the bot routes to a person itself when it hands off).
+            $bot = $conversation !== null && app(Chatbots::class)->wantsMessage($conversation);
+            if ($bot) {
+                RunChatbot::dispatch($message->id)->afterCommit();
+            } else {
+                app(AutoReply::class)->handle($message, $contact);
+                if ($conversation !== null) {
+                    app(InboxTools::class)->route($conversation);
+                }
             }
         }
 
@@ -172,6 +182,11 @@ final class MessageRecorder
         $changed = $intent === 'opt_out'
             ? $this->consent->optOut($contact, $source, $text, $message->id)
             : $this->consent->optIn($contact, $source, $text, $message->id);
+
+        // An opt-out ends any chatbot conversation at once: the bot never answers STOP.
+        if ($changed && $intent === 'opt_out' && ($conversation = Conversation::query()->find($message->conversation_id)) !== null) {
+            app(Chatbots::class)->stop($conversation, 'opted_out');
+        }
 
         // Confirm once, when the state really changed — never an auto-reply loop.
         if ($changed) {

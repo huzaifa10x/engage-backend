@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Messaging;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\Permission;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Enums\ConversationStatus;
@@ -18,6 +19,7 @@ use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\ConversationResource;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
@@ -32,7 +34,9 @@ final class ConversationController extends Controller
         $data = $request->validate([
             'phone_number_id' => ['nullable', 'uuid'],
             'status' => ['nullable', Rule::enum(ConversationStatus::class)],
-            'assigned' => ['nullable', Rule::in(['me', 'unassigned', 'any'])],
+            'assigned' => ['nullable', Rule::in(['me', 'unassigned', 'others', 'any'])],
+            // Chatbot views: handled by the bot now, waiting on the customer, or how the bot ended.
+            'view' => ['nullable', Rule::in(['bot', 'waiting', 'abandoned', 'completed', 'handed_off'])],
             'unread' => ['nullable', 'boolean'],
             'snoozed' => ['nullable', 'boolean'],
             'q' => ['nullable', 'string', 'max:100'],
@@ -48,6 +52,10 @@ final class ConversationController extends Controller
             ->when($data['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
             ->when(($data['assigned'] ?? null) === 'me', fn ($q) => $q->where('assigned_membership_id', $membership->id))
             ->when(($data['assigned'] ?? null) === 'unassigned', fn ($q) => $q->whereNull('assigned_membership_id'))
+            ->when(($data['assigned'] ?? null) === 'others', fn ($q) => $q->whereNotNull('assigned_membership_id')->where('assigned_membership_id', '!=', $membership->id))
+            ->when(($data['view'] ?? null) === 'bot', fn ($q) => $q->where('handler', 'bot'))
+            ->when(($data['view'] ?? null) === 'waiting', fn ($q) => $q->where('last_message_direction', 'outbound')->where(fn ($w) => $w->whereNull('handler')->orWhere('handler', '!=', 'bot')))
+            ->when(in_array($data['view'] ?? null, ['abandoned', 'completed', 'handed_off'], true), fn ($q) => $q->where('bot_state', $data['view']))
             ->when($request->boolean('unread'), fn ($q) => $q->where('unread_count', '>', 0))
             // Snoozed conversations stay out of the way until their time (or until the customer writes).
             ->when($request->boolean('snoozed'), fn ($q) => $q->where('snoozed_until', '>', now()), fn ($q) => $q->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now())))
@@ -103,6 +111,11 @@ final class ConversationController extends Controller
             $conversation->assigned_membership_id = $data['assigned_membership_id'];
         }
         $conversation->save();
+        // Closing ends any chatbot session; the next customer message may start the bot again.
+        if (($data['status'] ?? null) === ConversationStatus::Closed->value && $before['status'] !== 'closed') {
+            app(Chatbots::class)->stop($conversation, 'closed');
+            $conversation->refresh();
+        }
 
         // Tell a teammate when someone else gives them a conversation (bell + email).
         $assignee = $data['assigned_membership_id'] ?? null;
@@ -126,6 +139,31 @@ final class ConversationController extends Controller
         }
 
         return ConversationResource::make($conversation->load(['contact', 'phoneNumber']));
+    }
+
+    /** "Take over": the chatbot stops answering in this conversation; a person handles it. */
+    public function takeOver(Conversation $conversation, Chatbots $chatbots, AuditLogger $audit): ConversationResource
+    {
+        $this->authorizeThread($conversation);
+        $chatbots->takeOver($conversation);
+        if ($conversation->assigned_membership_id === null) {
+            $conversation->forceFill(['assigned_membership_id' => $this->membership()->id])->save();
+        }
+        $audit->record('conversation.bot_taken_over', $conversation);
+
+        return ConversationResource::make($conversation->refresh()->load(['contact', 'phoneNumber']));
+    }
+
+    /** "Hand back to bot": the number's flow takes the conversation again (restarting now if the window is open). */
+    public function handBack(Request $request, Conversation $conversation, Chatbots $chatbots, AuditLogger $audit): JsonResponse
+    {
+        $this->authorizeThread($conversation);
+        $restart = $request->boolean('restart', true);
+        $started = $chatbots->handBack($conversation, $restart);
+        $audit->record('conversation.bot_handed_back', $conversation, meta: ['restarted' => $started]);
+
+        return ConversationResource::make($conversation->refresh()->load(['contact', 'phoneNumber']))
+            ->additional(['meta' => ['restarted' => $started]])->response();
     }
 
     /** Clear unread and send blue ticks for the latest customer message. */

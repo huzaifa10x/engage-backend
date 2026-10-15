@@ -53,6 +53,9 @@ enum Permission: string
     case IntegrationsView = 'integrations.view';
     case IntegrationsManage = 'integrations.manage';
 
+    case ChatbotsView = 'chatbots.view';
+    case ChatbotsManage = 'chatbots.manage';
+
     case AuditView = 'audit.view';
 
     /** @return list<string> */

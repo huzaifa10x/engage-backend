@@ -55,11 +55,15 @@ final class ManageContacts
         return $contact;
     }
 
-    /** @param array{name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, tags?: ?array<int, string>} $data */
-    public function update(Contact $contact, array $data): Contact
+    /**
+     * @param  array{name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, tags?: ?array<int, string>}  $data
+     * @param  bool  $partial  true when only some fields are written (a chatbot saving one answer):
+     *                         fields marked required elsewhere are not demanded then.
+     */
+    public function update(Contact $contact, array $data, bool $partial = false): Contact
     {
         $before = $contact->only(['name', 'email']);
-        $contact->fill($this->attributes($data))->save();
+        $contact->fill($this->attributes($data, ! $partial))->save();
         $this->audit->record('contact.updated', $contact, before: $before, after: $contact->only(['name', 'email']));
         app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.updated', PublicPayload::contact($contact));
 
@@ -79,12 +83,12 @@ final class ManageContacts
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
-    private function attributes(array $data): array
+    private function attributes(array $data, bool $checkRequired = true): array
     {
         $out = array_intersect_key($data, array_flip(['name', 'email']));
         if (array_key_exists('attributes', $data)) {
             // Values of the workspace's custom fields are checked against their type and rules.
-            $out['custom_fields'] = app(CustomFields::class)->values((array) ($data['attributes'] ?? [])) ?: null;
+            $out['custom_fields'] = app(CustomFields::class)->values((array) ($data['attributes'] ?? []), $checkRequired) ?: null;
         }
         if (array_key_exists('tags', $data)) {
             $out['tags'] = $this->tags->ensure((array) $data['tags']);

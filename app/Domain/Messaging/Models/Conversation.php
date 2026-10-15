@@ -29,6 +29,8 @@ use Illuminate\Support\Carbon;
  * @property ?Carbon $last_inbound_at
  * @property ?Carbon $window_expires_at
  * @property ?Carbon $closed_at
+ * @property ?string $handler bot | human | null — who answers right now (see Chatbots)
+ * @property ?string $bot_state running | handed_off | completed | abandoned | stopped
  * @property ?Contact $contact
  * @property ?PhoneNumber $phoneNumber
  */
@@ -58,6 +60,7 @@ class Conversation extends Model
             'snoozed_until' => 'datetime',
             'auto_reply_enabled' => 'boolean',
             'closed_at' => 'datetime',
+            'handler_changed_at' => 'datetime',
         ];
     }
 

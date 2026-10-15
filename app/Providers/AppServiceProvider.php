@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Domain\Access\Models\Role;
 use App\Domain\Billing\Models\Subscription;
 use App\Domain\Campaigns\Models\Campaign;
+use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Developer\Services\EmitMessageWebhooks;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Identity\Models\User;
@@ -76,6 +77,7 @@ class AppServiceProvider extends ServiceProvider
             'message' => Message::class,
             'message_template' => MessageTemplate::class,
             'campaign' => Campaign::class,
+            'chatbot_flow' => ChatbotFlow::class,
         ]);
 
         // Strict mode minus preventAccessingMissingAttributes: freshly created models only hold the

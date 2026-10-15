@@ -27,8 +27,11 @@ final class PayloadBuilder
 
         $payload[$message->type] = match ($message->type) {
             'text' => ['body' => (string) $message->body, 'preview_url' => (bool) ($content['preview_url'] ?? true)],
-            'image', 'video' => array_filter(['id' => $metaMediaId, 'caption' => $message->body]),
-            'document' => array_filter(['id' => $metaMediaId, 'caption' => $message->body, 'filename' => $content['filename'] ?? $message->media?->filename]),
+            'image', 'video' => array_filter(['id' => $metaMediaId, 'link' => $metaMediaId === null ? ($content['link'] ?? null) : null, 'caption' => $message->body]),
+            'document' => array_filter([
+                'id' => $metaMediaId, 'link' => $metaMediaId === null ? ($content['link'] ?? null) : null,
+                'caption' => $message->body, 'filename' => $content['filename'] ?? $message->media?->filename,
+            ]),
             'audio' => array_filter(['id' => $metaMediaId, 'voice' => ($content['voice'] ?? false) === true ? true : null]),
             'sticker' => ['id' => $metaMediaId],
             'reaction' => ['message_id' => (string) ($content['message_id'] ?? ''), 'emoji' => (string) ($content['emoji'] ?? '')],
