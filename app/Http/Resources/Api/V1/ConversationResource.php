@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Domain\Chatbots\Engine\Placeholders;
 use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Messaging\Models\Conversation;
@@ -66,10 +67,20 @@ final class ConversationResource extends JsonResource
         }
         $node = $session->ended_node ?? $session->current_node;
 
+        // What the customer answered, for the agent who takes over (handoff details).
+        $answers = [];
+        foreach ((array) ($session->vars ?? []) as $key => $value) {
+            if (! str_starts_with((string) $key, '_') && ! in_array($key, ['last_input', 'http_status', 'started_from_ad'], true) && $value !== null && $value !== '' && count($answers) < 12) {
+                $answers[] = ['key' => $this->nodeTitle($session, (string) $key) ?? str_replace('_', ' ', (string) $key), 'value' => mb_substr(Placeholders::text($value), 0, 200)];
+            }
+        }
+
         return [
             'state' => $this->getAttribute('bot_state'),
             'flow_id' => $session->flow_id,
             'flow_name' => $session->flow?->name,
+            'bot_name' => $session->flow->name ?? 'Chatbot',
+            'answers' => $answers,
             'node_id' => $node,
             'node_title' => $node !== null ? $this->nodeTitle($session, $node) : null,
             'ended_reason' => $session->ended_reason,

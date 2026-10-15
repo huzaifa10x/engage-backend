@@ -78,7 +78,8 @@ final class InboxToolsController extends Controller
         return response()->json(['data' => $notes->map(fn (ConversationNote $n) => [
             'id' => $n->id,
             'body' => $n->body,
-            'author' => $n->membership_id !== null ? ($names[$n->membership_id] ?? 'Former member') : 'System',
+            'author' => $n->membership_id !== null ? ($names[$n->membership_id] ?? 'Former member') : ($n->author_name ?? 'System'),
+            'by_bot' => $n->membership_id === null && $n->author_name !== null,
             'mine' => $n->membership_id === $this->context->membership()?->id,
             'mentions' => array_values(array_filter(array_map(fn (string $id) => $names[$id] ?? null, $n->mentions ?? []))),
             'created_at' => $n->created_at?->toIso8601String(),

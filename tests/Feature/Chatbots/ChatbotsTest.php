@@ -133,7 +133,7 @@ final class ChatbotsTest extends TestCase
         $this->assertSame('bot', $conversation->handler);
         $this->assertSame('running', $conversation->bot_state);
         $this->assertSame(1, $conversation->unread_count, 'the customer message is in the inbox like any other');
-        $this->assertSame(['Hi Sara 👋 Welcome! How can we help you today?'], $this->received());
+        $this->assertSame(["Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?"], $this->received());
         $this->assertSame(['Our services', 'Opening hours', 'Talk to a person'], array_column(array_column($this->sent[0]['interactive']['action']['buttons'], 'reply'), 'title'));
 
         // Bot messages show in the thread too; the inbox lists the conversation under "Bot".
@@ -162,9 +162,9 @@ final class ChatbotsTest extends TestCase
         $this->assertSame('Can we help with anything else?', $this->received()[2]);
 
         $this->says('main menu'); // typed instead of tapped
-        $this->assertSame('Hi Sara 👋 Welcome! How can we help you today?', $this->received()[3]);
+        $this->assertSame("Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?", $this->received()[3]);
 
-        // Two wrong answers get a retry each, the third goes down "No match" (to the handoff).
+        // Two wrong answers get a retry each; the third connects to a person (the default "No match" handling).
         $this->says('pizza?');
         $this->says('still pizza');
         $this->assertSame("Sorry, I didn't catch that. Please choose one of the options.", $this->received()[4]);
@@ -196,7 +196,7 @@ final class ChatbotsTest extends TestCase
         $this->assertCount($count, $this->sent, 'a tap on an old menu does not wake the bot');
 
         $this->postJson("/api/v1/conversations/{$conversation->id}/bot/hand-back")->assertOk()->assertJsonPath('meta.restarted', true)->assertJsonPath('data.handler', 'bot');
-        $this->assertSame('Hi Sara 👋 Welcome! How can we help you today?', last($this->received()));
+        $this->assertSame("Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?", last($this->received()));
     }
 
     public function test_a_bot_reply_prepared_while_an_agent_takes_over_is_discarded(): void
@@ -272,7 +272,7 @@ final class ChatbotsTest extends TestCase
         $this->travel(2)->hours();
 
         $this->says('hello again');
-        $this->assertSame('Hi Sara 👋 Welcome! How can we help you today?', last($this->received()));
+        $this->assertSame("Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?", last($this->received()));
         $this->inTenant(fn () => $this->assertSame(2, ChatbotSession::query()->count()));
     }
 
@@ -377,9 +377,11 @@ final class ChatbotsTest extends TestCase
         ]]])->assertOk();
 
         $issues = collect($this->postJson("/api/v1/chatbots/{$id}/publish")->assertStatus(422)->json('error.details.issues'))->pluck('message')->implode("\n");
-        $this->assertStringContainsString('“Menu” has an unconnected branch: No match', $issues);
+        $this->assertStringContainsString('“Lost”: the “Next” branch goes nowhere.', $issues);
         $this->assertStringContainsString('“Lost” can never be reached', $issues);
-        $this->assertStringContainsString('Add a Talk to a person (Handoff) block', $issues);
+        $this->assertStringContainsString('Customers can never reach a person.', $issues);
+        // "No match" is optional: a menu without it asks again, then hands over — not an error.
+        $this->assertStringNotContainsString('No match', $issues);
 
         $this->postJson("/api/v1/chatbots/{$id}/activate", ['active' => true])->assertStatus(422); // never published
     }
@@ -405,7 +407,7 @@ final class ChatbotsTest extends TestCase
         $id = $this->postJson('/api/v1/chatbots', ['name' => 'Draft', 'template' => 'menu'])->assertCreated()->json('data.id');
 
         $start = $this->postJson("/api/v1/chatbots/{$id}/test")->assertOk();
-        $this->assertSame('Hi Test 👋 Welcome! How can we help you today?', $start->json('data.transcript.0.message.body'));
+        $this->assertSame("Hi Test 👋 Welcome to {$this->tenant->name}! How can we help you today?", $start->json('data.transcript.0.message.body'));
         $this->assertSame('welcome', $start->json('data.state.node_id'));
 
         $next = $this->postJson("/api/v1/chatbots/{$id}/test", ['test_id' => $start->json('data.test_id'), 'payload' => 'bot:welcome:person'])->assertOk();

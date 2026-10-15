@@ -7,8 +7,12 @@ namespace App\Domain\Chatbots\Engine;
 use App\Application\Messaging\ManageContacts;
 use App\Application\Messaging\SendMessage;
 use App\Domain\Chatbots\Models\ChatbotEvent;
+use App\Domain\Chatbots\Models\ChatbotFlow;
+use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSecret;
 use App\Domain\Chatbots\Models\ChatbotSession;
+use App\Domain\Chatbots\Services\ChatbotWorkspace;
+use App\Domain\Chatbots\Services\OrderLookup;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Messaging\Enums\ConversationStatus;
@@ -16,6 +20,8 @@ use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Exceptions\MessagingException;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Models\ConversationNote;
+use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
@@ -36,6 +42,11 @@ final class LiveRuntime extends BotRuntime
 {
     private Contact $contactModel;
 
+    /** @var array<string, ?FlowGraph> subflow graphs, by flow id */
+    private array $graphs = [];
+
+    private ?string $botName = null;
+
     public function __construct(
         private readonly ChatbotSession $session,
         private readonly Conversation $conversation,
@@ -50,6 +61,7 @@ final class LiveRuntime extends BotRuntime
             'status' => $session->status,
             'steps' => $session->steps,
             'resume_at' => $session->resume_at?->toIso8601String(),
+            'timeout_at' => $session->timeout_at?->toIso8601String(),
             'ended_reason' => null,
             'ended_node' => null,
         ];
@@ -73,7 +85,7 @@ final class LiveRuntime extends BotRuntime
         ];
     }
 
-    public function send(array $data): void
+    public function send(array $data): string
     {
         $key = "bot:{$this->session->id}:".(++$this->state['steps']);
 
@@ -99,6 +111,8 @@ final class LiveRuntime extends BotRuntime
             };
             throw new BotSendFailed($e->getMessage(), $reason);
         }
+
+        return $key;
     }
 
     public function updateContact(array $changes): void
@@ -176,6 +190,64 @@ final class LiveRuntime extends BotRuntime
         return InboxTools::isOpen(app(TenantContext::class)->tenantOrNull());
     }
 
+    public function openDays(): array
+    {
+        return ChatbotWorkspace::openDays(app(TenantContext::class)->tenantOrNull());
+    }
+
+    public function timezone(): string
+    {
+        return app(TenantContext::class)->tenantOrNull()->timezone ?? 'UTC';
+    }
+
+    public function graph(string $flowId): ?FlowGraph
+    {
+        if (! array_key_exists($flowId, $this->graphs)) {
+            $flow = ChatbotFlow::query()->whereKey($flowId)->where('kind', 'subflow')->first();
+            $row = $flow?->published_version !== null
+                ? ChatbotFlowVersion::query()->where('flow_id', $flowId)->where('version', $flow->published_version)->first() : null;
+            $this->graphs[$flowId] = $row !== null ? FlowGraph::from($row->graph) : null;
+        }
+
+        return $this->graphs[$flowId];
+    }
+
+    public function optOut(string $scope): void
+    {
+        $consent = app(ConsentService::class);
+        $scope === 'all'
+            ? $consent->optOut($this->contactModel, 'chatbot', $this->botName())
+            : $consent->setMarketingPreference($this->contactModel, true, $this->botName(), 'chatbot');
+        $this->contactModel->refresh();
+        $this->contact = self::snapshot($this->contactModel);
+    }
+
+    public function order(string $number): ?array
+    {
+        return app(OrderLookup::class)->find($number, $this->contact['phone'], $this->contactModel->id);
+    }
+
+    public function internalNote(string $text): void
+    {
+        if (trim($text) === '') {
+            return;
+        }
+        ConversationNote::query()->create([
+            'conversation_id' => $this->conversation->id, 'membership_id' => null, 'author_name' => mb_substr($this->botName(), 0, 120),
+            'body' => mb_substr($text, 0, 4000), 'mentions' => [],
+        ]);
+    }
+
+    public function botName(): string
+    {
+        return $this->botName ??= (string) (ChatbotFlow::query()->whereKey($this->session->flow_id)->value('name') ?? 'Chatbot');
+    }
+
+    public function business(): array
+    {
+        return ChatbotWorkspace::variables(app(TenantContext::class)->tenantOrNull());
+    }
+
     public function secret(string $name): ?string
     {
         $row = ChatbotSecret::query()->where('name', $name)->first();
@@ -221,6 +293,7 @@ final class LiveRuntime extends BotRuntime
                 'vars' => $this->state['vars'] ?: null,
                 'steps' => $this->state['steps'],
                 'resume_at' => $this->state['resume_at'],
+                'timeout_at' => $this->state['timeout_at'] ?? null,
                 'last_activity_at' => now(),
                 'reminder_sent_at' => $inboundAt !== null ? null : $session->reminder_sent_at,
                 'last_inbound_at' => $inboundAt !== null && ($session->last_inbound_at === null || $inboundAt->gt($session->last_inbound_at)) ? $inboundAt : $session->last_inbound_at,

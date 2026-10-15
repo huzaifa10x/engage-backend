@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Services;
 
+use App\Domain\Chatbots\Jobs\ChatbotDelivery;
 use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Events\MessageStored;
 use App\Domain\Messaging\Exceptions\MessageNotYetKnown;
@@ -79,6 +80,11 @@ final class StatusApplier
         if ($updates !== []) {
             $message->forceFill($updates)->save();
             MessageStored::dispatch($message, false);
+            // A chatbot template with a "Not delivered" branch waits for this report.
+            if (isset($updates['status']) && in_array($updates['status'], [MessageStatus::Failed, MessageStatus::Delivered, MessageStatus::Read], true)
+                && str_starts_with((string) $message->getAttribute('idempotency_key'), 'bot:')) {
+                ChatbotDelivery::dispatch($message->id)->afterCommit();
+            }
         }
 
         return $message;

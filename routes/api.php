@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\V1\Billing\StripeWebhookController;
+use App\Http\Controllers\Chatbots\ChatbotHookController;
 use App\Http\Controllers\Integrations\StoreWebhookController;
 use App\Http\Controllers\Meta\DataDeletionController;
 use App\Http\Controllers\Meta\WebhookController;
@@ -35,6 +36,12 @@ Route::prefix('meta')->name('meta.')->middleware('throttle:60,1')->group(functio
     Route::get('data-deletion/{code}', [DataDeletionController::class, 'show'])->where('code', '[A-Za-z0-9]{12}')->name('data-deletion.show');
     Route::post('deauthorize', [DataDeletionController::class, 'deauthorize'])->name('deauthorize');
 });
+
+/*
+| Chatbot "incoming webhook" triggers — another system starts a flow for a phone number. The secret
+| token in the URL is the authentication.
+*/
+Route::post('chatbots/hooks/{token}', [ChatbotHookController::class, 'receive'])->where('token', '[a-z0-9]{40}')->middleware('throttle:120,1')->name('chatbots.hook');
 
 /*
 | Store integrations — called by Shopify and by customers' WooCommerce stores, so the contract is

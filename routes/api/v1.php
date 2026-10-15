@@ -127,26 +127,45 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
 
     /*
-    | Chatbots & Flows: per-number bots built on a canvas, tested, published and switched on.
+    | Chatbots & Flows: bots built on a canvas, tested, reviewed, published and switched on per number.
+    | view = see, test, comment, analytics · manage = edit drafts · publish = publish, switch on/off, approve.
     */
     Route::middleware('can:'.Permission::ChatbotsView->value)->prefix('chatbots')->name('chatbots.')->group(function () {
         Route::get('/', [ChatbotController::class, 'index'])->name('index');
         Route::get('options', [ChatbotController::class, 'options'])->name('options');
+        Route::get('templates', [ChatbotController::class, 'templates'])->name('templates');
         Route::get('secrets', [ChatbotController::class, 'secrets'])->name('secrets');
+        Route::get('workspace', [ChatbotController::class, 'workspace'])->name('workspace');
+        Route::get('snippets', [ChatbotController::class, 'snippets'])->name('snippets');
         Route::get('{flow}', [ChatbotController::class, 'show'])->whereUuid('flow')->name('show');
         Route::get('{flow}/analytics', [ChatbotController::class, 'analytics'])->whereUuid('flow')->name('analytics');
+        Route::get('{flow}/history', [ChatbotController::class, 'history'])->whereUuid('flow')->name('history');
+        Route::get('{flow}/export', [ChatbotController::class, 'export'])->whereUuid('flow')->name('export');
         Route::post('{flow}/test', [ChatbotController::class, 'test'])->whereUuid('flow')->middleware('throttle:120,1')->name('test');
+        Route::get('{flow}/comments', [ChatbotController::class, 'comments'])->whereUuid('flow')->name('comments');
+        Route::post('{flow}/comments', [ChatbotController::class, 'addComment'])->whereUuid('flow')->middleware('throttle:60,1')->name('comments.add');
+        Route::patch('{flow}/comments/{comment}', [ChatbotController::class, 'updateComment'])->whereUuid(['flow', 'comment'])->name('comments.update');
+        Route::delete('{flow}/comments/{comment}', [ChatbotController::class, 'deleteComment'])->whereUuid(['flow', 'comment'])->name('comments.delete');
     });
     Route::middleware('can:'.Permission::ChatbotsManage->value)->prefix('chatbots')->name('chatbots.')->group(function () {
         Route::post('/', [ChatbotController::class, 'store'])->name('store');
+        Route::post('import', [ChatbotController::class, 'import'])->middleware('throttle:20,1')->name('import');
         Route::put('secrets', [ChatbotController::class, 'saveSecret'])->middleware('throttle:30,1')->name('secrets.save');
         Route::delete('secrets/{name}', [ChatbotController::class, 'deleteSecret'])->name('secrets.delete');
+        Route::put('workspace', [ChatbotController::class, 'saveWorkspace'])->name('workspace.save');
+        Route::put('snippets', [ChatbotController::class, 'saveSnippet'])->name('snippets.save');
+        Route::delete('snippets/{snippet}', [ChatbotController::class, 'deleteSnippet'])->whereUuid('snippet')->name('snippets.delete');
         Route::patch('{flow}', [ChatbotController::class, 'update'])->whereUuid('flow')->name('update');
         Route::delete('{flow}', [ChatbotController::class, 'destroy'])->whereUuid('flow')->name('destroy');
+        Route::post('{flow}/duplicate', [ChatbotController::class, 'duplicate'])->whereUuid('flow')->name('duplicate');
+        Route::post('{flow}/archive', [ChatbotController::class, 'archive'])->whereUuid('flow')->name('archive');
+        Route::post('{flow}/review', [ChatbotController::class, 'review'])->whereUuid('flow')->name('review');
+    });
+    Route::middleware('can:'.Permission::ChatbotsPublish->value)->prefix('chatbots')->name('chatbots.')->group(function () {
         Route::post('{flow}/publish', [ChatbotController::class, 'publish'])->whereUuid('flow')->name('publish');
         Route::post('{flow}/activate', [ChatbotController::class, 'activate'])->whereUuid('flow')->name('activate');
-        Route::post('{flow}/duplicate', [ChatbotController::class, 'duplicate'])->whereUuid('flow')->name('duplicate');
         Route::post('{flow}/versions/{version}/restore', [ChatbotController::class, 'restore'])->whereUuid('flow')->whereNumber('version')->name('versions.restore');
+        Route::post('{flow}/webhook', [ChatbotController::class, 'webhookToken'])->whereUuid('flow')->name('webhook');
     });
 
     Route::get('tenant/inbox-settings', [InboxToolsController::class, 'inboxSettings'])->name('tenant.inbox-settings');

@@ -31,6 +31,7 @@ use Illuminate\Support\Carbon;
  * @property ?Carbon $last_activity_at
  * @property ?Carbon $reminder_sent_at
  * @property ?Carbon $resume_at
+ * @property ?Carbon $timeout_at
  * @property ?string $ended_reason
  * @property ?string $ended_node
  * @property ?Carbon $ended_at
@@ -46,7 +47,7 @@ class ChatbotSession extends Model
 
     protected $fillable = [
         'tenant_id', 'flow_id', 'flow_version', 'conversation_id', 'contact_id', 'phone_number_id', 'status', 'current_node', 'awaiting_input',
-        'retry_count', 'vars', 'steps', 'last_inbound_at', 'last_activity_at', 'reminder_sent_at', 'resume_at', 'ended_reason', 'ended_node', 'ended_at',
+        'retry_count', 'vars', 'steps', 'last_inbound_at', 'last_activity_at', 'reminder_sent_at', 'resume_at', 'timeout_at', 'ended_reason', 'ended_node', 'ended_at',
     ];
 
     protected function casts(): array
@@ -61,6 +62,7 @@ class ChatbotSession extends Model
             'last_activity_at' => 'datetime',
             'reminder_sent_at' => 'datetime',
             'resume_at' => 'datetime',
+            'timeout_at' => 'datetime',
             'ended_at' => 'datetime',
         ];
     }

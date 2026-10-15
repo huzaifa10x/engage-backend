@@ -73,15 +73,15 @@ final class ConsentService
         return true;
     }
 
-    /** Meta user_preferences webhook: the user stopped / resumed marketing messages in WhatsApp. */
-    public function setMarketingPreference(Contact $contact, bool $optedOut, ?string $detail = null): void
+    /** Meta user_preferences webhook (or a chatbot Opt-out block): the user stopped / resumed marketing messages. */
+    public function setMarketingPreference(Contact $contact, bool $optedOut, ?string $detail = null, string $source = 'meta_preference'): void
     {
         if ($contact->marketing_opted_out === $optedOut) {
             return;
         }
 
         $contact->forceFill(['marketing_opted_out' => $optedOut])->save();
-        $this->record($contact, $optedOut ? 'marketing_opted_out' : 'marketing_opted_in', 'meta_preference', $detail, null, null);
+        $this->record($contact, $optedOut ? 'marketing_opted_out' : 'marketing_opted_in', $source, $detail, null, null);
     }
 
     private function record(Contact $contact, string $action, string $source, ?string $detail, ?string $messageId, ?string $membershipId): void

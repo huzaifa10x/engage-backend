@@ -17,6 +17,7 @@ use Illuminate\Support\Carbon;
  * @property string $conversation_id
  * @property ?string $membership_id
  * @property string $body
+ * @property ?string $author_name a chatbot's name when the bot wrote the note
  * @property list<string>|null $mentions
  * @property ?Carbon $created_at
  */
@@ -24,7 +25,7 @@ class ConversationNote extends Model
 {
     use BelongsToTenant, HasUuids;
 
-    protected $fillable = ['tenant_id', 'conversation_id', 'membership_id', 'body', 'mentions'];
+    protected $fillable = ['tenant_id', 'conversation_id', 'membership_id', 'author_name', 'body', 'mentions'];
 
     protected function casts(): array
     {

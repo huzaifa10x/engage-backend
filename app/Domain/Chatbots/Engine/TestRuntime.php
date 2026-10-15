@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace App\Domain\Chatbots\Engine;
 
+use App\Domain\Chatbots\Models\ChatbotFlow;
+use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSecret;
+use App\Domain\Chatbots\Services\ChatbotWorkspace;
+use App\Domain\Chatbots\Services\OrderLookup;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Crm\Services\SegmentQuery;
@@ -29,11 +33,11 @@ final class TestRuntime extends BotRuntime
      * @param  array<string, mixed>  $state
      * @param  array<string, mixed>  $contact
      */
-    public function __construct(array $state, array $contact)
+    public function __construct(array $state, array $contact, private readonly string $botName = 'Chatbot')
     {
         $this->state = $state + [
             'current_node' => null, 'awaiting_input' => false, 'retry_count' => 0, 'vars' => [], 'status' => 'active',
-            'steps' => 0, 'resume_at' => null, 'ended_reason' => null, 'ended_node' => null,
+            'steps' => 0, 'resume_at' => null, 'timeout_at' => null, 'ended_reason' => null, 'ended_node' => null,
         ];
         $this->contact = $contact;
     }
@@ -52,10 +56,12 @@ final class TestRuntime extends BotRuntime
         return true;
     }
 
-    public function send(array $data): void
+    public function send(array $data): ?string
     {
         $this->state['steps']++;
         $this->transcript[] = ['kind' => 'bot', 'message' => $data];
+
+        return null;
     }
 
     public function updateContact(array $changes): void
@@ -98,6 +104,53 @@ final class TestRuntime extends BotRuntime
     public function businessOpen(): bool
     {
         return InboxTools::isOpen(app(TenantContext::class)->tenantOrNull());
+    }
+
+    public function openDays(): array
+    {
+        return ChatbotWorkspace::openDays(app(TenantContext::class)->tenantOrNull());
+    }
+
+    public function timezone(): string
+    {
+        return app(TenantContext::class)->tenantOrNull()->timezone ?? 'UTC';
+    }
+
+    /** A subflow's published version; one never published is tested from its draft. */
+    public function graph(string $flowId): ?FlowGraph
+    {
+        $flow = ChatbotFlow::query()->whereKey($flowId)->where('kind', 'subflow')->first();
+        if ($flow === null) {
+            return null;
+        }
+        $row = $flow->published_version !== null ? ChatbotFlowVersion::query()->where('flow_id', $flowId)->where('version', $flow->published_version)->first() : null;
+
+        return FlowGraph::from($row !== null ? $row->graph : $flow->draft);
+    }
+
+    public function optOut(string $scope): void
+    {
+        $this->note($scope === 'all' ? '(Test) The customer would be opted out of all messages.' : '(Test) The customer would be opted out of marketing messages.');
+    }
+
+    public function order(string $number): ?array
+    {
+        return $this->contact['id'] !== null ? app(OrderLookup::class)->find($number, $this->contact['phone'], $this->contact['id']) : null;
+    }
+
+    public function internalNote(string $text): void
+    {
+        $this->transcript[] = ['kind' => 'internal', 'author' => $this->botName, 'text' => $text];
+    }
+
+    public function botName(): string
+    {
+        return $this->botName;
+    }
+
+    public function business(): array
+    {
+        return ChatbotWorkspace::variables(app(TenantContext::class)->tenantOrNull());
     }
 
     public function secret(string $name): ?string

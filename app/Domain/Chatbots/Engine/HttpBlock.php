@@ -71,7 +71,7 @@ final class HttpBlock
 
         foreach ($c['save'] as $map) {
             $value = data_get($data, $map['path']);
-            $target = (string) FlowGraph::saveTarget($map['to']);
+            $target = (string) NodeConfig::saveTarget($map['to']);
             if (str_starts_with($target, 'var:')) {
                 $rt->state['vars'][substr($target, 4)] = is_scalar($value) || $value === null ? $value : json_decode((string) json_encode($value), true);
             } else {
@@ -97,6 +97,39 @@ final class HttpBlock
     }
 
     /**
+     * Google Sheets row: posts {sheet, row: {column: value}} as JSON to the sheet's Apps Script web
+     * app, which appends the row. Google answers a web-app POST with a redirect after running the
+     * script, so 2xx and 3xx both count as written.
+     *
+     * @param  array<string, mixed>  $c
+     */
+    public function sheet(array $c, BotRuntime $rt, string $nodeId): bool
+    {
+        $url = (string) $c['webapp_url'];
+        if (! str_starts_with($url, 'https://script.google.com/')) {
+            return $this->fail($rt, $nodeId, 'blocked_url', 'the sheet link must be a Google Apps Script web app (https://script.google.com/…)');
+        }
+        $row = [];
+        foreach ($c['columns'] as $col) {
+            $row[$col['name']] = Placeholders::fill($col['value'], $rt);
+        }
+        try {
+            $this->guard->assertPublic($url);
+            $response = Http::timeout(8)->connectTimeout(5)->withoutRedirecting()->acceptJson()
+                ->post($url, ['sheet' => $c['sheet'], 'row' => $row, 'submitted_at' => now()->toIso8601String()]);
+        } catch (Throwable $e) {
+            return $this->fail($rt, $nodeId, 'unreachable', $e instanceof ValidationException ? 'the sheet link is not allowed' : 'Google Sheets did not answer in time');
+        }
+        $ok = $response->status() >= 200 && $response->status() < 400;
+        if (! $ok) {
+            return $this->fail($rt, $nodeId, 'http_'.$response->status(), 'Google Sheets answered '.$response->status());
+        }
+        $rt->note('Row added to Google Sheets: '.implode(' · ', array_map(fn ($k, $v) => "{$k}: {$v}", array_keys($row), $row)));
+
+        return true;
+    }
+
+    /**
      * Placeholders may fill the path and query, never the scheme or host: "{{var.x}}" in the host
      * would let a customer's answer pick which server we call.
      */
@@ -110,7 +143,7 @@ final class HttpBlock
     private function fail(BotRuntime $rt, string $nodeId, string $reason, string $message): bool
     {
         $rt->event($nodeId, 'error', $reason);
-        $rt->note("API call failed: {$message} (Error branch)");
+        $rt->note("Request failed: {$message}");
 
         return false;
     }

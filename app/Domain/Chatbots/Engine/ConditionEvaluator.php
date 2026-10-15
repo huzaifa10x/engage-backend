@@ -49,6 +49,8 @@ final class ConditionEvaluator
             $rule['field'] === 'name', $rule['field'] === 'email', $rule['field'] === 'phone' => $rt->contact[$rule['field']] ?? null,
             $rule['field'] === 'consent' => $rt->contact['consent'],
             $rule['field'] === 'last_input' => $rt->state['vars']['last_input'] ?? null,
+            $rule['field'] === 'language' => $rt->state['vars']['_lang'] ?? null,
+            str_starts_with($rule['field'], 'business:') => $rt->business()[substr($rule['field'], 9)] ?? null,
             str_starts_with($rule['field'], 'field:') => $rt->contact['fields'][substr($rule['field'], 6)] ?? null,
             str_starts_with($rule['field'], 'var:') => data_get($rt->state['vars'], substr($rule['field'], 4)),
             default => null,
@@ -64,7 +66,8 @@ final class ConditionEvaluator
             'not_equals' => ! ($number($text) !== null && $number($want) !== null ? $number($text) === $number($want) : $text === $want),
             'contains' => $want !== '' && str_contains($text, $want),
             'not_contains' => $want === '' || ! str_contains($text, $want),
-            'gt', 'lt' => $this->compare($text, $want, $number) * ($op === 'gt' ? 1 : -1) > 0,
+            'gt', 'lt' => $text !== '' && $this->compare($text, $want, $number) * ($op === 'gt' ? 1 : -1) > 0,
+            'gte', 'lte' => $text !== '' && $this->compare($text, $want, $number) * ($op === 'gte' ? 1 : -1) >= 0,
             default => false,
         };
     }

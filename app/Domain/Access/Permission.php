@@ -54,7 +54,8 @@ enum Permission: string
     case IntegrationsManage = 'integrations.manage';
 
     case ChatbotsView = 'chatbots.view';
-    case ChatbotsManage = 'chatbots.manage';
+    case ChatbotsManage = 'chatbots.manage';     // edit drafts (editor)
+    case ChatbotsPublish = 'chatbots.publish';   // publish, switch on/off, approve reviews (publisher)
 
     case AuditView = 'audit.view';
 

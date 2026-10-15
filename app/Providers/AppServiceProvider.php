@@ -8,6 +8,7 @@ use App\Domain\Access\Models\Role;
 use App\Domain\Billing\Models\Subscription;
 use App\Domain\Campaigns\Models\Campaign;
 use App\Domain\Chatbots\Models\ChatbotFlow;
+use App\Domain\Chatbots\Services\DataTriggers;
 use App\Domain\Developer\Services\EmitMessageWebhooks;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Identity\Models\User;
@@ -37,6 +38,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Throwable;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -54,6 +56,15 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(MetaAccessRejected::class, function (MetaAccessRejected $event): void {
             if (Cache::add('meta-access-check:'.$event->objectId, 1, 300)) {
                 VerifyMetaAccess::dispatch($event->objectId, $event->metaCode);
+            }
+        });
+
+        // Chatbot "data change" triggers: a new tag or a changed field can start a flow. Never breaks a contact save.
+        Contact::saved(function (Contact $contact): void {
+            try {
+                DataTriggers::saved($contact);
+            } catch (Throwable $e) {
+                report($e);
             }
         });
 
