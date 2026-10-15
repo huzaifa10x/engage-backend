@@ -199,6 +199,25 @@ final class ChatbotsTest extends TestCase
         $this->assertSame("Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?", last($this->received()));
     }
 
+    public function test_an_agent_can_hand_a_conversation_the_bot_never_ran_in_to_the_bot(): void
+    {
+        // The customer wrote and an agent answered before any chatbot was live on the number.
+        $this->says('hi');
+        $conversation = $this->conversation();
+        $this->actingAsMember($this->owner);
+        $this->getJson("/api/v1/conversations/{$conversation->id}")->assertOk()->assertJsonPath('data.bot_available', false);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hi Sara, I can help.'])->assertStatus(202);
+        $this->assertSame('human', $this->conversation()->handler);
+
+        $this->liveFlow();
+        $this->getJson("/api/v1/conversations/{$conversation->id}")->assertOk()
+            ->assertJsonPath('data.bot', null)->assertJsonPath('data.handler', 'human')->assertJsonPath('data.bot_available', true);
+        $this->getJson('/api/v1/conversations')->assertOk()->assertJsonPath('data.0.bot_available', true);
+
+        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/hand-back")->assertOk()->assertJsonPath('meta.restarted', true)->assertJsonPath('data.handler', 'bot');
+        $this->assertSame("Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?", last($this->received()));
+    }
+
     public function test_a_bot_reply_prepared_while_an_agent_takes_over_is_discarded(): void
     {
         $graph = ['nodes' => [

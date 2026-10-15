@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources\Api\V1;
 
 use App\Domain\Chatbots\Engine\Placeholders;
+use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Messaging\Models\Conversation;
@@ -27,6 +28,8 @@ final class ConversationResource extends JsonResource
             // Who answers now: "bot" (a chatbot session is running), "human", or null (nobody yet).
             'handler' => $this->getAttribute('handler'),
             'bot' => $this->bot(),
+            // A chatbot is live on this number, so an agent can hand the conversation (back) to it.
+            'bot_available' => $this->botAvailable($request),
             'unread_count' => $this->unread_count,
             'last_message_at' => $this->last_message_at?->toIso8601String(),
             'last_message_preview' => $this->getAttribute('last_message_preview'),
@@ -47,6 +50,17 @@ final class ConversationResource extends JsonResource
             ]),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
+    }
+
+    /** Looked up once per number per request (an inbox list shows many conversations on few numbers). */
+    private function botAvailable(Request $request): bool
+    {
+        $key = 'chatbots.live_on.'.$this->phone_number_id;
+        if (! $request->attributes->has($key)) {
+            $request->attributes->set($key, ChatbotFlow::anyLiveOn($this->phone_number_id));
+        }
+
+        return (bool) $request->attributes->get($key);
     }
 
     /**
