@@ -154,11 +154,11 @@ final class ConversationController extends Controller
         return ConversationResource::make($conversation->refresh()->load(['contact', 'phoneNumber']));
     }
 
-    /** "Hand back to bot": the number's flow takes the conversation again (restarting now if the window is open). */
+    /** "Hand back to bot": the bot takes the conversation again and answers the customer's next message (nothing is sent now). */
     public function handBack(Request $request, Conversation $conversation, Chatbots $chatbots, AuditLogger $audit): JsonResponse
     {
         $this->authorizeThread($conversation);
-        $restart = $request->boolean('restart', true);
+        $restart = $request->boolean('restart', false); // default: send nothing, the bot answers the customer's next message
         $outcome = $chatbots->handBackOutcome($conversation, $restart);
         $started = $outcome === 'started';
         $audit->record('conversation.bot_handed_back', $conversation, meta: ['restarted' => $started, 'outcome' => $outcome]);

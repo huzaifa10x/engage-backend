@@ -195,8 +195,35 @@ final class ChatbotsTest extends TestCase
         $this->taps('bot:welcome:hours', 'Opening hours');
         $this->assertCount($count, $this->sent, 'a tap on an old menu does not wake the bot');
 
-        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/hand-back")->assertOk()->assertJsonPath('meta.restarted', true)->assertJsonPath('data.handler', 'bot');
+        // Hand back: nothing is sent; the bot answers the customer's next message.
+        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/hand-back")->assertOk()
+            ->assertJsonPath('meta.restarted', false)->assertJsonPath('meta.outcome', 'waiting')->assertJsonPath('data.handler', null);
+        $this->assertCount($count, $this->sent, 'no greeting or notice on hand-back');
+        $this->travel(1)->minutes();
+        $this->says('hi again');
+        $this->assertSame('bot', $this->conversation()->handler);
         $this->assertSame("Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?", last($this->received()));
+    }
+
+    public function test_the_api_can_still_ask_the_bot_to_restart_right_away(): void
+    {
+        $this->liveFlow();
+        $this->says('hi');
+        $conversation = $this->conversation();
+        $this->actingAsMember($this->owner);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hi Sara, I can help.'])->assertStatus(202);
+
+        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/hand-back", ['restart' => true])->assertOk()
+            ->assertJsonPath('meta.restarted', true)->assertJsonPath('data.handler', 'bot');
+        $this->assertSame("Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?", last($this->received()));
+
+        // Not outside the 24-hour window: a free-form message there would break WhatsApp's rules.
+        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/take-over")->assertOk();
+        $this->travel(25)->hours();
+        $count = count($this->sent);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/hand-back", ['restart' => true])->assertOk()
+            ->assertJsonPath('meta.restarted', false)->assertJsonPath('meta.outcome', 'window_closed');
+        $this->assertCount($count, $this->sent);
     }
 
     public function test_an_agent_can_hand_a_conversation_the_bot_never_ran_in_to_the_bot(): void
@@ -214,7 +241,12 @@ final class ChatbotsTest extends TestCase
             ->assertJsonPath('data.bot', null)->assertJsonPath('data.handler', 'human')->assertJsonPath('data.bot_available', true);
         $this->getJson('/api/v1/conversations')->assertOk()->assertJsonPath('data.0.bot_available', true);
 
-        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/hand-back")->assertOk()->assertJsonPath('meta.restarted', true)->assertJsonPath('data.handler', 'bot');
+        $count = count($this->sent);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/hand-back")->assertOk()->assertJsonPath('meta.restarted', false)->assertJsonPath('data.handler', null);
+        $this->assertCount($count, $this->sent);
+        $this->travel(1)->minutes();
+        $this->says('are you there?');
+        $this->assertSame('bot', $this->conversation()->handler);
         $this->assertSame("Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?", last($this->received()));
     }
 
@@ -437,6 +469,9 @@ final class ChatbotsTest extends TestCase
 
         $this->patchJson("/api/v1/conversations/{$conversation->id}", ['status' => 'closed'])->assertOk();
         $this->assertNull($this->conversation()->handler);
+        // A closed conversation stays in the inbox list (all statuses), marked closed, with its messages.
+        $this->getJson('/api/v1/conversations')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.status', 'closed');
+        $this->getJson("/api/v1/conversations/{$conversation->id}/messages")->assertOk()->assertJsonPath('data.0.conversation_id', $conversation->id);
         $count = count($this->sent);
         $this->says('hi again');
         $this->assertSame('bot', $this->conversation()->handler);

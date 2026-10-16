@@ -39,7 +39,8 @@ use Throwable;
  *   bot   — a session is running; agents watch and can take over at any moment
  *   human — an agent (or the WhatsApp Business app) replied, someone took over, or the flow
  *           handed off; the bot stays silent until one of:
- *             • an agent clicks "Hand back to bot" (restarts now when a reply is allowed),
+ *             • an agent clicks "Hand back to bot" (nothing is sent: the bot answers the
+ *               customer's next message),
  *             • the conversation is closed (the next customer message may start a flow),
  *             • the flow's "auto-resume" time has passed since the last agent message or the
  *               handover, and the customer writes again (off unless set in Flow settings).
@@ -481,17 +482,18 @@ final class Chatbots
      * that ran last (or the number's default flow) starts again from the top right away; otherwise
      * the next customer message decides.
      */
-    public function handBack(Conversation $conversation, bool $restart = true): bool
+    public function handBack(Conversation $conversation, bool $restart = false): bool
     {
         return $this->handBackOutcome($conversation, $restart) === 'started';
     }
 
     /**
-     * "Hand back to bot", saying what happened: started (the flow runs now), waiting (the next
-     * customer message decides), window_closed (no reply allowed until the customer writes),
-     * opted_out (they opted out and have not written since: only their next message reopens it).
+     * "Hand back to bot", saying what happened. By default nothing is sent: the bot answers the
+     * customer's next message (waiting), or — for a customer who opted out and has not written
+     * since — only once they write again (opted_out). With $restart (API only) the flow starts
+     * right away when a reply is allowed: started, or window_closed when it is not.
      */
-    public function handBackOutcome(Conversation $conversation, bool $restart = true): string
+    public function handBackOutcome(Conversation $conversation, bool $restart = false): string
     {
         $outcome = 'waiting';
         Cache::lock("chatbot:conversation:{$conversation->id}", 120)->block(30, function () use ($conversation, &$outcome, $restart): void {
@@ -504,8 +506,9 @@ final class Chatbots
             $conversation->refresh();
             /** @var ?Contact $contact */
             $contact = $conversation->contact()->first();
+            $optedOutSilent = $contact !== null && $contact->isOptedOut() && ! $conversation->acceptsFreeFormFrom($contact);
             $outcome = match (true) {
-                ! $restart => 'waiting',
+                ! $restart => $optedOutSilent ? 'opted_out' : 'waiting',
                 ! $conversation->isWindowOpen() => 'window_closed',
                 $contact !== null && ! $conversation->acceptsFreeFormFrom($contact) => 'opted_out',
                 $this->startNow($conversation, is_string($last) ? $last : null) => 'started',
