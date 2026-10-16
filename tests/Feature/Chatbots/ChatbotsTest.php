@@ -504,6 +504,12 @@ final class ChatbotsTest extends TestCase
         $this->says('START');
         $this->assertSame('opted_in', $this->inTenant(fn () => Contact::query()->sole())->consent_state->value);
         $this->assertSame('You are subscribed. Reply STOP at any time to unsubscribe.', last($this->received()));
+
+        // The inbox can tell who sent what: the bot's greeting, the consent replies, the agent's question.
+        $sent = collect($this->getJson("/api/v1/conversations/{$conversation->id}/messages?per_page=50")->assertOk()->json('data'))->where('direction', 'outbound');
+        $this->assertSame('bot', $sent->firstWhere('body', "Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?")['automation']);
+        $this->assertSame('consent', $sent->firstWhere('body', 'You are subscribed. Reply STOP at any time to unsubscribe.')['automation']);
+        $this->assertNull($sent->first(fn (array $m) => str_starts_with((string) $m['body'], 'Would you like'))['automation']);
     }
 
     public function test_the_same_message_delivered_twice_gets_one_answer(): void

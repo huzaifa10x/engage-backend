@@ -98,6 +98,8 @@ final class InboundMessagingTest extends TestCase
 
     public function test_stop_and_start_keywords_update_consent(): void
     {
+        // The confirmations are sent to Meta: answered here, never over the network.
+        Http::fake(['graph.facebook.com/*/messages*' => fn () => Http::response(['messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '971501234567']], 'messages' => [['id' => 'wamid.C'.bin2hex(random_bytes(6))]]])]);
         $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => ' STOP! ']])))->assertOk();
         $this->inTenant(fn () => $this->assertSame(ConsentState::OptedOut, Contact::query()->sole()->consent_state));
 

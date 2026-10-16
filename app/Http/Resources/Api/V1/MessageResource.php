@@ -22,6 +22,8 @@ final class MessageResource extends JsonResource
             'conversation_id' => $this->conversation_id,
             'direction' => $this->direction,
             'origin' => $this->origin->value,
+            // Which automation sent it (from its idempotency key): bot | consent | auto_reply | integration; null for people.
+            'automation' => $this->automationKind(),
             'type' => $this->type,
             'status' => $this->status->value,
             'body' => $this->body,
@@ -63,5 +65,20 @@ final class MessageResource extends JsonResource
         $detail = $error['error_data']['details'] ?? $error['error_user_msg'] ?? $error['message'] ?? null;
 
         return is_string($detail) && $detail !== '' && $detail !== $this->error_title ? mb_substr($detail, 0, 500) : null;
+    }
+
+    private function automationKind(): ?string
+    {
+        if ($this->origin->value !== 'automation') {
+            return null;
+        }
+        $key = (string) $this->getAttribute('idempotency_key');
+
+        return match (true) {
+            str_starts_with($key, 'bot:') => 'bot',
+            str_starts_with($key, 'consent-') => 'consent',
+            str_starts_with($key, 'auto-reply:') => 'auto_reply',
+            default => 'integration',
+        };
     }
 }
