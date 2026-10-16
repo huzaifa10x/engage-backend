@@ -159,11 +159,12 @@ final class ConversationController extends Controller
     {
         $this->authorizeThread($conversation);
         $restart = $request->boolean('restart', true);
-        $started = $chatbots->handBack($conversation, $restart);
-        $audit->record('conversation.bot_handed_back', $conversation, meta: ['restarted' => $started]);
+        $outcome = $chatbots->handBackOutcome($conversation, $restart);
+        $started = $outcome === 'started';
+        $audit->record('conversation.bot_handed_back', $conversation, meta: ['restarted' => $started, 'outcome' => $outcome]);
 
         return ConversationResource::make($conversation->refresh()->load(['contact', 'phoneNumber']))
-            ->additional(['meta' => ['restarted' => $started]])->response();
+            ->additional(['meta' => ['restarted' => $started, 'outcome' => $outcome]])->response();
     }
 
     /** Clear unread and send blue ticks for the latest customer message. */

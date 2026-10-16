@@ -38,13 +38,19 @@ use Throwable;
  * Who answers is the conversation's `handler`:
  *   bot   — a session is running; agents watch and can take over at any moment
  *   human — an agent (or the WhatsApp Business app) replied, someone took over, or the flow
- *           handed off; the bot stays silent until "Hand back to bot", the auto-resume time,
- *           or the conversation is closed
+ *           handed off; the bot stays silent until one of:
+ *             • an agent clicks "Hand back to bot" (restarts now when a reply is allowed),
+ *             • the conversation is closed (the next customer message may start a flow),
+ *             • the flow's "auto-resume" time has passed since the last agent message or the
+ *               handover, and the customer writes again (off unless set in Flow settings).
+ *           The bot never takes a conversation back by sending something on its own.
  *   null  — nobody yet; the next customer message may start one of the number's live flows
  *
  * Which flow answers a customer message (entry precedence — the first that applies wins):
  *   1. a person handles the conversation → no bot
- *   2. the customer opted out → no bot (STOP / START are answered by the consent service)
+ *   2. STOP / START and other consent keywords → the consent service answers, never a flow
+ *      (a customer who opted out and writes again may be answered inside the window they opened:
+ *      SendMessage allows those replies and refuses templates; nothing is started by the business)
  *   3. a session is running → it continues
  *   4. a flow whose specific trigger matches: campaign button reply, QR code, ad, keyword / pattern
  *   5. the greeting flow, for a customer writing for the first time
@@ -63,7 +69,8 @@ final class Chatbots
     public function wantsMessage(Conversation $conversation): bool
     {
         if ($conversation->getAttribute('handler') === 'human') {
-            return false;
+            // A person has it, unless the flow's auto-resume time has passed: then this message is the bot's.
+            return $this->autoResumeDue($conversation);
         }
 
         return $this->presentFor($conversation);
@@ -94,7 +101,12 @@ final class Chatbots
         $conversation = Conversation::query()->find($message->conversation_id);
         /** @var ?Contact $contact */
         $contact = $conversation?->contact()->first();
-        if ($conversation === null || $contact === null || $contact->isOptedOut()) {
+        if ($conversation === null || $contact === null) {
+            return;
+        }
+        // Opted out: the bot may only answer inside a window the customer opened by writing after
+        // opting out (the same rule as an agent's reply). Consent is never changed or bypassed here.
+        if ($contact->isOptedOut() && ! $conversation->acceptsFreeFormFrom($contact)) {
             return;
         }
         // STOP / START get their own handling and confirmation; the bot never answers them.
@@ -330,16 +342,31 @@ final class Chatbots
 
     private function autoResumeDue(Conversation $conversation): bool
     {
+        $at = $this->autoResumeAt($conversation);
+
+        return $at !== null && ! $at->isFuture();
+    }
+
+    /**
+     * While a person handles the conversation: from when the bot takes it back at the customer's
+     * next message (the flow's auto-resume time after the last agent message or the handover).
+     * Null = only "Hand back to bot" or closing the conversation returns it.
+     */
+    public function autoResumeAt(Conversation $conversation): ?Carbon
+    {
+        if ($conversation->getAttribute('handler') !== 'human') {
+            return null;
+        }
         $session = $conversation->getAttribute('bot_session_id') !== null ? ChatbotSession::query()->find($conversation->getAttribute('bot_session_id')) : null;
         $flow = $session !== null ? ChatbotFlow::query()->whereKey($session->flow_id)->where('is_active', true)->first() : null;
         $flow ??= $this->defaultFlow($conversation->phone_number_id);
         if ($flow === null || $flow->published_version === null) {
-            return false;
+            return null;
         }
         $minutes = $this->version($flow->id, $flow->published_version)[1]['auto_resume_minutes'] ?? null;
         $since = $conversation->getAttribute('handler_changed_at');
 
-        return $minutes !== null && $since !== null && Carbon::parse($since)->lte(now()->subMinutes((int) $minutes));
+        return $minutes !== null && $since !== null ? Carbon::parse($since)->addMinutes((int) $minutes) : null;
     }
 
     /** The number's default flow ("any message"), if one is live. */
@@ -456,7 +483,18 @@ final class Chatbots
      */
     public function handBack(Conversation $conversation, bool $restart = true): bool
     {
-        Cache::lock("chatbot:conversation:{$conversation->id}", 120)->block(30, function () use ($conversation, &$started, $restart): void {
+        return $this->handBackOutcome($conversation, $restart) === 'started';
+    }
+
+    /**
+     * "Hand back to bot", saying what happened: started (the flow runs now), waiting (the next
+     * customer message decides), window_closed (no reply allowed until the customer writes),
+     * opted_out (they opted out and have not written since: only their next message reopens it).
+     */
+    public function handBackOutcome(Conversation $conversation, bool $restart = true): string
+    {
+        $outcome = 'waiting';
+        Cache::lock("chatbot:conversation:{$conversation->id}", 120)->block(30, function () use ($conversation, &$outcome, $restart): void {
             $last = $conversation->getAttribute('bot_session_id');
             DB::transaction(function () use ($conversation): void {
                 $locked = Conversation::query()->whereKey($conversation->id)->lockForUpdate()->firstOrFail();
@@ -464,10 +502,18 @@ final class Chatbots
                 $locked->forceFill(['handler' => null, 'handler_changed_at' => now(), 'bot_state' => null])->save();
             });
             $conversation->refresh();
-            $started = $restart && $conversation->isWindowOpen() && $this->startNow($conversation, is_string($last) ? $last : null);
+            /** @var ?Contact $contact */
+            $contact = $conversation->contact()->first();
+            $outcome = match (true) {
+                ! $restart => 'waiting',
+                ! $conversation->isWindowOpen() => 'window_closed',
+                $contact !== null && ! $conversation->acceptsFreeFormFrom($contact) => 'opted_out',
+                $this->startNow($conversation, is_string($last) ? $last : null) => 'started',
+                default => 'waiting',
+            };
         });
 
-        return (bool) ($started ?? false);
+        return $outcome;
     }
 
     private function startNow(Conversation $conversation, ?string $lastSessionId): bool
@@ -477,7 +523,8 @@ final class Chatbots
         $flow ??= $this->defaultFlow($conversation->phone_number_id);
         /** @var ?Contact $contact */
         $contact = $conversation->contact()->first();
-        if ($flow === null || $contact === null || $contact->isOptedOut() || ($version = $this->version($flow->id, (int) $flow->published_version)) === null) {
+        // Only where a reply is allowed: an opted-out customer must have written after opting out.
+        if ($flow === null || $contact === null || ! $conversation->acceptsFreeFormFrom($contact) || ($version = $this->version($flow->id, (int) $flow->published_version)) === null) {
             return false;
         }
         $session = $this->claim($conversation, fn () => ChatbotSession::query()->create([

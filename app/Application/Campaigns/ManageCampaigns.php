@@ -119,6 +119,7 @@ final class ManageCampaigns
             'media_id' => $mediaId,
             'segment_id' => $segment?->id,
             'audience_tag' => isset($data['audience_tag']) && trim((string) $data['audience_tag']) !== '' ? trim((string) $data['audience_tag']) : null,
+            'audience_filter' => $this->segments->filter($data['filter'] ?? null),
             'notes' => isset($data['notes']) && trim((string) $data['notes']) !== '' ? trim((string) $data['notes']) : null,
             'objective' => $data['objective'] ?? null,
         ])->save();
@@ -151,7 +152,8 @@ final class ManageCampaigns
         if ($campaign->segment_id !== null && $segment === null) {
             throw CampaignException::cannot('The segment of this campaign was deleted. Choose the audience again.');
         }
-        $audience = ['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'name' => $segment?->name, 'tag' => $campaign->audience_tag];
+        $audience = ['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'name' => $segment?->name, 'tag' => $campaign->audience_tag,
+            'filter' => $campaign->getAttribute('audience_filter')];
 
         $counts = $this->counts($audience, $campaign->template_category);
         if ($counts['eligible'] === 0) {
@@ -262,7 +264,7 @@ final class ManageCampaigns
         $this->entitlements->ensureEnabled($this->context->tenant(), FeatureKey::Broadcasts);
 
         $copy = Campaign::query()->create(array_merge(
-            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'notes', 'objective']),
+            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'audience_filter', 'notes', 'objective']),
             ['name' => mb_substr($campaign->name, 0, 112).' (copy)', 'status' => CampaignStatus::Draft, 'created_by_membership_id' => $this->context->membership()?->id],
         ));
         $this->audit->record('campaign.duplicated', $copy, meta: ['from' => $campaign->id]);
@@ -271,7 +273,7 @@ final class ManageCampaigns
     }
 
     /**
-     * @param  array{match?: string, rules?: array<int, array<string, mixed>>, tag?: ?string}|null  $audience
+     * @param  array{match?: string, rules?: array<int, array<string, mixed>>, tag?: ?string, filter?: mixed}|null  $audience
      * @return array{matched: int, eligible: int}
      */
     public function counts(?array $audience, ?string $category): array
@@ -326,12 +328,18 @@ final class ManageCampaigns
     }
 
     /**
-     * @param  array{match?: string, rules?: array<int, array<string, mixed>>, tag?: ?string}|null  $audience
+     * Segment rules AND tag AND the campaign's own conditions (custom fields included).
+     *
+     * @param  array{match?: string, rules?: array<int, array<string, mixed>>, tag?: ?string, filter?: ?array{match?: string, rules?: array<int, array<string, mixed>>}}|null  $audience
      * @return Builder<Contact>
      */
     public function audienceQuery(?array $audience): Builder
     {
         $query = $this->segments->apply(Contact::query(), (string) ($audience['match'] ?? 'all'), (array) ($audience['rules'] ?? []));
+        $filter = $audience['filter'] ?? null;
+        if (is_array($filter) && ($filter['rules'] ?? []) !== []) {
+            $query = $this->segments->apply($query, (string) ($filter['match'] ?? 'all'), (array) $filter['rules']);
+        }
         $tag = $audience['tag'] ?? null;
 
         return is_string($tag) && $tag !== '' ? $query->whereRaw('tags @> ARRAY[?]::text[]', [$tag]) : $query;
@@ -340,7 +348,7 @@ final class ManageCampaigns
     /**
      * The SQL twin of Contact::campaignBlocker(), for counting before launch.
      *
-     * @param  array{match?: string, rules?: array<int, array<string, mixed>>, tag?: ?string}|null  $audience
+     * @param  array{match?: string, rules?: array<int, array<string, mixed>>, tag?: ?string, filter?: mixed}|null  $audience
      * @return Builder<Contact>
      */
     public function eligibleQuery(?array $audience, ?string $category): Builder

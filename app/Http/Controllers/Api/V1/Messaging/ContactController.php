@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Messaging;
 
 use App\Application\Messaging\ManageContacts;
+use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Services\ConsentAutoReply;
 use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
@@ -29,14 +32,17 @@ final class ContactController extends Controller
             'tag' => ['nullable', 'string', 'max:40'],
             'segment_id' => ['nullable', 'uuid'],
             'synced_from' => ['nullable', 'uuid'],   // a phone number id: only contacts synced from that number
+            'filter' => ['nullable'],                 // {match, rules} (JSON): conditions on any field, custom fields included
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
+        $filter = $segments->filter($data['filter'] ?? null);
 
         $contacts = Contact::query()->with('syncedFrom')
             ->when($data['synced_from'] ?? null, fn ($q, string $id) => $q->where('synced_from_phone_number_id', $id))
             ->when($segment, fn ($q) => $segments->apply($q, $segment->match, $segment->rules))
+            ->when($filter, fn ($q) => $segments->apply($q, $filter['match'], $filter['rules']))
             ->when($data['tag'] ?? null, fn ($q, string $tag) => $q->whereRaw('tags @> ARRAY[?]::text[]', [$tag]))
             ->when($data['q'] ?? null, function ($q, string $term) {
                 $digits = preg_replace('/\D+/', '', $term);
@@ -97,17 +103,42 @@ final class ContactController extends Controller
     }
 
     /** Record consent given or withdrawn outside WhatsApp (form, call, in person). */
-    public function consent(Request $request, Contact $contact, ConsentService $consent, TenantContext $context): ContactResource
+    /**
+     * A teammate records the customer's consent (they asked in the chat, on a form, in the shop …).
+     * The state change is the record; with `notify` (default) the customer also gets the workspace's
+     * opt-in / opt-out confirmation when a 24-hour window is open. `meta.confirmation` says what
+     * happened to that message, so the inbox can tell the teammate.
+     */
+    public function consent(Request $request, Contact $contact, ConsentService $consent, TenantContext $context, ConsentAutoReply $replies): JsonResponse
     {
         $data = $request->validate([
             'state' => ['required', Rule::in([ConsentState::OptedIn->value, ConsentState::OptedOut->value])],
             'note' => ['nullable', 'string', 'max:190'],
+            'notify' => ['sometimes', 'boolean'],
+            'conversation_id' => ['nullable', 'uuid'],
         ]);
+        $in = $data['state'] === ConsentState::OptedIn->value;
 
-        $data['state'] === ConsentState::OptedIn->value
+        $changed = $in
             ? $consent->optIn($contact, 'agent', $data['note'] ?? null, membershipId: $context->membership()?->id)
             : $consent->optOut($contact, 'agent', $data['note'] ?? null, membershipId: $context->membership()?->id);
 
-        return ContactResource::make($contact->refresh());
+        // An opt-out ends any chatbot conversation with this contact at once (as a typed STOP does).
+        if ($changed && ! $in) {
+            foreach (Conversation::query()->where('contact_id', $contact->id)->where('handler', 'bot')->get() as $running) {
+                app(Chatbots::class)->stop($running, 'opted_out');
+            }
+        }
+
+        $confirmation = null;
+        if ($changed && ($data['notify'] ?? true)) {
+            $conversation = isset($data['conversation_id']) ? Conversation::query()->find($data['conversation_id']) : null; // tenant-scoped
+            $confirmation = $replies->confirmRecorded($contact, $in ? 'opt_in' : 'opt_out', $conversation);
+        }
+
+        return ContactResource::make($contact->refresh())->additional(['meta' => [
+            'changed' => $changed,
+            'confirmation' => $confirmation,
+        ]])->response();
     }
 }

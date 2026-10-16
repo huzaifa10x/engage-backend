@@ -10,6 +10,7 @@ use App\Domain\Campaigns\Models\CampaignRecipient;
 use App\Domain\Campaigns\Services\Personalizer;
 use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Crm\Models\Segment;
+use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Messaging\Services\SendThroughput;
@@ -71,9 +72,11 @@ final class CampaignController extends Controller
         $data = $request->validate([
             'segment_id' => ['nullable', 'uuid'],
             'audience_tag' => ['nullable', 'string', 'max:40'],
+            'filter' => ['nullable'],
             'template_id' => ['nullable', 'uuid'],
             'phone_number_id' => ['nullable', 'uuid'],
         ]);
+        $filter = app(SegmentQuery::class)->filter($data['filter'] ?? null);
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
         $category = isset($data['template_id']) ? MessageTemplate::query()->find($data['template_id'])?->category : null;
         $number = isset($data['phone_number_id']) ? PhoneNumber::query()->find($data['phone_number_id']) : null;
@@ -82,7 +85,7 @@ final class CampaignController extends Controller
         $marketing = strtoupper((string) $category) === 'MARKETING';
         $daily = $number !== null ? app(MessagingLimits::class)->summary($number) : null;
 
-        $counts = $this->campaigns->counts(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null], $category);
+        $counts = $this->campaigns->counts(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null, 'filter' => $filter], $category);
         $reach = $entitlements->for($tenant)->get(FeatureKey::CampaignReachMonthly);
 
         return response()->json(['data' => $counts + [
@@ -113,6 +116,7 @@ final class CampaignController extends Controller
             'template_id' => ['required', 'uuid'],
             'segment_id' => ['nullable', 'uuid'],
             'audience_tag' => ['nullable', 'string', 'max:40'],
+            'filter' => ['nullable'],
             'variables' => ['nullable', 'array'],
             'variables.header' => ['nullable', 'array', 'max:1'],
             'variables.header.*' => ['nullable', 'string', 'max:60'],
@@ -130,7 +134,8 @@ final class CampaignController extends Controller
             return $text;
         };
 
-        $contacts = $this->campaigns->eligibleQuery(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null], $template->category)
+        $contacts = $this->campaigns->eligibleQuery(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null,
+            'filter' => app(SegmentQuery::class)->filter($data['filter'] ?? null)], $template->category)
             ->orderBy('id')->limit(3)->get();
 
         return response()->json(['data' => $contacts->map(function (Contact $contact) use ($template, $definition, $data, $personalizer, $fill) {
@@ -241,6 +246,7 @@ final class CampaignController extends Controller
             'template_id' => ['required', 'uuid'],
             'segment_id' => ['nullable', 'uuid'],
             'audience_tag' => ['nullable', 'string', 'max:40'],
+            'filter' => ['nullable'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'objective' => ['nullable', Rule::in(['promo', 'announcement', 're_engagement', 'reminder', 'update', 'other'])],
             'media_id' => ['nullable', 'uuid'],
@@ -270,6 +276,7 @@ final class CampaignController extends Controller
             'media_id' => $c->media_id,
             'segment_id' => $c->segment_id,
             'audience_tag' => $c->audience_tag,
+            'audience_filter' => $c->getAttribute('audience_filter'),
             'audience_name' => $c->audience['name'] ?? null,
             'notes' => $c->notes,
             'objective' => $c->objective,

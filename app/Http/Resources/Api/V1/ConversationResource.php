@@ -8,6 +8,7 @@ use App\Domain\Chatbots\Engine\Placeholders;
 use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSession;
+use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Messaging\Models\Conversation;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -30,6 +31,10 @@ final class ConversationResource extends JsonResource
             'bot' => $this->bot(),
             // A chatbot is live on this number, so an agent can hand the conversation (back) to it.
             'bot_available' => $this->botAvailable($request),
+            // A person handles it and the flow auto-resumes: the bot takes the conversation back at the
+            // customer's next message from this time on (null = only "Hand back to bot" or closing does).
+            'bot_resumes_at' => $this->getAttribute('handler') === 'human' && $this->botAvailable($request)
+                ? app(Chatbots::class)->autoResumeAt($this->resource)?->toIso8601String() : null,
             'unread_count' => $this->unread_count,
             'last_message_at' => $this->last_message_at?->toIso8601String(),
             'last_message_preview' => $this->getAttribute('last_message_preview'),

@@ -246,12 +246,18 @@ final class CrmController extends Controller
 
     public function export(Request $request): StreamedResponse
     {
-        $data = $request->validate(['segment_id' => ['nullable', 'uuid'], 'tag' => ['nullable', 'string', 'max:40']]);
+        $data = $request->validate([
+            'segment_id' => ['nullable', 'uuid'], 'tag' => ['nullable', 'string', 'max:40'],
+            'consent' => ['nullable', Rule::in(['unknown', 'opted_in', 'opted_out'])], 'filter' => ['nullable'],
+        ]);
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
+        $filter = $this->segments->filter($data['filter'] ?? null);
         $keys = ContactField::query()->orderBy('key')->pluck('key')->all();
 
         $query = Contact::query()
             ->when($segment, fn (Builder $q) => $this->segments->apply($q, $segment->match, $segment->rules))
+            ->when($filter, fn (Builder $q) => $this->segments->apply($q, $filter['match'], $filter['rules']))
+            ->when($data['consent'] ?? null, fn (Builder $q, string $c) => $q->where('consent_state', $c))
             ->when($data['tag'] ?? null, fn (Builder $q, string $tag) => $q->whereRaw('tags @> ARRAY[?]::text[]', [$tag]))
             ->orderBy('created_at');
         $this->audit->record('contacts.exported', null, meta: ['segment' => $segment?->name]);
@@ -273,7 +279,13 @@ final class CrmController extends Controller
                     $safe = fn (?string $v) => $v !== null && preg_match('/^[=+\-@]/', $v) === 1 && ! preg_match('/^\+\d+$/', $v) ? "'".$v : (string) $v;
                     fputcsv($out, [
                         $c->wa_id !== null ? '+'.$c->wa_id : '', $safe($c->name ?? $c->profile_name), $safe($c->email), implode(';', $c->tags), $c->consent_state->value,
-                        ...array_map(fn (string $k) => $safe(isset($c->custom_fields[$k]) ? (string) $c->custom_fields[$k] : null), $keys),
+                        // Lists (multi-select) as "a;b", yes/no as true/false — never "Array".
+                        ...array_map(fn (string $k) => $safe(match (true) {
+                            ! isset($c->custom_fields[$k]) => null,
+                            is_array($c->custom_fields[$k]) => implode(';', array_map('strval', $c->custom_fields[$k])),
+                            is_bool($c->custom_fields[$k]) => $c->custom_fields[$k] ? 'true' : 'false',
+                            default => (string) $c->custom_fields[$k],
+                        }), $keys),
                     ], ',', '"', '');
                 }
             });

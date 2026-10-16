@@ -40,6 +40,7 @@ use Illuminate\Support\Carbon;
  * @property ?string $objective
  * @property ?string $audience_tag
  * @property ?int $batch_per_hour
+ * @property ?array{match: string, rules: list<array<string, mixed>>} $audience_filter extra conditions on top of the segment / tag
  * @property ?Carbon $next_batch_at
  * @property ?string $wait_reason quiet_hours | drip | daily_limit
  * @property ?Carbon $paused_at
@@ -56,7 +57,7 @@ class Campaign extends Model
 
     protected $fillable = [
         'tenant_id', 'name', 'phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category',
-        'variables', 'media_id', 'segment_id', 'audience', 'status', 'scheduled_at', 'started_at', 'completed_at',
+        'variables', 'media_id', 'segment_id', 'audience', 'audience_filter', 'status', 'scheduled_at', 'started_at', 'completed_at',
         'matched_count', 'eligible_count', 'failure_reason', 'created_by_membership_id',
         'notes', 'objective', 'audience_tag', 'batch_per_hour', 'next_batch_at', 'wait_reason', 'paused_at', 'pause_reason',
     ];
@@ -66,6 +67,7 @@ class Campaign extends Model
         return [
             'variables' => 'array',
             'audience' => 'array',
+            'audience_filter' => 'array',
             'status' => CampaignStatus::class,
             'scheduled_at' => 'datetime',
             'started_at' => 'datetime',

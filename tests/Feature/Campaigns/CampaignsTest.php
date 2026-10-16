@@ -91,6 +91,32 @@ final class CampaignsTest extends TestCase
         ])->assertCreated()->assertJsonPath('data.status', 'draft')->json('data.id');
     }
 
+    public function test_a_campaign_narrows_its_audience_with_custom_field_conditions(): void
+    {
+        $this->postJson('/api/v1/contact-fields', ['label' => 'City'])->assertCreated();
+        $sara = collect($this->getJson('/api/v1/contacts?q=Sara')->json('data'))->first()['id'];
+        $omar = collect($this->getJson('/api/v1/contacts?q=Omar')->json('data'))->first()['id'];
+        $this->patchJson("/api/v1/contacts/{$sara}", ['attributes' => ['city' => 'Dubai']])->assertOk();
+        $this->patchJson("/api/v1/contacts/{$omar}", ['attributes' => ['city' => 'Sharjah']])->assertOk();
+        $filter = ['match' => 'all', 'rules' => [['field' => 'attr:city', 'op' => 'equals', 'value' => 'dubai']]];
+
+        // The audience preview counts with the condition (on top of the segment).
+        $segment = $this->vipSegment();
+        $this->getJson('/api/v1/campaigns/audience?'.http_build_query(['segment_id' => $segment, 'template_id' => $this->templates['summer_offer'], 'filter' => json_encode($filter)]))
+            ->assertOk()->assertJsonPath('data.matched', 1)->assertJsonPath('data.eligible', 1);
+
+        $id = $this->draft(['segment_id' => $segment, 'filter' => $filter]);
+        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.audience_filter.rules.0.field', 'attr:city');
+        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
+        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.stats.sent', 1)->assertJsonPath('data.stats.matched', 1);
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110001');
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110002');
+
+        // A field that does not exist in this workspace is refused.
+        $this->postJson('/api/v1/campaigns', ['name' => 'x', 'phone_number_id' => $this->number->id, 'template_id' => $this->templates['class_reminder'],
+            'filter' => ['rules' => [['field' => 'attr:nope', 'op' => 'equals', 'value' => '1']]]])->assertStatus(422);
+    }
+
     public function test_a_marketing_campaign_reaches_only_matching_contacts_with_consent(): void
     {
         $segment = $this->vipSegment();

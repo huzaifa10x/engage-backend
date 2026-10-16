@@ -352,6 +352,97 @@ final class ChatbotsTest extends TestCase
         $this->assertNotContains("Sorry, I didn't catch that. Please choose one of the options.", $this->received());
     }
 
+    public function test_an_opted_out_customer_who_writes_again_is_answered_inside_their_window_only(): void
+    {
+        $this->liveFlow();
+        $this->says('hi');
+        $this->says('STOP');
+        $count = count($this->sent); // the opt-out confirmation went out
+
+        // They write again (not a keyword): the bot answers inside the window they opened.
+        $this->travel(2)->minutes();
+        $this->says('hello again');
+        $this->assertGreaterThan($count, count($this->sent));
+        $this->assertSame("Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?", last($this->received()));
+        $this->assertSame('opted_out', $this->inTenant(fn () => Contact::query()->sole())->consent_state->value, 'consent is never changed by the bot');
+
+        // The business still cannot start anything: templates are refused for an opted-out contact.
+        $conversation = $this->conversation();
+        $this->actingAsMember($this->owner);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'template', 'template' => ['name' => 'hello_world', 'language' => 'en_US']])
+            ->assertStatus(422)->assertJsonPath('error.code', 'contact_opted_out');
+    }
+
+    public function test_hand_back_to_the_bot_for_an_opted_out_customer_waits_for_their_next_message(): void
+    {
+        $this->liveFlow();
+        $this->says('hi');
+        $conversation = $this->conversation();
+        $this->actingAsMember($this->owner);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/take-over")->assertOk();
+        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_out', 'notify' => false])->assertOk();
+        $count = count($this->sent);
+
+        // Nothing is sent on hand-back: they have not written since opting out.
+        $this->postJson("/api/v1/conversations/{$conversation->id}/bot/hand-back")->assertOk()
+            ->assertJsonPath('meta.restarted', false)->assertJsonPath('meta.outcome', 'opted_out')->assertJsonPath('data.handler', null);
+        $this->assertCount($count, $this->sent);
+
+        // When they write, the bot answers them.
+        $this->travel(1)->minutes();
+        $this->says('can you help me');
+        $this->assertSame('bot', $this->conversation()->handler);
+        $this->assertGreaterThan($count, count($this->sent));
+    }
+
+    public function test_a_person_keeps_the_conversation_until_hand_back_closing_or_the_auto_resume_time(): void
+    {
+        $this->liveFlow(settings: ['auto_resume_minutes' => 30]);
+        $this->says('hi');
+        $conversation = $this->conversation();
+        $this->actingAsMember($this->owner);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hi, Omar here.'])->assertStatus(202);
+        $this->assertSame('human', $this->conversation()->handler);
+        $resumesAt = $this->getJson("/api/v1/conversations/{$conversation->id}")->assertOk()->json('data.bot_resumes_at');
+        $this->assertNotNull($resumesAt);
+        $count = count($this->sent);
+
+        // The customer writes while the agent is on it: the bot stays quiet.
+        $this->travel(10)->minutes();
+        $this->says('thanks, one more question');
+        $this->assertCount($count, $this->sent);
+
+        // Each agent reply restarts the clock.
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Sure, go ahead.'])->assertStatus(202);
+        $count = count($this->sent);
+        $this->travel(25)->minutes();
+        $this->says('still there?');
+        $this->assertCount($count, $this->sent, '25 minutes after the last agent reply: still the agent\'s');
+
+        // 30 minutes without an agent reply: the customer's next message goes to the bot.
+        $this->travel(10)->minutes();
+        $this->says('hello?');
+        $this->assertSame('bot', $this->conversation()->handler);
+        $this->assertGreaterThan($count, count($this->sent));
+    }
+
+    public function test_closing_a_conversation_returns_it_to_the_bot_for_the_next_message(): void
+    {
+        $this->liveFlow();
+        $this->says('hi');
+        $conversation = $this->conversation();
+        $this->actingAsMember($this->owner);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hi, Omar here.'])->assertStatus(202);
+        $this->getJson("/api/v1/conversations/{$conversation->id}")->assertJsonPath('data.handler', 'human')->assertJsonPath('data.bot_resumes_at', null);
+
+        $this->patchJson("/api/v1/conversations/{$conversation->id}", ['status' => 'closed'])->assertOk();
+        $this->assertNull($this->conversation()->handler);
+        $count = count($this->sent);
+        $this->says('hi again');
+        $this->assertSame('bot', $this->conversation()->handler);
+        $this->assertGreaterThan($count, count($this->sent));
+    }
+
     public function test_the_same_message_delivered_twice_gets_one_answer(): void
     {
         $this->liveFlow();
