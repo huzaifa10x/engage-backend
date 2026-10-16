@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Messaging\Services\SendThroughput;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Services\CoexistenceImport;
@@ -29,6 +30,8 @@ final class PhoneNumberResource extends JsonResource
             'disconnected_at' => $this->getAttribute('disconnected_at')?->toIso8601String(),
             'quality_rating' => $this->quality_rating,
             'messaging_limit_tier' => $this->messaging_limit_tier,
+            // Meta's daily messaging limit for the business (null limit = unlimited), as the platform enforces it.
+            'daily_limit' => app(MessagingLimits::class)->summary($this->resource),
             'throughput_level' => $this->getAttribute('throughput_level'),
             'onboarding_type' => $this->onboarding_type->value,
             'coexistence_status' => $this->coexistence_status->value,

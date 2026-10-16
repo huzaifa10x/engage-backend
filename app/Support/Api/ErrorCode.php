@@ -44,6 +44,7 @@ enum ErrorCode: string
     case ContactOptedOut = 'contact_opted_out';
     case NumberUnavailable = 'number_unavailable';
     case TemplateUnavailable = 'template_unavailable';
+    case DailyLimitReached = 'daily_limit_reached';
 
     case ServerError = 'server_error';
     case ServiceUnavailable = 'service_unavailable';

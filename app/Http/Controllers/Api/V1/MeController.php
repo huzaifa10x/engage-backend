@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Domain\Identity\Models\User;
+use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Platform\Models\ImpersonationSession;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -31,6 +32,11 @@ final class MeController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
+
+        // First visit of the day: re-read Meta's daily messaging limits (queued, at most once a day per workspace).
+        if (($tenant = $this->context->tenantOrNull()) !== null) {
+            app(MessagingLimits::class)->refreshDaily((string) $tenant->getKey());
+        }
 
         return $this->payload($user, $this->context->tenantOrNull()?->getKey());
     }

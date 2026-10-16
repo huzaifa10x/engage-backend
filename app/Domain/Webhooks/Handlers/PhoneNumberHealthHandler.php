@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Webhooks\Handlers;
 
 use App\Application\Campaigns\ManageCampaigns;
+use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Webhooks\Jobs\RefreshPhoneNumber;
 use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
@@ -37,8 +38,10 @@ final class PhoneNumberHealthHandler implements WebhookHandler
             default => ['alert.'.mb_strtolower((string) ($v['alert_type'] ?? $v['entity_type'] ?? 'account')), null, $v['alert_severity'] ?? null],
         };
 
-        if ($number !== null && $change->field === 'phone_number_quality_update' && is_string($v['current_limit'] ?? null)) {
-            $number->forceFill(['messaging_limit_tier' => $v['current_limit']])->save();
+        if ($number !== null && $change->field === 'phone_number_quality_update' && ($tier = MessagingLimits::tierName($v['current_limit'] ?? null)) !== null) {
+            $previous = $number->messaging_limit_tier;
+            $number->forceFill(['messaging_limit_tier' => $tier])->save();
+            app(MessagingLimits::class)->limitChanged($number, $previous, $tier);
         }
 
         if ($number !== null && $change->field === 'phone_number_name_update') {

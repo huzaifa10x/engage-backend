@@ -41,6 +41,7 @@ use Illuminate\Support\Carbon;
  * @property ?string $audience_tag
  * @property ?int $batch_per_hour
  * @property ?Carbon $next_batch_at
+ * @property ?string $wait_reason quiet_hours | drip | daily_limit
  * @property ?Carbon $paused_at
  * @property ?string $pause_reason
  * @property ?string $created_by_membership_id
@@ -57,7 +58,7 @@ class Campaign extends Model
         'tenant_id', 'name', 'phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category',
         'variables', 'media_id', 'segment_id', 'audience', 'status', 'scheduled_at', 'started_at', 'completed_at',
         'matched_count', 'eligible_count', 'failure_reason', 'created_by_membership_id',
-        'notes', 'objective', 'audience_tag', 'batch_per_hour', 'next_batch_at', 'paused_at', 'pause_reason',
+        'notes', 'objective', 'audience_tag', 'batch_per_hour', 'next_batch_at', 'wait_reason', 'paused_at', 'pause_reason',
     ];
 
     protected function casts(): array

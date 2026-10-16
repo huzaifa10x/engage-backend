@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\WhatsApp;
 
+use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\WabaAccount;
 
@@ -30,6 +31,7 @@ final class PhoneNumberSync
     /** @param array<string, mixed> $node GET /<PHONE_NUMBER_ID> */
     public function applyPhoneNumber(PhoneNumber $number, array $node): void
     {
+        $oldLimit = $number->exists ? $number->messaging_limit_tier : null;
         $display = isset($node['display_phone_number']) ? (string) $node['display_phone_number'] : null;
         $digits = $display !== null ? preg_replace('/\D+/', '', $display) : null;
 
@@ -39,12 +41,19 @@ final class PhoneNumberSync
             'verified_name' => $node['verified_name'] ?? null,
             'name_status' => $node['name_status'] ?? null,
             'quality_rating' => $node['quality_rating'] ?? null,
-            'messaging_limit_tier' => $node['messaging_limit_tier'] ?? null,
+            // Meta's daily messaging limit (per business portfolio); the old per-number field as a fallback.
+            'messaging_limit_tier' => MessagingLimits::tierName($node['whatsapp_business_manager_messaging_limit'] ?? null)
+                ?? MessagingLimits::tierName($node['messaging_limit_tier'] ?? null) ?? (is_string($node['messaging_limit_tier'] ?? null) ? $node['messaging_limit_tier'] : null),
             'throughput_level' => is_array($node['throughput'] ?? null) ? ($node['throughput']['level'] ?? null) : null,
             'code_verification_status' => $node['code_verification_status'] ?? null,
             'platform_type' => $node['platform_type'] ?? null,
             'is_official_business_account' => isset($node['is_official_business_account']) ? (bool) $node['is_official_business_account'] : null,
             'is_on_biz_app' => isset($node['is_on_biz_app']) ? (bool) $node['is_on_biz_app'] : null,
         ], fn ($v) => $v !== null) + ['last_synced_at' => now()])->save();
+
+        // A new daily messaging limit applies to the whole business, and may let waiting campaigns go on.
+        if ($number->messaging_limit_tier !== $oldLimit) {
+            app(MessagingLimits::class)->limitChanged($number, $oldLimit, $number->messaging_limit_tier);
+        }
     }
 }

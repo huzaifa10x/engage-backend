@@ -11,6 +11,7 @@ use App\Domain\Campaigns\Services\Personalizer;
 use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Messaging\Services\SendThroughput;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
@@ -62,8 +63,8 @@ final class CampaignController extends Controller
 
     /**
      * Audience size before saving — "182 match · 176 eligible" — with every limit that could
-     * hold the send back: the plan's monthly reach, Meta's per-number 24-hour limit, the number's
-     * quality rating, the frequency cap and quiet hours.
+     * hold the send back: the plan's monthly reach, Meta's daily messaging limit for the business,
+     * the number's quality rating, the frequency cap and quiet hours.
      */
     public function audience(Request $request, EntitlementService $entitlements, TenantContext $context): JsonResponse
     {
@@ -79,6 +80,7 @@ final class CampaignController extends Controller
         $tenant = $context->tenant();
         $settings = ComplianceSettings::for($tenant);
         $marketing = strtoupper((string) $category) === 'MARKETING';
+        $daily = $number !== null ? app(MessagingLimits::class)->summary($number) : null;
 
         $counts = $this->campaigns->counts(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null], $category);
         $reach = $entitlements->for($tenant)->get(FeatureKey::CampaignReachMonthly);
@@ -87,9 +89,13 @@ final class CampaignController extends Controller
             'category' => $category,
             'reach_limit' => $reach->limit,
             'reach_used' => $entitlements->usage($tenant, FeatureKey::CampaignReachMonthly) ?? 0,
-            // Meta: business-initiated conversations this number may open per rolling 24 hours.
-            'messaging_limit' => ManageCampaigns::messagingLimit($number?->messaging_limit_tier),
+            // Meta's daily messaging limit for the business (all its numbers), enforced by the platform:
+            // people it may start a conversation with per moving 24 hours, how many are used, and when room frees up.
+            'messaging_limit' => $daily['limit'] ?? null,
             'messaging_limit_tier' => $number?->messaging_limit_tier,
+            'messaging_used' => $daily['used'] ?? 0,
+            'messaging_remaining' => $daily['remaining'] ?? null,
+            'messaging_available_at' => $daily['available_at'] ?? null,
             'quality_rating' => $number?->quality_rating,
             'max_mps' => $number !== null ? app(SendThroughput::class)->limitFor($number) : null,
             // Sending speed for this workspace's plan; not selectable by the sender.
@@ -269,6 +275,7 @@ final class CampaignController extends Controller
             'objective' => $c->objective,
             'batch_per_hour' => $c->batch_per_hour,
             'next_batch_at' => $c->next_batch_at?->toIso8601String(),
+            'wait_reason' => $c->getAttribute('wait_reason'),
             'paused_at' => $c->paused_at?->toIso8601String(),
             'pause_reason' => $c->pause_reason,
             'scheduled_at' => $c->scheduled_at?->toIso8601String(),

@@ -33,7 +33,7 @@ export default function NumbersIndex({ numbers, totals, events, filters }: Props
                 <Kpi label="Connected" value={number(totals.connected)} hint={`${totals.pending} onboarding, ${totals.disconnected} disconnected`} />
                 <Kpi label="High quality" value={number(totals.green)} hint="Rated GREEN by Meta" />
                 <Kpi label="Needs attention" value={number(totals.yellow + totals.red)} hint={`${totals.red} rated low`} />
-                <Kpi label="Coexistence numbers" value={number(totals.coexistence)} hint="Shared with the Business app, 20 msg/s" />
+                <Kpi label="Coexistence numbers" value={number(totals.coexistence)} hint="Shared with the Business app, sent at 15 msg/s" />
             </div>
 
             <div className="mt-4 mb-3 flex flex-wrap items-center gap-2">

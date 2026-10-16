@@ -417,6 +417,14 @@ final class GraphClient
     public const PHONE_FIELDS = [
         'id', 'display_phone_number', 'verified_name', 'name_status', 'quality_rating', 'code_verification_status',
         'is_official_business_account', 'platform_type', 'throughput', 'messaging_limit_tier', 'is_on_biz_app',
+        // Meta's daily messaging limit, per business portfolio (replaces the deprecated messaging_limit_tier).
+        'whatsapp_business_manager_messaging_limit',
+    ];
+
+    /** The same without fields a Graph version may not know yet (tried before falling back to the minimum). */
+    private const PHONE_FIELDS_COMPAT = [
+        'id', 'display_phone_number', 'verified_name', 'name_status', 'quality_rating', 'code_verification_status',
+        'is_official_business_account', 'platform_type', 'throughput', 'messaging_limit_tier', 'is_on_biz_app',
     ];
 
     /** @return array<string, mixed> GET /<WABA_ID> */
@@ -428,7 +436,15 @@ final class GraphClient
     /** @return array<string, mixed> GET /<PHONE_NUMBER_ID> */
     public function getPhoneNumber(string $phoneNumberId, string $token): array
     {
-        return $this->getWithFieldFallback($phoneNumberId, self::PHONE_FIELDS, ['id', 'display_phone_number', 'verified_name', 'quality_rating', 'code_verification_status'], $token);
+        try {
+            return $this->send('GET', $phoneNumberId, $token, ['fields' => implode(',', self::PHONE_FIELDS)]);
+        } catch (MetaApiException $e) {
+            if (! $e->isUnknownField()) {
+                throw $e;
+            }
+        }
+
+        return $this->getWithFieldFallback($phoneNumberId, self::PHONE_FIELDS_COMPAT, ['id', 'display_phone_number', 'verified_name', 'quality_rating', 'code_verification_status'], $token);
     }
 
     /** @return list<array<string, mixed>> GET /<WABA_ID>/phone_numbers */
@@ -440,7 +456,14 @@ final class GraphClient
             if (! $e->isUnknownField()) {
                 throw $e;
             }
-            $body = $this->send('GET', "{$wabaId}/phone_numbers", $token);
+            try {
+                $body = $this->send('GET', "{$wabaId}/phone_numbers", $token, ['fields' => implode(',', self::PHONE_FIELDS_COMPAT)]);
+            } catch (MetaApiException $e) {
+                if (! $e->isUnknownField()) {
+                    throw $e;
+                }
+                $body = $this->send('GET', "{$wabaId}/phone_numbers", $token);
+            }
         }
 
         return array_values(array_filter((array) ($body['data'] ?? []), 'is_array'));

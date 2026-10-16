@@ -14,6 +14,7 @@ use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\ConversationTracker;
+use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Templates\Services\TemplateMessage;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
@@ -21,9 +22,10 @@ use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Every outbound message goes through here (inbox reply, API, later campaigns/automations):
+ * Every outbound message goes through here (inbox reply, API, campaigns, chatbots, automations):
  *   idempotency → number connected → contact not opted out → 24h window (free-form only)
- *   → store as `queued` → SendWhatsappMessage (rate limited per number).
+ *   → Meta's daily messaging limit (templates outside the window) → store as `queued`
+ *   → SendWhatsappMessage (rate limited per number).
  */
 final class SendMessage
 {
@@ -31,7 +33,7 @@ final class SendMessage
 
     private const MEDIA_TYPES = ['image', 'video', 'audio', 'document', 'sticker'];
 
-    public function __construct(private readonly ConversationTracker $conversations, private readonly TemplateMessage $templates) {}
+    public function __construct(private readonly ConversationTracker $conversations, private readonly TemplateMessage $templates, private readonly MessagingLimits $limits) {}
 
     /**
      * @param  array{type: string, body?: ?string, media_id?: ?string, template?: ?array<string, mixed>, reply_to?: ?string, content?: ?array<string, mixed>}  $data
@@ -125,6 +127,9 @@ final class SendMessage
                 'sent_by_membership_id' => $sender?->id,
                 'idempotency_key' => $idempotencyKey,
             ]);
+
+            // Before the conversation is touched: refusing here rolls the whole message back.
+            $this->limits->reserve($message, $conversation, $contact, $number);
 
             $this->conversations->apply($message);
 

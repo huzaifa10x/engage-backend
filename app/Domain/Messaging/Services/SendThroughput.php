@@ -17,23 +17,30 @@ use Throwable;
  * The one place that decides how fast a number may send, and that paces every send to it.
  *
  * LIMIT (messages per second, per connected number) = the lowest of
- *   • the workspace plan's "messages per second"  (Starter 20, Growth 30, Pro 40 …),
+ *   • the workspace plan's "messages per second"  (Starter 20, Growth 30, Pro 35 …),
  *   • what Meta allows this number                (phone_numbers.max_mps),
- *   • 20 when the number is shared with the WhatsApp Business app (coexistence).
- * The coexistence cap is applied last and unconditionally: no plan, upgrade, override or
- * "unlimited" entitlement can lift it. Anything missing or unreadable falls back to the lowest
- * value, never to a higher one.
+ *   • the platform ceiling, hard-coded below: 35 for a Cloud API number, 15 for a number shared
+ *     with the WhatsApp Business app (coexistence). Meta allows 80 and 20; we stay well under.
+ * The ceilings are applied last and unconditionally: no plan, upgrade, override or "unlimited"
+ * entitlement can lift them. Anything missing or unreadable falls back to the lowest value,
+ * never to a higher one. Raising a ceiling is a code change on purpose.
  *
- * PACING: sends are spaced evenly with no burst allowance, at 90% of the limit (a safety margin
- * for network jitter), so there are never more than `limit` messages in ANY one-second window —
- * not just on average. The spacing
- * is decided atomically in Redis/Valkey, shared by every worker and server.
+ * PACING: sends are spaced evenly with no burst allowance, exactly at the limit (35 → one send
+ * every 28.6 ms), so there are never more than `limit` messages in ANY one-second window — not
+ * just on average. The spacing is decided atomically in Redis/Valkey, shared by every worker and
+ * server.
  *
  * Nothing here is reachable from a browser: the limit is computed from the database when the
  * message is actually sent, and every message goes through SendWhatsappMessage, which calls this.
  */
 final class SendThroughput
 {
+    /** Platform ceiling for a Cloud API number (Meta's default is 80 per second). */
+    public const STANDARD_MAX_MPS = 35;
+
+    /** Platform ceiling for a coexistence number (Meta fixes these at 20 per second). */
+    public const COEXISTENCE_MAX_MPS = 15;
+
     /** Reserve the next slot, or refuse when the queue for this number is already this far ahead. */
     private const LUA = <<<'LUA'
 local t = redis.call('TIME')
@@ -53,8 +60,8 @@ LUA;
     /** Messages per second this number may send right now. Always between 1 and Meta's own cap. */
     public function limitFor(PhoneNumber $number): int
     {
-        $coexistenceCap = max(1, (int) config('engage.meta.coexistence_max_mps', 20));
-        $fallback = max(1, (int) config('engage.meta.fallback_max_mps', 20));
+        $ceiling = $number->isCoexistence() ? self::COEXISTENCE_MAX_MPS : self::STANDARD_MAX_MPS;
+        $fallback = min($ceiling, max(1, (int) config('engage.meta.fallback_max_mps', 20)));
 
         // What Meta allows the number itself.
         $numberCap = (int) $number->max_mps > 0 ? (int) $number->max_mps : $fallback;
@@ -75,14 +82,8 @@ LUA;
             $planCap = $fallback; // unreadable plan → the safe, low value
         }
 
-        $limit = min($planCap, $numberCap);
-
-        // Coexistence always wins, last, regardless of everything above.
-        if ($number->isCoexistence()) {
-            $limit = min($limit, $coexistenceCap);
-        }
-
-        return max(1, $limit);
+        // The platform ceiling always wins, last, regardless of everything above.
+        return max(1, min($planCap, $numberCap, $ceiling));
     }
 
     /**
@@ -92,9 +93,8 @@ LUA;
      */
     public function reserve(PhoneNumber $number, int $maxWaitMs = 1500): ?int
     {
-        // Paced slightly under the limit: the slot is reserved here, but the request still has to travel to Meta.
-        $factor = min(1.0, max(0.5, (float) config('engage.meta.mps_safety_factor', 0.9)));
-        $intervalMs = 1000 / ($this->limitFor($number) * $factor);
+        // Paced exactly at the limit: the ceilings already sit well below Meta's own caps.
+        $intervalMs = 1000 / $this->limitFor($number);
         $key = 'wa-pace:'.$number->id;
 
         if (config('cache.default') === 'redis') {

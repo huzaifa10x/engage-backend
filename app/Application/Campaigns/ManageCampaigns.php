@@ -219,7 +219,7 @@ final class ManageCampaigns
         if ($campaign->status !== CampaignStatus::Sending) {
             throw CampaignException::cannot('Only a campaign that is sending can be paused.');
         }
-        $campaign->forceFill(['status' => CampaignStatus::Paused, 'paused_at' => now(), 'pause_reason' => mb_substr($reason, 0, 190), 'next_batch_at' => null])->save();
+        $campaign->forceFill(['status' => CampaignStatus::Paused, 'paused_at' => now(), 'pause_reason' => mb_substr($reason, 0, 190), 'next_batch_at' => null, 'wait_reason' => null])->save();
         $this->audit->record('campaign.paused', $campaign, meta: ['reason' => $reason]);
 
         return $campaign;
@@ -322,20 +322,6 @@ final class ManageCampaigns
             $entitlement->isUnlimited() => self::MAX_RATE_PER_HOUR,
             $entitlement->enabled && (int) $entitlement->limit > 0 => min(self::MAX_RATE_PER_HOUR, (int) $entitlement->limit),
             default => self::DEFAULT_RATE_PER_HOUR,
-        };
-    }
-
-    /** Meta's per-number limit of business-initiated conversations per rolling 24 hours (null = unlimited / unknown). */
-    public static function messagingLimit(?string $tier): ?int
-    {
-        return match (strtoupper((string) $tier)) {
-            'TIER_50' => 50,
-            'TIER_250' => 250,
-            'TIER_1K' => 1000,
-            'TIER_2K' => 2000,
-            'TIER_10K' => 10000,
-            'TIER_100K' => 100000,
-            default => null,
         };
     }
 

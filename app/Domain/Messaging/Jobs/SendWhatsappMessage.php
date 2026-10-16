@@ -10,6 +10,7 @@ use App\Domain\Messaging\Events\MessageStored;
 use App\Domain\Messaging\Exceptions\MessagingException;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\MediaStorage;
+use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Messaging\Services\PayloadBuilder;
 use App\Domain\Messaging\Services\SendThroughput;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
@@ -26,8 +27,9 @@ use Throwable;
 /**
  * Sends one queued message. This job is the ONLY code that sends a message to Meta, and it
  * paces every send through SendThroughput: per connected number, at the lowest of the plan's
- * messages-per-second, Meta's cap for the number, and 20 for coexistence numbers. Transient Meta errors are retried with backoff; permanent
- * errors mark the message failed with Meta's code for the UI.
+ * messages-per-second, Meta's cap for the number, and our ceiling (35, or 15 for coexistence
+ * numbers). Transient Meta errors are retried with backoff; permanent errors mark the message
+ * failed with Meta's code for the UI (and give its place in the daily messaging limit back).
  */
 final class SendWhatsappMessage implements ShouldQueue
 {
@@ -172,6 +174,9 @@ final class SendWhatsappMessage implements ShouldQueue
             'error_title' => mb_substr($title, 0, 255),
             'error_details' => $details ?: null,
         ])->save();
+
+        // It never reached Meta: it does not count against the daily messaging limit.
+        app(MessagingLimits::class)->release($message);
 
         MessageStored::dispatch($message, false);
     }

@@ -16,7 +16,8 @@ use Illuminate\Support\Carbon;
 
 /**
  * A registered business number. `max_mps` and `capabilities` are read by the outbound queue
- * and the UI: coexistence numbers are fixed at 20 mps and lose app broadcast lists / groups.
+ * and the UI: coexistence numbers are fixed at 20 mps by Meta (we send at most 15) and lose app
+ * broadcast lists / groups.
  *
  * @property string $id
  * @property string $tenant_id

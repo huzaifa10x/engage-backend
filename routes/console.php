@@ -20,6 +20,8 @@ Schedule::command('engage:inbox:wake-snoozed')->everyMinute()->onOneServer()->wi
 Schedule::command('engage:campaigns:dispatch')->everyMinute()->onOneServer()->withoutOverlapping();
 // Safety net behind the template webhooks (statuses, edits and deletions made on Meta).
 Schedule::command('engage:templates:sync')->everyFiveMinutes()->onOneServer()->withoutOverlapping();
+// Safety net behind the limit webhooks: Meta's daily messaging limit of every number, re-read hourly.
+Schedule::command('engage:whatsapp:refresh-limits')->hourly()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:webhooks:prune')->dailyAt('02:30')->onOneServer()->withoutOverlapping();
 // Integrations: abandoned-checkout reminders go out when their waiting time has passed.
 Schedule::command('engage:integrations:run')->everyMinute()->onOneServer()->withoutOverlapping();

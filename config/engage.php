@@ -119,10 +119,8 @@ return [
         // Fixed throughput for numbers shared with the WhatsApp Business app (Meta: 20 mps).
         'coexistence_max_mps' => 20,
         // Used when a plan has no messages-per-second value (never higher than this: fail safe).
+        // Our own ceilings (35 API, 15 coexistence) are hard-coded in SendThroughput.
         'fallback_max_mps' => 20,
-        // Sends are paced at this share of the limit (0.9 → 18 per second on a 20 limit), so network
-        // jitter between reserving a slot and Meta receiving the request can never push a second over.
-        'mps_safety_factor' => (float) env('META_MPS_SAFETY_FACTOR', 0.9),
         'default_max_mps' => 80,
     ],
 

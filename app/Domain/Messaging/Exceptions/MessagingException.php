@@ -6,6 +6,7 @@ namespace App\Domain\Messaging\Exceptions;
 
 use App\Support\Api\ErrorCode;
 use App\Support\Exceptions\DomainException;
+use Illuminate\Support\Carbon;
 
 /** Business-rule refusals when sending (window closed, opted out, number unavailable, ...). */
 final class MessagingException extends DomainException
@@ -50,6 +51,20 @@ final class MessagingException extends DomainException
     public static function noRecipient(): self
     {
         return new self('This contact has no WhatsApp phone number or user ID to message.', ErrorCode::ValidationFailed, 422);
+    }
+
+    /** Meta's 24-hour limit of people the business may start a conversation with is used up. */
+    public static function dailyLimitReached(int $limit, \DateTimeInterface $until): self
+    {
+        $at = Carbon::instance($until);
+
+        return new self(
+            "Your WhatsApp business has reached Meta's limit of ".number_format($limit).' new conversations per 24 hours. '
+            .'This contact can be messaged with a template again '.$at->diffForHumans(['parts' => 2]).', or as soon as they write to you.',
+            ErrorCode::DailyLimitReached,
+            429,
+            ['limit' => $limit, 'available_at' => $at->toIso8601String()],
+        );
     }
 
     public function errorCode(): ErrorCode

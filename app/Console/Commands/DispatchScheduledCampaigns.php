@@ -49,7 +49,7 @@ final class DispatchScheduledCampaigns extends Command
                 continue;
             }
             $context->run($tenant, function () use ($campaign, &$continued): void {
-                $claimed = Campaign::query()->whereKey($campaign->id)->where('status', CampaignStatus::Sending->value)->whereNotNull('next_batch_at')->update(['next_batch_at' => null]);
+                $claimed = Campaign::query()->whereKey($campaign->id)->where('status', CampaignStatus::Sending->value)->whereNotNull('next_batch_at')->update(['next_batch_at' => null, 'wait_reason' => null]);
                 if ($claimed === 1) {
                     SendCampaignBatch::dispatch($campaign->id);
                     $continued++;
