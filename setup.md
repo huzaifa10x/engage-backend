@@ -65,6 +65,8 @@ npm run deploy:staging
 Then run to production
 npm run release:promote
 
+Deploye all
 
-npm run release:promote        # type: promote
-npm run deploy:production      # type: production
+npm run deploy:staging
+npm run release:promote
+npm run deploy:production
