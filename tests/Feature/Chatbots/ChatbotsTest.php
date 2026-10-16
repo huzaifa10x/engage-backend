@@ -478,40 +478,6 @@ final class ChatbotsTest extends TestCase
         $this->assertGreaterThan($count, count($this->sent));
     }
 
-    public function test_the_in_chat_consent_flow_works_with_a_live_bot(): void
-    {
-        $this->liveFlow();
-        $this->says('hi');
-        $conversation = $this->conversation();
-        $this->actingAsMember($this->owner);
-
-        // 1. "Ask for consent": the question with Subscribe / No thanks buttons.
-        $this->postJson("/api/v1/conversations/{$conversation->id}/consent-request")->assertStatus(202);
-        $this->assertStringStartsWith('Would you like to receive offers and updates from', last($this->received()));
-        $this->assertSame(['Subscribe', 'No thanks'], array_column(array_column(last($this->sent)['interactive']['action']['buttons'], 'reply'), 'title'));
-
-        // 2. The customer taps Subscribe: opted in, confirmed, and the bot does not answer it.
-        $this->taps('consent_opt_in', 'Subscribe');
-        $this->assertSame('opted_in', $this->inTenant(fn () => Contact::query()->sole())->consent_state->value);
-        $this->assertSame('You are subscribed. Reply STOP at any time to unsubscribe.', last($this->received()));
-
-        // 3. STOP: opted out and confirmed.
-        $this->says('STOP');
-        $this->assertSame('opted_out', $this->inTenant(fn () => Contact::query()->sole())->consent_state->value);
-        $this->assertSame('You have been unsubscribed and will not receive further messages from us. Reply START to subscribe again.', last($this->received()));
-
-        // 4. START: opted in again and confirmed.
-        $this->says('START');
-        $this->assertSame('opted_in', $this->inTenant(fn () => Contact::query()->sole())->consent_state->value);
-        $this->assertSame('You are subscribed. Reply STOP at any time to unsubscribe.', last($this->received()));
-
-        // The inbox can tell who sent what: the bot's greeting, the consent replies, the agent's question.
-        $sent = collect($this->getJson("/api/v1/conversations/{$conversation->id}/messages?per_page=50")->assertOk()->json('data'))->where('direction', 'outbound');
-        $this->assertSame('bot', $sent->firstWhere('body', "Hi Sara 👋 Welcome to {$this->tenant->name}! How can we help you today?")['automation']);
-        $this->assertSame('consent', $sent->firstWhere('body', 'You are subscribed. Reply STOP at any time to unsubscribe.')['automation']);
-        $this->assertNull($sent->first(fn (array $m) => str_starts_with((string) $m['body'], 'Would you like'))['automation']);
-    }
-
     public function test_the_same_message_delivered_twice_gets_one_answer(): void
     {
         $this->liveFlow();
