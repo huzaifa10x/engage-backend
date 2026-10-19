@@ -254,6 +254,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::post('billing/refresh', [BillingController::class, 'refresh'])->name('billing.refresh');
         Route::post('billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
         Route::post('billing/resume', [BillingController::class, 'resume'])->name('billing.resume');
+        Route::post('billing/switch-to-free', [BillingController::class, 'switchToFree'])->name('billing.switch-to-free');
         Route::post('billing/payment-methods/setup-intent', [BillingController::class, 'setupIntent'])->name('billing.payment-methods.setup');
         Route::put('billing/payment-methods/{paymentMethod}/default', [BillingController::class, 'setDefaultPaymentMethod'])
             ->where('paymentMethod', 'pm_[A-Za-z0-9]+')->name('billing.payment-methods.default');
@@ -326,6 +327,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
     Route::post('contacts/import', [CrmController::class, 'import'])
         ->middleware(['can:'.Permission::ContactsImport->value, 'throttle:20,1'])->name('contacts.import');
+    Route::get('contacts/export/count', [CrmController::class, 'exportCount'])
+        ->middleware(['can:'.Permission::ContactsExport->value, 'throttle:60,1'])->name('contacts.export.count');
     Route::get('contacts/export', [CrmController::class, 'export'])
         ->middleware(['can:'.Permission::ContactsExport->value, 'throttle:20,1'])->name('contacts.export');
 

@@ -12,6 +12,7 @@ use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Templates\Enums\TemplateStatus;
 use App\Domain\Templates\Exceptions\TemplateException;
+use App\Domain\Templates\Jobs\SyncMessageTemplates;
 use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Templates\Services\TemplateComponents;
 use App\Domain\Tenancy\TenantContext;
@@ -86,6 +87,12 @@ final class ManageTemplates
             ])->save();
 
             $this->audit->record('template.submitted', $template, after: ['name' => $name, 'language' => $language, 'status' => $template->status]);
+
+            // Meta writes the text of an authentication template itself: read it back so the list and
+            // previews show the real message instead of an empty body.
+            if ($template->category === 'AUTHENTICATION') {
+                SyncMessageTemplates::dispatch($waba->id)->afterCommit();
+            }
 
             return $template;
         });

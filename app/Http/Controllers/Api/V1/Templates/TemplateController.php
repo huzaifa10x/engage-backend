@@ -29,7 +29,7 @@ use Throwable;
  */
 final class TemplateController extends Controller
 {
-    private const CATEGORIES = ['MARKETING', 'UTILITY'];
+    private const CATEGORIES = ['MARKETING', 'UTILITY', 'AUTHENTICATION'];
 
     /** Lists stored templates; a stale account is refreshed from Meta in the background. */
     public function index(Request $request, TemplateSync $sync): JsonResponse
@@ -145,7 +145,11 @@ final class TemplateController extends Controller
             'header.media_id' => ['nullable', 'uuid'],
             'header.text' => ['nullable', 'string', 'max:60'],
             'header.example' => ['nullable', 'string', 'max:60'],
-            'body' => ['required', 'string', 'max:1024'],
+            // Authentication templates have Meta's fixed text ("<code> is your verification code."): no body to write.
+            'body' => ['required_unless:category,AUTHENTICATION', 'nullable', 'string', 'max:1024'],
+            'add_security_recommendation' => ['nullable', 'boolean'],
+            'code_expiration_minutes' => ['nullable', 'integer', 'min:1', 'max:90'],
+            'otp_button_text' => ['nullable', 'string', 'max:25'],
             'body_examples' => ['nullable', 'array', 'max:50'],
             'body_examples.*' => ['nullable', 'string', 'max:200'],
             'footer' => ['nullable', 'string', 'max:60'],

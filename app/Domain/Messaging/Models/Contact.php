@@ -82,12 +82,13 @@ class Contact extends Model
 
     /**
      * May this contact receive a business-initiated message of this template category?
-     * Marketing needs an explicit opt-in (a plain inbound message only opens the 24-hour window);
-     * utility / authentication messages go to anyone who has not opted out.
+     * Never to someone who opted out (STOP) or stopped marketing in WhatsApp. Campaigns do not need
+     * a recorded opt-in: the business vouches for the consent of its audience. Callers that must
+     * see an explicit marketing opt-in (commerce automations) pass $requireMarketingOptIn.
      *
      * @return ?string null when allowed, otherwise the reason it is not
      */
-    public function campaignBlocker(?string $category): ?string
+    public function campaignBlocker(?string $category, bool $requireMarketingOptIn = false): ?string
     {
         if ($this->wa_id === null && $this->bsuid === null) {
             return 'No WhatsApp number';
@@ -99,7 +100,7 @@ class Contact extends Model
             if ($this->marketing_opted_out) {
                 return 'Stopped marketing messages in WhatsApp';
             }
-            if ($this->consent_state !== ConsentState::OptedIn) {
+            if ($requireMarketingOptIn && $this->consent_state !== ConsentState::OptedIn) {
                 return 'No marketing opt-in';
             }
         }

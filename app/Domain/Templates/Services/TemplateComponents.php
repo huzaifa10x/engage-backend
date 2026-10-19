@@ -28,6 +28,10 @@ final class TemplateComponents
      */
     public function build(array $data): array
     {
+        if (strtoupper((string) ($data['category'] ?? '')) === 'AUTHENTICATION') {
+            return $this->authentication($data);
+        }
+
         $components = [];
 
         $format = strtoupper((string) ($data['header']['format'] ?? 'TEXT'));
@@ -90,6 +94,37 @@ final class TemplateComponents
         if ($buttons !== []) {
             $components[] = ['type' => 'BUTTONS', 'buttons' => $buttons];
         }
+
+        return $components;
+    }
+
+    /**
+     * Authentication (one-time passcode) template, Meta's fixed format: the body text is Meta's own
+     * ("<code> is your verification code." + optional security advice), an optional expiry line in
+     * the footer, and a Copy code button. The code is sent in the body and the button.
+     *
+     * @param  array<string, mixed>  $data  add_security_recommendation, code_expiration_minutes, otp_button_text
+     * @return list<array<string, mixed>>
+     */
+    private function authentication(array $data): array
+    {
+        $components = [['type' => 'BODY', 'add_security_recommendation' => (bool) ($data['add_security_recommendation'] ?? true)]];
+
+        $minutes = $data['code_expiration_minutes'] ?? null;
+        if ($minutes !== null && $minutes !== '') {
+            $minutes = (int) $minutes;
+            if ($minutes < 1 || $minutes > 90) {
+                throw ValidationException::withMessages(['code_expiration_minutes' => 'The code can expire after 1 to 90 minutes.']);
+            }
+            $components[] = ['type' => 'FOOTER', 'code_expiration_minutes' => $minutes];
+        }
+
+        $button = ['type' => 'OTP', 'otp_type' => 'COPY_CODE'];
+        $text = trim((string) ($data['otp_button_text'] ?? ''));
+        if ($text !== '') {
+            $button['text'] = mb_substr($text, 0, 25);
+        }
+        $components[] = ['type' => 'BUTTONS', 'buttons' => [$button]];
 
         return $components;
     }

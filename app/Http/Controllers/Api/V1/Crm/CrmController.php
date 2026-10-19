@@ -21,6 +21,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -244,23 +245,63 @@ final class CrmController extends Controller
         return response()->json(['data' => $importer->import($data['file'], array_values((array) ($data['tags'] ?? [])), (bool) ($data['opted_in'] ?? false))]);
     }
 
-    public function export(Request $request): StreamedResponse
+    /**
+     * The contacts an export contains: everything, or narrowed by segment, tag, consent, field
+     * conditions, search, the number they were synced from and the date they were added.
+     *
+     * @return array{0: Builder<Contact>, 1: ?Segment, 2: array<string, mixed>}
+     */
+    private function exportQuery(Request $request): array
     {
         $data = $request->validate([
             'segment_id' => ['nullable', 'uuid'], 'tag' => ['nullable', 'string', 'max:40'],
             'consent' => ['nullable', Rule::in(['unknown', 'opted_in', 'opted_out'])], 'filter' => ['nullable'],
+            'q' => ['nullable', 'string', 'max:100'], 'synced_from' => ['nullable', 'uuid'],
+            'added_from' => ['nullable', 'date'], 'added_to' => ['nullable', 'date', 'after_or_equal:added_from'],
         ]);
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
         $filter = $this->segments->filter($data['filter'] ?? null);
-        $keys = ContactField::query()->orderBy('key')->pluck('key')->all();
+        $zone = $this->context->tenant()->timezone ?: 'UTC';
 
         $query = Contact::query()
             ->when($segment, fn (Builder $q) => $this->segments->apply($q, $segment->match, $segment->rules))
             ->when($filter, fn (Builder $q) => $this->segments->apply($q, $filter['match'], $filter['rules']))
             ->when($data['consent'] ?? null, fn (Builder $q, string $c) => $q->where('consent_state', $c))
             ->when($data['tag'] ?? null, fn (Builder $q, string $tag) => $q->whereRaw('tags @> ARRAY[?]::text[]', [$tag]))
-            ->orderBy('created_at');
-        $this->audit->record('contacts.exported', null, meta: ['segment' => $segment?->name]);
+            ->when($data['synced_from'] ?? null, fn (Builder $q, string $id) => $q->where('synced_from_phone_number_id', $id))
+            // Whole days in the workspace's time zone.
+            ->when($data['added_from'] ?? null, fn (Builder $q, string $d) => $q->where('created_at', '>=', Carbon::parse($d, $zone)->startOfDay()->utc()))
+            ->when($data['added_to'] ?? null, fn (Builder $q, string $d) => $q->where('created_at', '<=', Carbon::parse($d, $zone)->endOfDay()->utc()))
+            ->when($data['q'] ?? null, function (Builder $q, string $term) {
+                $digits = preg_replace('/\D+/', '', $term);
+                $q->where(fn (Builder $w) => $w
+                    ->where('name', 'ilike', "%{$term}%")
+                    ->orWhere('profile_name', 'ilike', "%{$term}%")
+                    ->orWhere('username', 'ilike', "%{$term}%")
+                    ->orWhere('email', 'ilike', "%{$term}%")
+                    ->when($digits !== '', fn (Builder $w) => $w->orWhere('wa_id', 'like', "%{$digits}%")));
+            });
+
+        return [$query, $segment, $data];
+    }
+
+    /** How many contacts an export with these filters would contain (shown before downloading). */
+    public function exportCount(Request $request): JsonResponse
+    {
+        [$query] = $this->exportQuery($request);
+
+        return response()->json(['data' => ['count' => $query->count()]]);
+    }
+
+    public function export(Request $request): StreamedResponse
+    {
+        [$query, $segment, $data] = $this->exportQuery($request);
+        $query->orderBy('created_at');
+        $keys = ContactField::query()->orderBy('key')->pluck('key')->all();
+        $this->audit->record('contacts.exported', null, meta: array_filter([
+            'segment' => $segment?->name, 'tag' => $data['tag'] ?? null, 'consent' => $data['consent'] ?? null,
+            'search' => $data['q'] ?? null, 'added_from' => $data['added_from'] ?? null, 'added_to' => $data['added_to'] ?? null,
+        ]));
 
         // The body is streamed after the request middleware has finished, so the workspace context
         // is re-entered for the duration of the stream.

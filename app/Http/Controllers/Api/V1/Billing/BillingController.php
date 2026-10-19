@@ -6,8 +6,10 @@ namespace App\Http\Controllers\Api\V1\Billing;
 
 use App\Application\Billing\StripeBilling;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Billing\Enums\SubscriptionStatus;
 use App\Domain\Billing\Models\Invoice;
 use App\Domain\Billing\Models\Subscription;
+use App\Domain\Billing\SubscriptionService;
 use App\Domain\Plans\Models\Plan;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
@@ -47,6 +49,8 @@ final class BillingController extends Controller
                 'current' => $plan->key === $currentKey,
                 // Free has no price to pay; custom-priced plans (null) go through sales.
                 'purchasable' => $plan->is_active && ($version->price_monthly_minor ?? 0) > 0,
+                // The plan a workspace falls back to; "Switch to Free" moves there (billing/switch-to-free).
+                'free' => $plan->key === (string) config('engage.plans.fallback'),
             ];
         })->filter()->values();
 
@@ -200,6 +204,35 @@ final class BillingController extends Controller
     public function cancel(): JsonResponse
     {
         $this->billing->setCancelAtPeriodEnd($this->context->tenant(), true);
+
+        return $this->show();
+    }
+
+    /**
+     * "Switch to Free": a paid Stripe plan ends at the end of the period already paid for (no refund,
+     * nothing more is charged), then the workspace moves to Free; a trial or an unpaid plan moves to
+     * Free straight away. Plans set up by 10X Digital (manual billing) are changed by them.
+     */
+    public function switchToFree(SubscriptionService $subscriptions): JsonResponse
+    {
+        $tenant = $this->context->tenant();
+        $fallback = (string) config('engage.plans.fallback');
+        $live = Subscription::query()->live()->with('planVersion.plan')->first();
+
+        if ($live === null || ($live->planVersion->plan->key ?? null) === $fallback) {
+            return $this->show();
+        }
+        if ($this->billing->liveStripeSubscription($tenant) !== null) {
+            $this->billing->setCancelAtPeriodEnd($tenant, true);
+
+            return $this->show();
+        }
+        $unpaid = $live->status === SubscriptionStatus::Trialing || ($live->planVersion->price_monthly_minor ?? 0) === 0;
+        if (! $unpaid) {
+            throw ValidationException::withMessages(['billing' => 'Your plan is managed by 10X Digital. Contact us to change it.']);
+        }
+
+        $subscriptions->assign($tenant, Plan::byKey($fallback)->activeVersionOrFail(), SubscriptionStatus::Active, null, 'switched_to_free');
 
         return $this->show();
     }

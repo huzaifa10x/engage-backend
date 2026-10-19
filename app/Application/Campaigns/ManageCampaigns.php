@@ -158,7 +158,7 @@ final class ManageCampaigns
 
         $counts = $this->counts($audience, $campaign->template_category);
         if ($counts['eligible'] === 0) {
-            throw CampaignException::cannot('Nobody in this audience can be messaged: '.($counts['matched'] === 0 ? 'no contact matches the segment.' : 'none of the matching contacts has given the required consent.'));
+            throw CampaignException::cannot('Nobody in this audience can be messaged: '.($counts['matched'] === 0 ? 'no contact matches the segment.' : 'all the matching contacts opted out or have no WhatsApp number.'));
         }
         // The plan's monthly reach is checked before the first message, never mid-campaign.
         $this->entitlements->ensureWithinLimit($tenant, FeatureKey::CampaignReachMonthly, $counts['eligible']);
@@ -359,7 +359,8 @@ final class ManageCampaigns
             ->where(fn (Builder $w) => $w->whereNotNull('wa_id')->orWhereNotNull('bsuid'));
 
         if (strtoupper((string) $category) === 'MARKETING') {
-            $query->where('consent_state', ConsentState::OptedIn->value)->where('marketing_opted_out', false);
+            // No recorded opt-in needed (the business vouches for its audience); stopped-marketing contacts are still left out.
+            $query->where('marketing_opted_out', false);
 
             $cap = ComplianceSettings::for($this->context->tenant())->marketingFrequencyCap;
             if ($cap > 0) {
