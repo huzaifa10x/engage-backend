@@ -48,6 +48,15 @@ final class ManageChannels
             throw WhatsappException::meta('Could not refresh from Meta: '.$e->getMessage(), $e->metaCode, $e->fbtraceId);
         }
 
+        // Marketing Messages status too; a refusal here must not spoil the refresh.
+        if (MarketingMessages::enabled()) {
+            try {
+                app(MarketingMessages::class)->sync($waba);
+            } catch (MetaApiException $e) {
+                Log::info('Marketing Messages status not refreshed.', ['waba_id' => $waba->waba_id] + $e->context());
+            }
+        }
+
         return $waba->refresh()->load('phoneNumbers');
     }
 

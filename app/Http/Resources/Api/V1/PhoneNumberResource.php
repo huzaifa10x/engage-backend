@@ -43,6 +43,8 @@ final class PhoneNumberResource extends JsonResource
             'meta_max_mps' => $this->max_mps,
             'capabilities' => (object) ($this->capabilities ?? []),
             'is_official_business_account' => (bool) $this->getAttribute('is_official_business_account'),
+            // Marketing Messages API status of the number's account (campaign marketing goes through it when onboarded).
+            'marketing_messages_status' => $this->wabaAccount?->mm_status->value ?? 'not_started',
             'last_synced_at' => $this->getAttribute('last_synced_at')?->toIso8601String(),
         ];
     }

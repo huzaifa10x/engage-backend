@@ -77,6 +77,10 @@ final class EmbeddedSignup
             $extras['featureType'] = 'whatsapp_business_app_onboarding';
             $extras['sessionInfoVersion'] = '3';
         }
+        // Marketing Messages API: Meta shows its terms inside the popup, so new clients accept during onboarding.
+        if (MarketingMessages::enabled() && config('engage.meta.marketing_messages.in_signup', true)) {
+            $extras['features'] = [['name' => 'marketing_messages_lite']];
+        }
 
         // Coexistence has its own Facebook Login for Business configuration (falls back to the standard one).
         $configId = (string) (($coexistence ? config('engage.meta.coexistence_config_id') : null) ?: config('engage.meta.embedded_signup_config_id'));

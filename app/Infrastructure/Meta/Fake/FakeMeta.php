@@ -34,8 +34,8 @@ final class FakeMeta
     {
         $path = (string) parse_url($request->url(), PHP_URL_PATH);
 
-        // POST /{phone-number-id}/messages — a send, or a read receipt.
-        if (str_ends_with($path, '/messages') && $request->method() === 'POST') {
+        // POST /{phone-number-id}/messages — a send, or a read receipt (/marketing_messages: an MM API send).
+        if ((str_ends_with($path, '/messages') || str_ends_with($path, '/marketing_messages')) && $request->method() === 'POST') {
             if (($request['status'] ?? null) === 'read') {
                 return Http::response(['success' => true]);
             }
@@ -54,6 +54,15 @@ final class FakeMeta
         // POST /{phone-number-id}/media — attachment upload.
         if (str_ends_with($path, '/media') && $request->method() === 'POST') {
             return Http::response(['id' => 'local-media-'.Str::lower(Str::random(16))]);
+        }
+
+        // Marketing Messages: local accounts count as onboarded, so the MM API route can be tried offline.
+        parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+        if ($request->method() === 'GET' && str_contains((string) ($query['fields'] ?? ''), 'marketing_messages')) {
+            return Http::response(['marketing_messages_onboarding_status' => 'ONBOARDED']);
+        }
+        if (str_ends_with($path, '/onboard_partners_to_mm_lite')) {
+            return Http::response(['request_id' => 'local-mm-request']);
         }
 
         return Http::response(['success' => true]);

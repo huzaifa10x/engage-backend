@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\WhatsApp\Jobs;
 
 use App\Application\Notifications\WorkspaceMailer;
+use App\Application\WhatsApp\MarketingMessages;
 use App\Application\WhatsApp\PhoneNumberSync;
 use App\Application\WhatsApp\WhatsappCredentials;
 use App\Domain\Audit\AuditLogger;
@@ -149,6 +150,18 @@ final class ProvisionWhatsappAccount implements ShouldQueue
             SyncMessageTemplates::dispatch($waba->id);
         } catch (Throwable $e) {
             Log::warning('Could not start the template sync after onboarding.', ['waba_id' => $waba->waba_id, 'error' => $e->getMessage()]);
+        }
+
+        // Marketing Messages API: the terms were offered inside Embedded Signup. A minute later, read
+        // Meta's answer and — if the business has not accepted yet — ask its admins to accept.
+        // Never allowed to affect onboarding: the hourly run does the same.
+        if (MarketingMessages::enabled()) {
+            try {
+                $waba->forceFill(['mm_consent_source' => $waba->getAttribute('mm_consent_source') ?? 'embedded_signup'])->save();
+                SyncMarketingMessages::dispatch($waba->id, true, 'embedded_signup')->delay(now()->addMinute());
+            } catch (Throwable $e) {
+                Log::warning('Could not start the Marketing Messages check after onboarding.', ['waba_id' => $waba->waba_id, 'error' => $e->getMessage()]);
+            }
         }
 
         $audit->record('whatsapp.number_connected', $number ?? $waba, after: array_filter([

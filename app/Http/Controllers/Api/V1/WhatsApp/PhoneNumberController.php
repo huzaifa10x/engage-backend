@@ -23,7 +23,7 @@ final class PhoneNumberController extends Controller
         $membership = $context->membership();
 
         return PhoneNumberResource::collection(
-            $access->scope(PhoneNumber::query(), $membership->loadMissing('role'))->orderBy('created_at')->get()
+            $access->scope(PhoneNumber::query()->with('wabaAccount'), $membership->loadMissing('role'))->orderBy('created_at')->get()
         );
     }
 

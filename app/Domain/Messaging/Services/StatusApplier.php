@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Services;
 
+use App\Application\WhatsApp\MarketingMessages;
 use App\Domain\Chatbots\Jobs\ChatbotDelivery;
 use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Events\MessageStored;
@@ -75,6 +76,16 @@ final class StatusApplier
 
         if (isset($status['pricing']) && is_array($status['pricing'])) {
             $updates['pricing'] = $status['pricing'];
+
+            // Meta's pricing shows the path that really delivered it: marketing_lite = Marketing Messages API.
+            // Sent to the MM API but priced as plain marketing = Meta delivered it through the Cloud API.
+            $category = strtolower((string) ($status['pricing']['category'] ?? ''));
+            $route = $message->getAttribute('send_route');
+            if ($category === 'marketing_lite' && $route !== MarketingMessages::ROUTE_MM) {
+                $updates['send_route'] = MarketingMessages::ROUTE_MM;
+            } elseif ($category === 'marketing' && $route === MarketingMessages::ROUTE_MM) {
+                $updates['send_route'] = MarketingMessages::ROUTE_MM_FALLBACK;
+            }
         }
 
         if ($updates !== []) {

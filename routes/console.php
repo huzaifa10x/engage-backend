@@ -22,6 +22,8 @@ Schedule::command('engage:campaigns:dispatch')->everyMinute()->onOneServer()->wi
 Schedule::command('engage:templates:sync')->everyFiveMinutes()->onOneServer()->withoutOverlapping();
 // Safety net behind the limit webhooks: Meta's daily messaging limit of every number, re-read hourly.
 Schedule::command('engage:whatsapp:refresh-limits')->hourly()->onOneServer()->withoutOverlapping();
+// Marketing Messages API: status safety net behind the webhook, and asks eligible businesses to accept the terms.
+Schedule::command('engage:mm:sync')->hourlyAt(20)->onOneServer()->withoutOverlapping();
 Schedule::command('engage:webhooks:prune')->dailyAt('02:30')->onOneServer()->withoutOverlapping();
 // Integrations: abandoned-checkout reminders go out when their waiting time has passed.
 Schedule::command('engage:integrations:run')->everyMinute()->onOneServer()->withoutOverlapping();

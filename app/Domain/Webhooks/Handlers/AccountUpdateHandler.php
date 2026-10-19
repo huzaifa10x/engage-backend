@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Domain\Webhooks\Handlers;
 
 use App\Application\WhatsApp\AccessRevocation;
+use App\Application\WhatsApp\MarketingMessages;
+use App\Domain\Tenancy\Models\Tenant;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\Webhooks\ProcessResult;
 use App\Domain\Webhooks\WebhookChange;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
@@ -12,6 +15,7 @@ use App\Domain\WhatsApp\Enums\WabaStatus;
 use App\Domain\WhatsApp\Jobs\VerifyMetaAccess;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\QualityEvent;
+use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 
@@ -19,11 +23,17 @@ use Illuminate\Support\Facades\Cache;
  * account_update: WABA lifecycle. PARTNER_REMOVED / ACCOUNT_OFFBOARDED disconnect (coexistence
  * clients disconnect from the app — Settings › Account › Business Platform); ACCOUNT_RECONNECTED
  * restores; DISABLED_UPDATE carries the ban state; violations and restrictions feed Quality & abuse.
+ * MM_LITE_TERMS_SIGNED (and the older AD_ACCOUNT_LINKED): the business accepted the Marketing Messages
+ * terms — the account is onboarded and campaign marketing goes through the MM API from now on.
  */
 final class AccountUpdateHandler implements WebhookHandler
 {
+    private const MM_SIGNED = ['MM_LITE_TERMS_SIGNED', 'AD_ACCOUNT_LINKED'];
+
     public function __construct(
         private readonly AccessRevocation $revocation,
+        private readonly MarketingMessages $marketingMessages,
+        private readonly TenantContext $context,
     ) {}
 
     public function fields(): array
@@ -33,13 +43,18 @@ final class AccountUpdateHandler implements WebhookHandler
 
     public function handle(WebhookChange $change): ProcessResult
     {
-        $waba = $change->waba;
-        if ($waba === null) {
-            return ProcessResult::Ignored; // e.g. PARTNER_ADDED before signup completed; signup reads state itself
-        }
-
         // Compared in upper case: Meta has sent these both ways ("PARTNER_REMOVED", "partner_removed").
         $event = strtoupper((string) ($change->value['event'] ?? 'UNKNOWN'));
+
+        $waba = $change->waba;
+        if ($waba === null) {
+            // Sent once for a whole business portfolio: every account of that business is onboarded.
+            if (in_array($event, self::MM_SIGNED, true) && $this->signedForBusiness($change) > 0) {
+                return ProcessResult::Processed;
+            }
+
+            return ProcessResult::Ignored; // e.g. PARTNER_ADDED before signup completed; signup reads state itself
+        }
         $numbers = $this->affectedNumbers($change);
 
         switch ($event) {
@@ -74,6 +89,11 @@ final class AccountUpdateHandler implements WebhookHandler
                 }
                 break;
 
+            case 'MM_LITE_TERMS_SIGNED':
+            case 'AD_ACCOUNT_LINKED':
+                $this->marketingMessages->termsSigned($waba, $change->value);
+                break;
+
             case 'DISABLED_UPDATE':
                 $waba->forceFill(['ban_state' => $change->value['ban_info']['waba_ban_state'] ?? null])->save();
                 break;
@@ -89,6 +109,25 @@ final class AccountUpdateHandler implements WebhookHandler
         ]);
 
         return ProcessResult::Processed;
+    }
+
+    /** Terms accepted at business level (no WABA on the entry): onboard every account of that business, each in its own workspace. */
+    private function signedForBusiness(WebhookChange $change): int
+    {
+        $business = $change->value['waba_info']['owner_business_id'] ?? $change->value['owner_business_id'] ?? null;
+        if (! is_string($business) && ! is_int($business)) {
+            return 0;
+        }
+
+        $wabas = $this->context->bypass(fn () => WabaAccount::query()->where('meta_business_id', (string) $business)->get());
+        foreach ($wabas as $waba) {
+            $tenant = $this->context->bypass(fn () => Tenant::query()->find($waba->tenant_id));
+            if ($tenant !== null) {
+                $this->context->run($tenant, fn () => $this->marketingMessages->termsSigned($waba, $change->value));
+            }
+        }
+
+        return $wabas->count();
     }
 
     /** @return Collection<int, PhoneNumber> */

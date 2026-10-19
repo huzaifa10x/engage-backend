@@ -182,6 +182,37 @@ final class GraphClient
         ];
     }
 
+    /**
+     * POST /<PHONE_NUMBER_ID>/marketing_messages — Marketing Messages API (marketing templates only).
+     * Same body as /messages. product_policy CLOUD_API_FALLBACK lets Meta deliver through the Cloud
+     * API when onboarding is not complete, so the message always goes out.
+     *
+     * @param  array<string, mixed>  $message
+     * @return array{wamid: string, wa_id: ?string, user_id: ?string, message_status: ?string}
+     */
+    public function sendMarketingMessage(string $phoneNumberId, array $message, string $token, bool $shareActivity = true): array
+    {
+        $body = $this->send('POST', "{$phoneNumberId}/marketing_messages", $token, [
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+        ] + $message + [
+            'product_policy' => 'CLOUD_API_FALLBACK',
+            'message_activity_sharing' => $shareActivity,
+        ]);
+
+        $wamid = $body['messages'][0]['id'] ?? null;
+        if (! is_string($wamid) || $wamid === '') {
+            throw new MetaApiException('The Marketing Messages API accepted the request but returned no message ID.', 200);
+        }
+
+        return [
+            'wamid' => $wamid,
+            'wa_id' => $body['contacts'][0]['wa_id'] ?? null,
+            'user_id' => $body['contacts'][0]['user_id'] ?? null,
+            'message_status' => $body['messages'][0]['message_status'] ?? null,
+        ];
+    }
+
     /** POST /<PHONE_NUMBER_ID>/messages {status: read} — blue ticks for an inbound message. */
     public function markRead(string $phoneNumberId, string $wamid, string $token): bool
     {
@@ -431,6 +462,46 @@ final class GraphClient
     public function getWaba(string $wabaId, string $token): array
     {
         return $this->getWithFieldFallback($wabaId, self::WABA_FIELDS, ['id', 'name', 'currency', 'timezone_id', 'message_template_namespace'], $token);
+    }
+
+    /**
+     * GET /<WABA_ID>?fields=marketing_messages_onboarding_status,owner_business_info{…} — the WABA's
+     * Marketing Messages state (ELIGIBLE / ONBOARDED / …) and its business's Terms of Service status
+     * (NOT_STARTED / REQUEST_SENT / TERM_OF_SERVICE_SIGNED). Older API versions only know the
+     * deprecated marketing_messages_lite_api_status, used as a fallback.
+     *
+     * @return array<string, mixed>
+     */
+    public function getMarketingMessagesStatus(string $wabaId, string $token): array
+    {
+        $attempts = [
+            'id,marketing_messages_onboarding_status,owner_business_info{id,name,marketing_messages_onboarding_status}',
+            'id,marketing_messages_onboarding_status',
+            'id,marketing_messages_lite_api_status',
+        ];
+        foreach ($attempts as $i => $fields) {
+            try {
+                return $this->send('GET', $wabaId, $token, ['fields' => $fields]);
+            } catch (MetaApiException $e) {
+                if (! $e->isUnknownField() || $i === count($attempts) - 1) {
+                    throw $e;
+                }
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * POST /<END_BUSINESS_ID>/onboard_partners_to_mm_lite — Meta's Intent API: emails the business's
+     * portfolio admins asking them to accept the Marketing Messages Terms of Service (a Tech Provider
+     * cannot accept for them). Returns Meta's request ID.
+     */
+    public function requestMarketingMessagesOnboarding(string $businessId, string $token): ?string
+    {
+        $body = $this->send('POST', "{$businessId}/onboard_partners_to_mm_lite", $token);
+
+        return isset($body['request_id']) ? (string) $body['request_id'] : null;
     }
 
     /** @return array<string, mixed> GET /<PHONE_NUMBER_ID> */

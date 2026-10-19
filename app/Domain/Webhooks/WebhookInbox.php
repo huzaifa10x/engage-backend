@@ -41,7 +41,8 @@ final class WebhookInbox
                 $rows[] = [
                     'id' => (string) Str::uuid7(),
                     'object' => $object,
-                    'waba_id' => isset($entry['id']) ? (string) $entry['id'] : null,
+                    // Marketing Messages events can arrive on the business portfolio's entry: they name the WABA in waba_info.
+                    'waba_id' => isset($value['waba_info']['waba_id']) ? (string) $value['waba_info']['waba_id'] : (isset($entry['id']) ? (string) $entry['id'] : null),
                     'phone_number_id' => isset($value['metadata']['phone_number_id']) ? (string) $value['metadata']['phone_number_id'] : null,
                     'field' => mb_substr((string) $change['field'], 0, 64),
                     'delivery_hash' => $hash,

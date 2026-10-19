@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Campaigns;
 
 use App\Application\Campaigns\ManageCampaigns;
+use App\Application\WhatsApp\MarketingMessages;
 use App\Domain\Campaigns\Models\Campaign;
 use App\Domain\Campaigns\Models\CampaignRecipient;
 use App\Domain\Campaigns\Services\Personalizer;
@@ -260,6 +261,14 @@ final class CampaignController extends Controller
         ]);
     }
 
+    private function routeOf(Campaign $c): string
+    {
+        $waba = $c->phoneNumber?->wabaAccount;
+
+        return MarketingMessages::enabled() && strtoupper((string) $c->template_category) === 'MARKETING' && $waba?->usesMarketingMessagesApi()
+            ? MarketingMessages::ROUTE_MM : MarketingMessages::ROUTE_CLOUD;
+    }
+
     /** @return array<string, mixed> */
     private function present(Campaign $c): array
     {
@@ -272,6 +281,9 @@ final class CampaignController extends Controller
                 'display' => $c->phoneNumber->verified_name ?? $c->phoneNumber->display_phone_number,
             ] : null,
             'template' => ['id' => $c->message_template_id, 'name' => $c->template_name, 'language' => $c->template_language, 'category' => $c->template_category],
+            // How its marketing messages go out right now: mm_api (Marketing Messages API, optimised
+            // delivery) when the number's account is onboarded, otherwise cloud_api. Never blocks sending.
+            'send_route' => $this->routeOf($c),
             'variables' => $c->variables ?? ['header' => [], 'body' => [], 'buttons' => (object) []],
             'media_id' => $c->media_id,
             'segment_id' => $c->segment_id,

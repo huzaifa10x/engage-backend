@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\Campaigns;
 
+use App\Application\WhatsApp\MarketingMessages;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Campaigns\Enums\CampaignStatus;
@@ -374,7 +375,7 @@ final class ManageCampaigns
      * Pipeline numbers for one campaign: what happened before WhatsApp (recipients) and after
      * (message delivery statuses, cumulative: a read message was also delivered and sent).
      *
-     * @return array<string, int>
+     * @return array<string, int|array<string, int>>
      */
     public function stats(Campaign $campaign): array
     {
@@ -396,6 +397,20 @@ final class ManageCampaigns
             'read' => $m('read'),
             'failed' => $m('failed') + (int) ($recipients['failed'] ?? 0),
             'replied' => $this->replied($campaign),
+            // Which API delivered the campaign's messages (Marketing Messages API vs Cloud API).
+            'routes' => $this->routes($campaign),
+        ];
+    }
+
+    /** @return array{mm_api: int, cloud_api: int} */
+    private function routes(Campaign $campaign): array
+    {
+        $rows = Message::query()->where('campaign_id', $campaign->id)->whereNotNull('send_route')
+            ->selectRaw('send_route, count(*) AS total')->groupBy('send_route')->pluck('total', 'send_route');
+
+        return [
+            'mm_api' => (int) ($rows[MarketingMessages::ROUTE_MM] ?? 0),
+            'cloud_api' => (int) ($rows[MarketingMessages::ROUTE_CLOUD] ?? 0) + (int) ($rows[MarketingMessages::ROUTE_MM_FALLBACK] ?? 0),
         ];
     }
 

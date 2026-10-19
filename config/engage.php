@@ -108,6 +108,21 @@ return [
         // already subscribed to when this installation has never connected it.
         'block_other_environments' => (bool) env('META_BLOCK_OTHER_ENVIRONMENTS', true),
         'allowed_other_app_ids' => array_values(array_filter(array_map('trim', explode(',', (string) env('META_ALLOWED_OTHER_APP_IDS', ''))))),
+        // Marketing Messages API (MM API). Campaign marketing templates of an onboarded account go
+        // through /marketing_messages; everything else, and every account not onboarded, uses the
+        // Cloud API. Switching `enabled` off sends everything through the Cloud API again.
+        'marketing_messages' => [
+            'enabled' => (bool) env('META_MM_ENABLED', true),
+            // Ask for the Marketing Messages terms inside Embedded Signup (extras.features).
+            'in_signup' => (bool) env('META_MM_IN_SIGNUP', true),
+            // Share delivery/read signals with Meta for delivery optimisation (message_activity_sharing).
+            'share_activity' => (bool) env('META_MM_SHARE_ACTIVITY', true),
+            // Optional: the partner's own system-user token for Meta's Intent API (asks a business's
+            // admins to accept the terms). Without it the business's own token is tried.
+            'partner_token' => env('META_PARTNER_SYSTEM_TOKEN'),
+            // A request nobody answered can be sent again after this many days.
+            'request_retry_days' => (int) env('META_MM_REQUEST_RETRY_DAYS', 7),
+        ],
         // LOCAL ONLY: answer Graph calls in-process (sending works offline, no Meta account).
         // Ignored outside APP_ENV=local. See App\Infrastructure\Meta\Fake\FakeMeta.
         'fake' => (bool) env('META_FAKE', false),
