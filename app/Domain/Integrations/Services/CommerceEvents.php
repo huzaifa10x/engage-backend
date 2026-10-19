@@ -157,7 +157,7 @@ final class CommerceEvents
         /** @var ?MessageTemplate $template */
         $template = MessageTemplate::query()->where('waba_account_id', $number->waba_account_id)->where('name', $rule->template_name)->where('language', $rule->template_language)->first();
         // Marketing needs an opt-in, order updates only need the customer not to have opted out.
-        if (($blocker = $contact->campaignBlocker($template?->category, true)) !== null) {
+        if (($blocker = $contact->campaignBlocker($template?->category)) !== null) {
             throw new Skip($blocker === 'No marketing opt-in' ? 'This is a marketing template and the customer has not opted in to marketing messages.' : $blocker.'.');
         }
 

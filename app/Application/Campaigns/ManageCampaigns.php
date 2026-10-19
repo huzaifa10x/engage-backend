@@ -123,6 +123,7 @@ final class ManageCampaigns
             'audience_filter' => $this->segments->filter($data['filter'] ?? null),
             'notes' => isset($data['notes']) && trim((string) $data['notes']) !== '' ? trim((string) $data['notes']) : null,
             'objective' => $data['objective'] ?? null,
+            'include_non_opted_in' => (bool) ($data['include_non_opted_in'] ?? false),
         ])->save();
 
         $this->audit->record($campaign->wasRecentlyCreated ? 'campaign.created' : 'campaign.updated', $campaign, after: ['name' => $campaign->name]);
@@ -156,9 +157,9 @@ final class ManageCampaigns
         $audience = ['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'name' => $segment?->name, 'tag' => $campaign->audience_tag,
             'filter' => $campaign->getAttribute('audience_filter')];
 
-        $counts = $this->counts($audience, $campaign->template_category);
+        $counts = $this->counts($audience, $campaign->template_category, (bool) $campaign->include_non_opted_in);
         if ($counts['eligible'] === 0) {
-            throw CampaignException::cannot('Nobody in this audience can be messaged: '.($counts['matched'] === 0 ? 'no contact matches the segment.' : 'all the matching contacts opted out or have no WhatsApp number.'));
+            throw CampaignException::cannot('Nobody in this audience can be messaged: '.($counts['matched'] === 0 ? 'no contact matches the segment.' : ($counts['not_opted_in'] > 0 ? 'none of the matching contacts has opted in. Tick “Include contacts who have not opted in” to reach them.' : 'all the matching contacts opted out or have no WhatsApp number.')));
         }
         // The plan's monthly reach is checked before the first message, never mid-campaign.
         $this->entitlements->ensureWithinLimit($tenant, FeatureKey::CampaignReachMonthly, $counts['eligible']);
@@ -180,7 +181,7 @@ final class ManageCampaigns
             'failure_reason' => null,
         ])->save();
 
-        $this->audit->record($scheduled ? 'campaign.scheduled' : 'campaign.launched', $campaign, meta: $counts);
+        $this->audit->record($scheduled ? 'campaign.scheduled' : 'campaign.launched', $campaign, meta: $counts + ['include_non_opted_in' => (bool) $campaign->include_non_opted_in]);
 
         if (! $scheduled) {
             LaunchCampaign::dispatch($campaign->id)->afterCommit();
@@ -265,7 +266,7 @@ final class ManageCampaigns
         $this->entitlements->ensureEnabled($this->context->tenant(), FeatureKey::Broadcasts);
 
         $copy = Campaign::query()->create(array_merge(
-            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'audience_filter', 'notes', 'objective']),
+            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'audience_filter', 'notes', 'objective', 'include_non_opted_in']),
             ['name' => mb_substr($campaign->name, 0, 112).' (copy)', 'status' => CampaignStatus::Draft, 'created_by_membership_id' => $this->context->membership()?->id],
         ));
         $this->audit->record('campaign.duplicated', $copy, meta: ['from' => $campaign->id]);
@@ -275,14 +276,16 @@ final class ManageCampaigns
 
     /**
      * @param  array{match?: string, rules?: array<int, array<string, mixed>>, tag?: ?string, filter?: mixed}|null  $audience
-     * @return array{matched: int, eligible: int}
+     * @return array{matched: int, eligible: int, not_opted_in: int} not_opted_in: reachable marketing contacts without a recorded opt-in
      */
-    public function counts(?array $audience, ?string $category): array
+    public function counts(?array $audience, ?string $category, bool $includeNonOptedIn = false): array
     {
         $matched = $this->audienceQuery($audience)->count();
-        $eligible = $this->eligibleQuery($audience, $category)->count();
+        $eligible = $this->eligibleQuery($audience, $category, $includeNonOptedIn)->count();
+        $notOptedIn = strtoupper((string) $category) === 'MARKETING'
+            ? $this->eligibleQuery($audience, $category, true)->where('consent_state', '!=', ConsentState::OptedIn->value)->count() : 0;
 
-        return ['matched' => $matched, 'eligible' => $eligible];
+        return ['matched' => $matched, 'eligible' => $eligible, 'not_opted_in' => $notOptedIn];
     }
 
     /**
@@ -352,15 +355,16 @@ final class ManageCampaigns
      * @param  array{match?: string, rules?: array<int, array<string, mixed>>, tag?: ?string, filter?: mixed}|null  $audience
      * @return Builder<Contact>
      */
-    public function eligibleQuery(?array $audience, ?string $category): Builder
+    public function eligibleQuery(?array $audience, ?string $category, bool $includeNonOptedIn = false): Builder
     {
         $query = $this->audienceQuery($audience)
             ->where('consent_state', '!=', ConsentState::OptedOut->value)
             ->where(fn (Builder $w) => $w->whereNotNull('wa_id')->orWhereNotNull('bsuid'));
 
         if (strtoupper((string) $category) === 'MARKETING') {
-            // No recorded opt-in needed (the business vouches for its audience); stopped-marketing contacts are still left out.
-            $query->where('marketing_opted_out', false);
+            // Opted-in contacts only, unless the sender includes those who have not opted in (never the opted-out).
+            $query->where('marketing_opted_out', false)
+                ->when(! $includeNonOptedIn, fn (Builder $q) => $q->where('consent_state', ConsentState::OptedIn->value));
 
             $cap = ComplianceSettings::for($this->context->tenant())->marketingFrequencyCap;
             if ($cap > 0) {

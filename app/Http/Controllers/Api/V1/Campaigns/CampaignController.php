@@ -76,6 +76,7 @@ final class CampaignController extends Controller
             'filter' => ['nullable'],
             'template_id' => ['nullable', 'uuid'],
             'phone_number_id' => ['nullable', 'uuid'],
+            'include_non_opted_in' => ['nullable', 'boolean'],
         ]);
         $filter = app(SegmentQuery::class)->filter($data['filter'] ?? null);
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
@@ -86,7 +87,7 @@ final class CampaignController extends Controller
         $marketing = strtoupper((string) $category) === 'MARKETING';
         $daily = $number !== null ? app(MessagingLimits::class)->summary($number) : null;
 
-        $counts = $this->campaigns->counts(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null, 'filter' => $filter], $category);
+        $counts = $this->campaigns->counts(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null, 'filter' => $filter], $category, (bool) ($data['include_non_opted_in'] ?? false));
         $reach = $entitlements->for($tenant)->get(FeatureKey::CampaignReachMonthly);
 
         return response()->json(['data' => $counts + [
@@ -118,6 +119,7 @@ final class CampaignController extends Controller
             'segment_id' => ['nullable', 'uuid'],
             'audience_tag' => ['nullable', 'string', 'max:40'],
             'filter' => ['nullable'],
+            'include_non_opted_in' => ['nullable', 'boolean'],
             'variables' => ['nullable', 'array'],
             'variables.header' => ['nullable', 'array', 'max:1'],
             'variables.header.*' => ['nullable', 'string', 'max:60'],
@@ -136,7 +138,7 @@ final class CampaignController extends Controller
         };
 
         $contacts = $this->campaigns->eligibleQuery(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null,
-            'filter' => app(SegmentQuery::class)->filter($data['filter'] ?? null)], $template->category)
+            'filter' => app(SegmentQuery::class)->filter($data['filter'] ?? null)], $template->category, (bool) ($data['include_non_opted_in'] ?? false))
             ->orderBy('id')->limit(3)->get();
 
         return response()->json(['data' => $contacts->map(function (Contact $contact) use ($template, $definition, $data, $personalizer, $fill) {
@@ -249,6 +251,8 @@ final class CampaignController extends Controller
             'audience_tag' => ['nullable', 'string', 'max:40'],
             'filter' => ['nullable'],
             'notes' => ['nullable', 'string', 'max:2000'],
+            // Marketing: also send to contacts with no recorded opt-in (opted-out contacts never).
+            'include_non_opted_in' => ['nullable', 'boolean'],
             'objective' => ['nullable', Rule::in(['promo', 'announcement', 're_engagement', 'reminder', 'update', 'other'])],
             'media_id' => ['nullable', 'uuid'],
             'variables' => ['nullable', 'array'],
@@ -289,6 +293,7 @@ final class CampaignController extends Controller
             'segment_id' => $c->segment_id,
             'audience_tag' => $c->audience_tag,
             'audience_filter' => $c->getAttribute('audience_filter'),
+            'include_non_opted_in' => (bool) $c->include_non_opted_in,
             'audience_name' => $c->audience['name'] ?? null,
             'notes' => $c->notes,
             'objective' => $c->objective,

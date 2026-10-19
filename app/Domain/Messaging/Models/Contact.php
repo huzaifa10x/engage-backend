@@ -82,13 +82,13 @@ class Contact extends Model
 
     /**
      * May this contact receive a business-initiated message of this template category?
-     * Never to someone who opted out (STOP) or stopped marketing in WhatsApp. Campaigns do not need
-     * a recorded opt-in: the business vouches for the consent of its audience. Callers that must
-     * see an explicit marketing opt-in (commerce automations) pass $requireMarketingOptIn.
+     * Never to someone who opted out (STOP) or stopped marketing in WhatsApp. Marketing also needs a
+     * recorded opt-in, unless the sender chose to include contacts who have not opted in
+     * ($requireMarketingOptIn = false: a campaign's "Include contacts who have not opted in").
      *
      * @return ?string null when allowed, otherwise the reason it is not
      */
-    public function campaignBlocker(?string $category, bool $requireMarketingOptIn = false): ?string
+    public function campaignBlocker(?string $category, bool $requireMarketingOptIn = true): ?string
     {
         if ($this->wa_id === null && $this->bsuid === null) {
             return 'No WhatsApp number';

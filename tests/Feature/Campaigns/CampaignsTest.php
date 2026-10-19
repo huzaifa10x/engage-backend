@@ -117,13 +117,12 @@ final class CampaignsTest extends TestCase
             'filter' => ['rules' => [['field' => 'attr:nope', 'op' => 'equals', 'value' => '1']]]])->assertStatus(422);
     }
 
-    public function test_a_marketing_campaign_reaches_matching_contacts_who_have_not_opted_out(): void
+    public function test_a_marketing_campaign_reaches_only_matching_contacts_with_consent(): void
     {
         $segment = $this->vipSegment();
 
         $this->getJson("/api/v1/campaigns/audience?segment_id={$segment}&template_id={$this->templates['summer_offer']}")
-            // No recorded opt-in is needed any more: only the contact who opted out is left out.
-            ->assertOk()->assertJsonPath('data.matched', 4)->assertJsonPath('data.eligible', 3)->assertJsonPath('data.reach_limit', 100000);
+            ->assertOk()->assertJsonPath('data.matched', 4)->assertJsonPath('data.eligible', 2)->assertJsonPath('data.reach_limit', 100000);
 
         $id = $this->draft(['segment_id' => $segment]);
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
@@ -131,23 +130,22 @@ final class CampaignsTest extends TestCase
         $this->getJson("/api/v1/campaigns/{$id}")->assertOk()
             ->assertJsonPath('data.status', 'completed')
             ->assertJsonPath('data.audience_name', 'VIPs')
-            ->assertJsonPath('data.stats.matched', 4)->assertJsonPath('data.stats.eligible', 3)
-            ->assertJsonPath('data.stats.sent', 3)->assertJsonPath('data.stats.skipped', 1)->assertJsonPath('data.stats.failed', 0);
+            ->assertJsonPath('data.stats.matched', 4)->assertJsonPath('data.stats.eligible', 2)
+            ->assertJsonPath('data.stats.sent', 2)->assertJsonPath('data.stats.skipped', 2)->assertJsonPath('data.stats.failed', 0);
 
         // Personalised per contact, sent as a real template through the Cloud API.
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110001'
             && $r['template']['name'] === 'summer_offer' && array_column($r['template']['components'][0]['parameters'], 'text') === ['Sara', '20%']);
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110002');
-        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110003'); // consent unknown
-        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/messages') && in_array($r['to'], ['971501110004', '971501110005'], true));
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/messages') && in_array($r['to'], ['971501110003', '971501110004', '971501110005'], true));
 
         $recipients = collect($this->getJson("/api/v1/campaigns/{$id}/recipients")->assertOk()->json('data'))->keyBy('contact.phone');
         $this->assertSame('accepted', $recipients['+971501110001']['status']);
-        $this->assertSame('accepted', $recipients['+971501110003']['status']);
+        $this->assertSame('No marketing opt-in', $recipients['+971501110003']['reason']);
         $this->assertSame('Opted out', $recipients['+971501110004']['reason']);
 
         $messages = $this->tenantContext()->run($this->tenant, fn () => Message::query()->where('campaign_id', $id)->get());
-        $this->assertCount(3, $messages);
+        $this->assertCount(2, $messages);
         $this->assertSame('campaign', $messages[0]->origin->value);
         $this->assertSame('Hi Sara, enjoy 20% off this week.', $messages->firstWhere('body', 'Hi Sara, enjoy 20% off this week.')?->body);
 
@@ -155,7 +153,7 @@ final class CampaignsTest extends TestCase
         $wamid = $messages[0]->wamid;
         $this->postWebhook($this->webhookBody('messages', ['messaging_product' => 'whatsapp', 'metadata' => ['display_phone_number' => '971500000000', 'phone_number_id' => '106540352242922'],
             'statuses' => [['id' => $wamid, 'status' => 'read', 'timestamp' => (string) time(), 'recipient_id' => '971501110001']]]))->assertOk();
-        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.stats.read', 1)->assertJsonPath('data.stats.delivered', 1)->assertJsonPath('data.stats.sent', 3);
+        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.stats.read', 1)->assertJsonPath('data.stats.delivered', 1)->assertJsonPath('data.stats.sent', 2);
 
         // A finished campaign cannot be edited or launched twice.
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertStatus(409);
@@ -187,6 +185,26 @@ final class CampaignsTest extends TestCase
         $this->deleteJson("/api/v1/campaigns/{$id}")->assertNoContent();
     }
 
+    public function test_the_sender_can_include_contacts_who_have_not_opted_in_but_never_the_opted_out(): void
+    {
+        $segment = $this->vipSegment();
+        $query = "/api/v1/campaigns/audience?segment_id={$segment}&template_id={$this->templates['summer_offer']}";
+
+        // Default: opted-in only; the count of the others is shown next to the option.
+        $this->getJson($query)->assertJsonPath('data.eligible', 2)->assertJsonPath('data.not_opted_in', 1);
+        $this->getJson($query.'&include_non_opted_in=1')->assertJsonPath('data.eligible', 3)->assertJsonPath('data.not_opted_in', 1);
+
+        $id = $this->draft(['segment_id' => $segment, 'include_non_opted_in' => true]);
+        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.include_non_opted_in', true);
+        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
+
+        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.stats.sent', 3)->assertJsonPath('data.stats.skipped', 1);
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110003');
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110004');
+        $recipients = collect($this->getJson("/api/v1/campaigns/{$id}/recipients")->json('data'))->keyBy('contact.phone');
+        $this->assertSame('Opted out', $recipients['+971501110004']['reason']);
+    }
+
     public function test_a_scheduled_campaign_starts_when_due_and_can_be_stopped_before(): void
     {
         $id = $this->draft();
@@ -199,7 +217,7 @@ final class CampaignsTest extends TestCase
         $this->travel(61)->minutes();
         Artisan::call('engage:campaigns:dispatch');
         $this->actingAsMember($this->owner);
-        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.status', 'completed')->assertJsonPath('data.stats.sent', 4);
+        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.status', 'completed')->assertJsonPath('data.stats.sent', 3);
 
         // Stopping a scheduled campaign returns it to draft.
         $second = $this->draft(['name' => 'Second']);
@@ -254,17 +272,17 @@ final class CampaignsTest extends TestCase
     public function test_analytics_reports_the_delivery_funnel_per_number_and_template(): void
     {
         $id = $this->draft();
-        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk(); // 4 marketing sends
+        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk(); // 3 marketing sends
         $this->postWebhook($this->webhookBody('messages', $this->inboundValue()))->assertOk(); // 1 inbound
 
         $this->getJson('/api/v1/analytics/overview?days=7')->assertOk()
-            ->assertJsonPath('data.totals.outbound', 4)->assertJsonPath('data.totals.sent', 4)->assertJsonPath('data.totals.failed', 0)
+            ->assertJsonPath('data.totals.outbound', 3)->assertJsonPath('data.totals.sent', 3)->assertJsonPath('data.totals.failed', 0)
             ->assertJsonPath('data.totals.inbound', 1)
-            ->assertJsonPath('data.by_origin.campaign', 4)
+            ->assertJsonPath('data.by_origin.campaign', 3)
             ->assertJsonCount(7, 'data.daily')
-            ->assertJsonPath('data.daily.6.outbound', 4)->assertJsonPath('data.daily.6.inbound', 1)
-            ->assertJsonPath('data.numbers.0.outbound', 4)->assertJsonPath('data.numbers.0.inbound', 1)
-            ->assertJsonPath('data.top_templates.0.name', 'summer_offer')->assertJsonPath('data.top_templates.0.total', 4);
+            ->assertJsonPath('data.daily.6.outbound', 3)->assertJsonPath('data.daily.6.inbound', 1)
+            ->assertJsonPath('data.numbers.0.outbound', 3)->assertJsonPath('data.numbers.0.inbound', 1)
+            ->assertJsonPath('data.top_templates.0.name', 'summer_offer')->assertJsonPath('data.top_templates.0.total', 3);
 
         $other = $this->createTenant();
         $this->subscribe($other, 'pro');

@@ -30,7 +30,8 @@ final class PublicSiteController extends Controller
         $data = Cache::remember(self::CACHE_KEY, 60, function (): array {
             $plans = Plan::query()->where('is_public', true)->where('is_active', true)->orderBy('sort_order')->get()->map(function (Plan $plan): ?array {
                 $version = $plan->activeVersion();
-                if ($version === null) {
+                // $0 plans other than Free (e.g. In-House) are assigned by the platform team, not advertised.
+                if ($version === null || ($version->price_monthly_minor === 0 && $plan->key !== (string) config('engage.plans.fallback'))) {
                     return null;
                 }
                 $rows = PlanVersionFeature::query()->where('plan_version_id', $version->id)->with('feature')->get()->keyBy(fn (PlanVersionFeature $r) => $r->feature?->key);

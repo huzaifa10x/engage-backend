@@ -36,23 +36,30 @@ final class BillingController extends Controller
         $vat = StripeBilling::vatApplies($tenant);
         $percent = (float) config('engage.stripe.uae_vat_percent', 5);
 
-        $plans = Plan::query()->where('is_public', true)->where(fn ($q) => $q->where('is_active', true)->orWhere('key', $currentKey))->orderBy('sort_order')->get()->map(function (Plan $plan) use ($currentKey) {
-            $version = $plan->activeVersion();
+        $fallback = (string) config('engage.plans.fallback');
+        $plans = Plan::query()->where(fn ($q) => $q->where('is_public', true)->orWhere('key', $currentKey))
+            ->where(fn ($q) => $q->where('is_active', true)->orWhere('key', $currentKey))->orderBy('sort_order')->get()->map(function (Plan $plan) use ($currentKey, $fallback) {
+                $version = $plan->activeVersion();
+                // A $0 plan other than Free (e.g. In-House) is assigned by the platform team only: never
+                // offered to other workspaces; the workspace on it sees it as its plan.
+                if ($version !== null && $plan->key !== $fallback && $plan->key !== $currentKey && $version->price_monthly_minor === 0) {
+                    return null;
+                }
 
-            return $version === null ? null : [
-                'key' => $plan->key,
-                'name' => $plan->name,
-                'description' => $plan->description,
-                'currency' => $version->currency,
-                'price_monthly_minor' => $version->price_monthly_minor,
-                'price_yearly_minor' => $version->price_yearly_minor,
-                'current' => $plan->key === $currentKey,
-                // Free has no price to pay; custom-priced plans (null) go through sales.
-                'purchasable' => $plan->is_active && ($version->price_monthly_minor ?? 0) > 0,
-                // The plan a workspace falls back to; "Switch to Free" moves there (billing/switch-to-free).
-                'free' => $plan->key === (string) config('engage.plans.fallback'),
-            ];
-        })->filter()->values();
+                return $version === null ? null : [
+                    'key' => $plan->key,
+                    'name' => $plan->name,
+                    'description' => $plan->description,
+                    'currency' => $version->currency,
+                    'price_monthly_minor' => $version->price_monthly_minor,
+                    'price_yearly_minor' => $version->price_yearly_minor,
+                    'current' => $plan->key === $currentKey,
+                    // Free has no price to pay; custom-priced plans (null) go through sales.
+                    'purchasable' => $plan->is_active && ($version->price_monthly_minor ?? 0) > 0,
+                    // The plan a workspace falls back to; "Switch to Free" moves there (billing/switch-to-free).
+                    'free' => $plan->key === (string) config('engage.plans.fallback'),
+                ];
+            })->filter()->values();
 
         return response()->json(['data' => [
             'stripe_configured' => $this->stripe->configured() && (string) config('engage.stripe.key') !== '',
@@ -75,6 +82,10 @@ final class BillingController extends Controller
             ],
             'vat' => ['applies' => $vat, 'percent' => $percent, 'country' => StripeBilling::VAT_COUNTRY],
             'has_payment_history' => $tenant->stripe_customer_id !== null,
+            // "Switch to Free" is offered for a trial or a paid Stripe plan; plans the platform team set
+            // up (In-House, manual Enterprise) are changed by them.
+            'can_switch_to_free' => $subscription !== null && $currentKey !== $fallback
+                && ($subscription->status === SubscriptionStatus::Trialing || $this->billing->liveStripeSubscription($tenant) !== null),
             'plans' => $plans,
         ]]);
     }
@@ -210,7 +221,7 @@ final class BillingController extends Controller
 
     /**
      * "Switch to Free": a paid Stripe plan ends at the end of the period already paid for (no refund,
-     * nothing more is charged), then the workspace moves to Free; a trial or an unpaid plan moves to
+     * nothing more is charged), then the workspace moves to Free; a trial moves to
      * Free straight away. Plans set up by 10X Digital (manual billing) are changed by them.
      */
     public function switchToFree(SubscriptionService $subscriptions): JsonResponse
@@ -227,8 +238,7 @@ final class BillingController extends Controller
 
             return $this->show();
         }
-        $unpaid = $live->status === SubscriptionStatus::Trialing || ($live->planVersion->price_monthly_minor ?? 0) === 0;
-        if (! $unpaid) {
+        if ($live->status !== SubscriptionStatus::Trialing) {
             throw ValidationException::withMessages(['billing' => 'Your plan is managed by 10X Digital. Contact us to change it.']);
         }
 

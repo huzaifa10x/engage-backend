@@ -112,7 +112,7 @@ final class SendCampaignBatch implements ShouldQueue
                 continue;
             }
             // Consent can change between preparation and sending (a STOP reply): check again.
-            $blocker = $contact === null || $contact->trashed() ? 'Contact was deleted' : $contact->campaignBlocker($campaign->template_category);
+            $blocker = $contact === null || $contact->trashed() ? 'Contact was deleted' : $contact->campaignBlocker($campaign->template_category, ! $campaign->include_non_opted_in);
             if ($blocker !== null || $contact === null) {
                 $recipient->forceFill(['status' => 'skipped', 'reason' => $blocker])->save();
 

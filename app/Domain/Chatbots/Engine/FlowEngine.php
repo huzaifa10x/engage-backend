@@ -373,6 +373,17 @@ final class FlowEngine
 
                 return 'next';
 
+                // Put after the customer agreed (a "Yes, subscribe" button, a keyword): recorded in the consent
+                // ledger as an opt-in from the chatbot, and marketing messages are allowed again.
+            case 'optin':
+                $rt->optIn();
+                $rt->note('The customer is opted in to messages, marketing included.');
+                if ($c['text'] !== null) {
+                    $this->sendText($rt, Placeholders::fill($c['text'], $rt));
+                }
+
+                return 'next';
+
             case 'optout':
                 if ($c['text'] !== null) {
                     $this->sendText($rt, Placeholders::fill($c['text'], $rt));

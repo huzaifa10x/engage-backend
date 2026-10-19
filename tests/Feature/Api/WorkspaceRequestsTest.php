@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api;
 
+use App\Application\Billing\ManagePlans;
 use App\Domain\Billing\SubscriptionService;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Plans\Models\Plan;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -113,5 +115,29 @@ final class WorkspaceRequestsTest extends TestCase
         // setUp assigned Pro manually (no Stripe, not a trial).
         $this->postJson('/api/v1/billing/switch-to-free')->assertStatus(422);
         $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'pro');
+    }
+
+    public function test_a_free_in_house_plan_is_never_offered_but_shows_as_the_plan_of_a_workspace_on_it(): void
+    {
+        app(ManagePlans::class)->create('in_house', [
+            'name' => 'In-House', 'is_public' => true, 'is_active' => true,
+            'price_monthly_minor' => 0, 'price_yearly_minor' => 0, 'features' => [],
+        ]);
+
+        $keys = fn () => array_column($this->getJson('/api/v1/billing')->assertOk()->json('data.plans'), 'key');
+        $this->assertNotContains('in_house', $keys());
+        $this->assertContains('free', $keys());
+        $site = $this->getJson('/api/v1/public/plans')->assertOk()->json('data');
+        $siteKeys = array_column($site['plans'] ?? $site, 'key');
+        $this->assertContains('pro', $siteKeys);
+        $this->assertNotContains('in_house', $siteKeys);
+
+        // Assigned by the platform team: the workspace sees it as its plan, and cannot switch itself to Free.
+        app(SubscriptionService::class)->assign($this->tenant, Plan::byKey('in_house')->activeVersionOrFail());
+        $billing = $this->getJson('/api/v1/billing')->assertOk();
+        $plans = collect($billing->json('data.plans'))->keyBy('key');
+        $this->assertTrue($plans['in_house']['current']);
+        $billing->assertJsonPath('data.can_switch_to_free', false);
+        $this->postJson('/api/v1/billing/switch-to-free')->assertStatus(422);
     }
 }

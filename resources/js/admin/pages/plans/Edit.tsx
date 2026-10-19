@@ -127,7 +127,7 @@ export default function PlanEdit({ plan, features }: { plan: Plan | null; featur
                             <Toggle checked={form.data.is_active} onChange={(v) => form.setData('is_active', v)} label="Active" />
                         </label>
                         <label className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2.5 text-[13.5px]">
-                            <span><span className="font-semibold">Shown on the pricing page</span><span className="block text-[12.5px] text-muted">Hidden plans can only be assigned by your team.</span></span>
+                            <span><span className="font-semibold">Shown on the pricing page</span><span className="block text-[12.5px] text-muted">Hidden plans can only be assigned by your team (Companies › Plan). A free plan other than “Free” (e.g. In-House) is never offered to clients either way.</span></span>
                             <Toggle checked={form.data.is_public} onChange={(v) => form.setData('is_public', v)} label="Shown on the pricing page" />
                         </label>
                     </div>

@@ -21,14 +21,14 @@ final class FlowGraph
     public const GROUPS = [
         'send' => ['message', 'media', 'buttons', 'list', 'product', 'template', 'url', 'form'],
         'capture' => ['question', 'ask_media', 'location', 'rating'],
-        'logic' => ['condition', 'setfield', 'calculate', 'delay', 'tag', 'optout', 'hours', 'split'],
+        'logic' => ['condition', 'setfield', 'calculate', 'delay', 'tag', 'optin', 'optout', 'hours', 'split'],
         'connect' => ['http', 'order', 'sheets'],
         'control' => ['start', 'goto', 'subflow', 'note', 'handoff', 'end'],
     ];
 
     public const TYPES = [
         'start', 'message', 'media', 'buttons', 'list', 'product', 'template', 'url', 'form', 'question', 'ask_media', 'location', 'rating',
-        'condition', 'setfield', 'calculate', 'delay', 'tag', 'optout', 'hours', 'split', 'http', 'order', 'sheets', 'goto', 'subflow', 'note', 'handoff', 'end',
+        'condition', 'setfield', 'calculate', 'delay', 'tag', 'optin', 'optout', 'hours', 'split', 'http', 'order', 'sheets', 'goto', 'subflow', 'note', 'handoff', 'end',
     ];
 
     /** Blocks that stop and wait for the customer's answer. */
@@ -37,7 +37,7 @@ final class FlowGraph
     public const TERMINAL = ['handoff', 'end', 'goto'];
 
     /** Blocks that send a normal (free-form) message, which needs the 24-hour window. */
-    public const FREE_FORM = ['message', 'media', 'buttons', 'list', 'product', 'url', 'form', 'question', 'ask_media', 'location', 'rating', 'optout'];
+    public const FREE_FORM = ['message', 'media', 'buttons', 'list', 'product', 'url', 'form', 'question', 'ask_media', 'location', 'rating', 'optin', 'optout'];
 
     public const MAX_NODES = 200;
 
@@ -201,7 +201,7 @@ final class FlowGraph
             'start' => [['id' => 'next', 'label' => 'Start']],
             'message', 'media', 'url', 'note' => [['id' => 'next', 'label' => 'Next']],
             'template' => [['id' => 'next', 'label' => 'Sent'], ...(($config['on_failure'] ?? false) ? [['id' => 'failed', 'label' => 'Not delivered']] : [])],
-            'setfield', 'tag', 'calculate', 'optout', 'sheets' => [['id' => 'next', 'label' => 'Done']],
+            'setfield', 'tag', 'calculate', 'optin', 'optout', 'sheets' => [['id' => 'next', 'label' => 'Done']],
             'delay' => [['id' => 'next', 'label' => 'After wait']],
             'subflow' => [['id' => 'next', 'label' => 'After subflow']],
             'buttons' => [...$choices($config['buttons'] ?? []), ...$extra],
@@ -239,6 +239,7 @@ final class FlowGraph
             'calculate' => 'Calculate',
             'delay' => 'Wait',
             'tag' => 'Tag / assign',
+            'optin' => 'Opt-in',
             'optout' => 'Opt-out',
             'hours' => 'Business hours',
             'split' => 'A/B split',

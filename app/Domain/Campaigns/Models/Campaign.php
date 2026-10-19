@@ -60,11 +60,13 @@ class Campaign extends Model
         'variables', 'media_id', 'segment_id', 'audience', 'audience_filter', 'status', 'scheduled_at', 'started_at', 'completed_at',
         'matched_count', 'eligible_count', 'failure_reason', 'created_by_membership_id',
         'notes', 'objective', 'audience_tag', 'batch_per_hour', 'next_batch_at', 'wait_reason', 'paused_at', 'pause_reason',
+        'include_non_opted_in',
     ];
 
     protected function casts(): array
     {
         return [
+            'include_non_opted_in' => 'boolean',
             'variables' => 'array',
             'audience' => 'array',
             'audience_filter' => 'array',

@@ -13,6 +13,7 @@ use App\Domain\Chatbots\Services\ChatbotWorkspace;
 use App\Domain\Chatbots\Services\FlowTemplates;
 use App\Domain\Crm\Models\ContactField;
 use App\Domain\Developer\Services\UrlGuard;
+use App\Domain\Messaging\Models\ConsentEvent;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\ConversationNote;
@@ -130,6 +131,25 @@ final class ChatbotBuilderV2Test extends TestCase
     }
 
     // ── Templates ────────────────────────────────────────────────────────────────────────────
+
+    public function test_the_opt_in_block_records_consent_after_the_customer_agrees(): void
+    {
+        $this->flow('Subscribe', [
+            self::node('start', 'start', ['any_message' => true], ['next' => 'ask']),
+            self::node('ask', 'buttons', ['text' => 'Get our offers on WhatsApp?', 'retries' => 0, 'buttons' => [['id' => 'yes', 'title' => 'Yes please'], ['id' => 'no', 'title' => 'No thanks']]], ['yes' => 'optin', 'no' => 'bye']),
+            self::node('optin', 'optin', ['text' => 'Thank you! You are subscribed.'], ['next' => 'bye']),
+            self::node('bye', 'end', ['text' => 'Bye']),
+            self::node('person', 'handoff', ['text' => null]),
+        ]);
+
+        $this->says('hi');
+        $this->taps('yes', 'Yes please');
+
+        $this->assertContains('Thank you! You are subscribed.', $this->received());
+        $contact = $this->inTenant(fn () => Contact::query()->where('wa_id', '971501234567')->firstOrFail());
+        $this->assertSame('opted_in', $contact->consent_state->value);
+        $this->assertSame('chatbot', $this->inTenant(fn () => ConsentEvent::query()->where('contact_id', $contact->id)->latest('created_at')->value('source')));
+    }
 
     public function test_every_template_creates_a_flow_that_passes_the_publish_gate_and_fills_business_variables(): void
     {

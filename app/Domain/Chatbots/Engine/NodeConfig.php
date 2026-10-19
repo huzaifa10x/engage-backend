@@ -162,6 +162,9 @@ final class NodeConfig
                 'add' => self::words($c['add'] ?? [], 10, 40, false),
                 'remove' => self::words($c['remove'] ?? [], 10, 40, false),
             ] + $assign(),
+            'optin' => [
+                'text' => $text(1024),
+            ],
             'optout' => [
                 'scope' => ($c['scope'] ?? 'marketing') === 'all' ? 'all' : 'marketing',
                 'text' => $text(1024),
