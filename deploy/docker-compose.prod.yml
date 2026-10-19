@@ -56,6 +56,8 @@ services:
         NEXT_PUBLIC_REVERB_HOST: ${DOMAIN}
         NEXT_PUBLIC_REVERB_PORT: "443"
         NEXT_PUBLIC_REVERB_SCHEME: https
+        # Unfinished modules ("Soon" / "Preview" in the sidebar) are hidden in production.
+        NEXT_PUBLIC_APP_ENV: production
     environment:
       BACKEND_URL: http://app:8000
     restart: unless-stopped

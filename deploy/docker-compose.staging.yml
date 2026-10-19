@@ -32,3 +32,9 @@ services:
   # A smaller database: staging runs a handful of queue workers (config/horizon.php → staging).
   postgres:
     command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-60}"]
+
+  # Staging shows the modules that are not released yet ("Soon" / "Preview" in the sidebar).
+  web:
+    build:
+      args:
+        NEXT_PUBLIC_APP_ENV: staging

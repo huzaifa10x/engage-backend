@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex">
     <title>Data deletion status · 10X Engage</title>
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <style>
         body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #F5F6F8; color: #0F172A; }
         main { max-width: 520px; margin: 64px auto; padding: 0 20px; }
@@ -15,10 +17,12 @@
         dt { color: #64748B; }
         code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
         .status { font-weight: 600; }
+        .logo { display: block; height: 30px; margin: 0 auto 24px; }
     </style>
 </head>
 <body>
 <main>
+    <img class="logo" src="/brand/engage-logo.svg" alt="10X Engage">
     <div class="card">
         <h1>Data deletion request</h1>
         @if ($deletion)

@@ -320,26 +320,16 @@ body,
     text-decoration: none;
 }
 
-.brand-mark {
-    background-color: #a9e324;
-    border-radius: 8px;
-    color: #101a02;
-    display: inline-block;
-    font-size: 13px;
-    font-weight: 800;
-    letter-spacing: -0.3px;
-    line-height: 32px;
-    margin-right: 8px;
-    text-align: center;
-    vertical-align: middle;
-    width: 34px;
-}
-
-.brand-name {
+.brand-logo {
+    border: 0;
     color: #0d1109;
-    font-size: 17px;
+    display: block;
+    font-size: 18px;
     font-weight: 700;
-    vertical-align: middle;
+    height: 37px;
+    margin: 0 auto;
+    max-width: 150px;
+    width: 150px;
 }
 
 .body {
