@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources\Api\V1;
 
 use App\Domain\Access\Permission;
+use App\Domain\Growth\GrowthAccess;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Services\Acquisition;
 use App\Domain\Messaging\Models\Contact;
@@ -38,6 +39,9 @@ final class ContactResource extends JsonResource
                 'verified_name' => $this->syncedFrom->verified_name,
                 'status' => $this->syncedFrom->status->value,
             ]),
+            // CRM pipeline stage (null = no stage yet).
+            'stage' => $this->stage_id === null ? null : $this->resource->loadMissing('stage')->stage?->summary(),
+            'stage_changed_at' => $this->stage_changed_at?->toIso8601String(),
             'consent_state' => $this->consent_state->value,
             'opted_out_at' => $this->opted_out_at?->toIso8601String(),
             'marketing_opted_out' => $this->marketing_opted_out,
@@ -55,6 +59,22 @@ final class ContactResource extends JsonResource
         $context = app(TenantContext::class);
         $tenant = $context->tenantOrNull();
 
-        return $tenant === null ? null : Acquisition::present($this->resource, GrowthSettings::for($tenant), $context->can(Permission::GrowthView));
+        if ($tenant === null) {
+            return null;
+        }
+        $tier = GrowthAccess::tier($tenant);
+        if ($tier === GrowthAccess::OFF) {
+            return null;
+        }
+
+        // Details (sources, headline, landing page) need the full tier and growth.view; otherwise the chip only.
+        $acquisition = Acquisition::present($this->resource, GrowthSettings::for($tenant), $tier === GrowthAccess::FULL && $context->can(Permission::GrowthView));
+
+        // Starter (chip tier) shows the Meta ad chip only: no chip at all for other statuses.
+        if ($tier === GrowthAccess::CHIP && $acquisition !== null && ! str_contains($acquisition['label'], 'Meta ad')) {
+            return null;
+        }
+
+        return $acquisition;
     }
 }

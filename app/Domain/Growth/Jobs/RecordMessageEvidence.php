@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Growth\Jobs;
 
-use App\Domain\Growth\GrowthSettings;
+use App\Domain\Growth\GrowthAccess;
 use App\Domain\Growth\Services\EvidenceRecorder;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\TenantContext;
@@ -43,7 +43,7 @@ final class RecordMessageEvidence implements ShouldQueue
     {
         $tenant = $context->tenantOrNull();
         $message = Message::query()->find($this->messageId);
-        if ($tenant === null || $message === null || ! GrowthSettings::for($tenant)->enabled) {
+        if ($tenant === null || $message === null || ! GrowthAccess::recording($tenant)) {
             return;
         }
 

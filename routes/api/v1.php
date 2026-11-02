@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\Campaigns\CampaignController;
 use App\Http\Controllers\Api\V1\ChatbotController;
 use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
+use App\Http\Controllers\Api\V1\Crm\StageController;
 use App\Http\Controllers\Api\V1\DeveloperController;
 use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
@@ -320,6 +321,21 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::get('contact-fields', [CrmController::class, 'fields'])->name('contact-fields.index');
         Route::get('segments', [CrmController::class, 'segmentsIndex'])->name('segments.index');
         Route::post('segments/preview', [CrmController::class, 'previewSegment'])->name('segments.preview');
+    });
+    // Pipeline stages and stage history (CN-01): every change is logged.
+    Route::middleware('can:'.Permission::ContactsView->value)->group(function () {
+        Route::get('crm/stages', [StageController::class, 'index'])->name('crm.stages.index');
+        Route::get('contacts/{contact}/stage-history', [StageController::class, 'history'])->whereUuid('contact')->name('contacts.stage-history');
+    });
+    Route::middleware('can:'.Permission::ContactsUpdate->value)->group(function () {
+        Route::post('contacts/{contact}/stage', [StageController::class, 'move'])->whereUuid('contact')->name('contacts.stage');
+    });
+    Route::middleware('can:'.Permission::SettingsManage->value)->group(function () {
+        Route::post('crm/stages', [StageController::class, 'store'])->name('crm.stages.store');
+        Route::post('crm/stages/suggested', [StageController::class, 'suggest'])->name('crm.stages.suggest');
+        Route::put('crm/stages/order', [StageController::class, 'reorder'])->name('crm.stages.reorder');
+        Route::patch('crm/stages/{stage}', [StageController::class, 'update'])->whereUuid('stage')->name('crm.stages.update');
+        Route::delete('crm/stages/{stage}', [StageController::class, 'destroy'])->whereUuid('stage')->name('crm.stages.destroy');
     });
     Route::middleware('can:'.Permission::ContactsUpdate->value)->group(function () {
         Route::post('tags', [CrmController::class, 'storeTag'])->name('tags.store');

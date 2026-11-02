@@ -158,7 +158,8 @@ final class PlanCatalogSeeder extends Seeder
             'analytics' => [['level' => 'basic'], ['level' => 'standard'], ['level' => 'standard'], ['level' => 'advanced'], ['level' => 'advanced', 'exports' => true]],
             'agent_reports' => [false, ['level' => 'basic'], ['level' => 'standard'], ['level' => 'advanced'], ['level' => 'advanced']],
             'number_health' => [['level' => 'basic'], true, true, true, true],
-            'lead_source_tracking' => [['level' => 'basic'], true, true, true, true],
+            // Growth Hub (CN-01): basic = Meta ad source chip only; included = Growth Hub + Analytics → Marketing.
+            'lead_source_tracking' => [['level' => 'basic'], ['level' => 'basic'], true, true, true],
             'qr_generator' => [true, true, true, true, true],
             // Platform
             'rbac' => [['__disabled' => true, 'level' => 'owner_only'], ['level' => 'basic'], ['level' => 'full'], ['level' => 'full'], ['level' => 'full', 'sso' => true]],

@@ -31,7 +31,8 @@ final class ContactController extends Controller
             'consent' => ['nullable', Rule::enum(ConsentState::class)],
             'tag' => ['nullable', 'string', 'max:40'],
             'segment_id' => ['nullable', 'uuid'],
-            'synced_from' => ['nullable', 'uuid'],   // a phone number id: only contacts synced from that number
+            'synced_from' => ['nullable', 'uuid'],
+            'stage_id' => ['nullable', 'string', 'max:36'],  // a stage id, or "none" for contacts without a stage   // a phone number id: only contacts synced from that number
             'filter' => ['nullable'],                 // {match, rules} (JSON): conditions on any field, custom fields included
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
@@ -39,7 +40,8 @@ final class ContactController extends Controller
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
         $filter = $segments->filter($data['filter'] ?? null);
 
-        $contacts = Contact::query()->with('syncedFrom')
+        $contacts = Contact::query()->with(['syncedFrom', 'stage'])
+            ->when($data['stage_id'] ?? null, fn ($q, string $id) => $id === 'none' ? $q->whereNull('stage_id') : $q->where('stage_id', $id))
             ->when($data['synced_from'] ?? null, fn ($q, string $id) => $q->where('synced_from_phone_number_id', $id))
             ->when($segment, fn ($q) => $segments->apply($q, $segment->match, $segment->rules))
             ->when($filter, fn ($q) => $segments->apply($q, $filter['match'], $filter['rules']))

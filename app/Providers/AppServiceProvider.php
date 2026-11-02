@@ -9,6 +9,7 @@ use App\Domain\Billing\Models\Subscription;
 use App\Domain\Campaigns\Models\Campaign;
 use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Services\DataTriggers;
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Developer\Services\EmitMessageWebhooks;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Identity\Models\User;
@@ -84,6 +85,7 @@ class AppServiceProvider extends ServiceProvider
             'phone_number' => PhoneNumber::class,
             'signup_attempt' => EmbeddedSignupAttempt::class,
             'contact' => Contact::class,
+            'crm_stage' => CrmStage::class,
             'conversation' => Conversation::class,
             'message' => Message::class,
             'message_template' => MessageTemplate::class,

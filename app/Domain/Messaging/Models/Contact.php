@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Models;
 
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Tenancy\Concerns\BelongsToTenant;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -35,6 +36,9 @@ use Illuminate\Support\Carbon;
  * @property ?Carbon $opted_out_at
  * @property bool $marketing_opted_out
  * @property ?Carbon $last_inbound_at
+ * @property ?string $stage_id
+ * @property ?Carbon $stage_changed_at
+ * @property ?CrmStage $stage
  */
 class Contact extends Model
 {
@@ -51,6 +55,16 @@ class Contact extends Model
         'tenant_id', 'wa_id', 'bsuid', 'parent_bsuid', 'username', 'profile_name', 'name', 'email', 'custom_fields', 'tags', 'source',
         'consent_state', 'opted_in_at', 'opted_out_at', 'marketing_opted_out', 'last_inbound_at', 'synced_from_phone_number_id',
     ];
+
+    /**
+     * The contact's current CRM pipeline stage. Changed only through ContactStages (history kept).
+     *
+     * @return BelongsTo<CrmStage, $this>
+     */
+    public function stage(): BelongsTo
+    {
+        return $this->belongsTo(CrmStage::class, 'stage_id');
+    }
 
     /**
      * The number whose WhatsApp Business app this contact was synced from, if it came from a sync.
@@ -76,6 +90,7 @@ class Contact extends Model
             'acquisition_original' => 'array',
             'acquisition_latest' => 'array',
             'first_tracked_enquiry_at' => 'datetime',
+            'stage_changed_at' => 'datetime',
         ];
     }
 

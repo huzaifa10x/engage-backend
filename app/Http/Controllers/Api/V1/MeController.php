@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1;
 
-use App\Domain\Growth\GrowthSettings;
+use App\Domain\Growth\GrowthAccess;
 use App\Domain\Identity\Models\User;
 use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Plans\Entitlements\EntitlementService;
@@ -70,7 +70,12 @@ final class MeController extends Controller
             ],
             'entitlements' => $active?->tenant !== null ? $this->entitlements->for($active->tenant)->toResponseArray() : null,
             // Growth Hub pilot flag for the active workspace (menus and source panels follow it).
-            'growth' => ['enabled' => $active?->tenant !== null && GrowthSettings::for($active->tenant)->enabled],
+            // tier: off | chip (Starter: source chip only) | full (Growth Hub and Analytics → Marketing).
+            'growth' => (function () use ($active) {
+                $tier = $active?->tenant !== null ? GrowthAccess::tier($active->tenant) : GrowthAccess::OFF;
+
+                return ['enabled' => $tier !== GrowthAccess::OFF, 'tier' => $tier];
+            })(),
         ]]);
     }
 }

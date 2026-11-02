@@ -44,7 +44,7 @@ final class ConversationController extends Controller
         ]);
         $membership = $this->membership();
 
-        $query = Conversation::query()->with(['contact', 'phoneNumber'])->whereNotNull('last_message_at');
+        $query = Conversation::query()->with(['contact.stage', 'phoneNumber'])->whereNotNull('last_message_at');
         $this->access->scope($query, $membership, 'phone_number_id');
 
         $query
@@ -76,7 +76,7 @@ final class ConversationController extends Controller
     {
         $this->authorizeThread($conversation);
 
-        return ConversationResource::make($conversation->load(['contact', 'phoneNumber']));
+        return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }
 
     /** Open / close and (re)assign. Assignment needs inbox.assign; anyone with access may close. */
@@ -138,7 +138,7 @@ final class ConversationController extends Controller
             app(WebhookDispatcher::class)->emit($conversation->tenant_id, 'conversation.closed', PublicPayload::conversation($conversation));
         }
 
-        return ConversationResource::make($conversation->load(['contact', 'phoneNumber']));
+        return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }
 
     /** "Take over": the chatbot stops answering in this conversation; a person handles it. */
@@ -151,7 +151,7 @@ final class ConversationController extends Controller
         }
         $audit->record('conversation.bot_taken_over', $conversation);
 
-        return ConversationResource::make($conversation->refresh()->load(['contact', 'phoneNumber']));
+        return ConversationResource::make($conversation->refresh()->load(['contact.stage', 'phoneNumber']));
     }
 
     /** "Hand back to bot": the bot takes the conversation again and answers the customer's next message (nothing is sent now). */
@@ -163,7 +163,7 @@ final class ConversationController extends Controller
         $started = $outcome === 'started';
         $audit->record('conversation.bot_handed_back', $conversation, meta: ['restarted' => $started, 'outcome' => $outcome]);
 
-        return ConversationResource::make($conversation->refresh()->load(['contact', 'phoneNumber']))
+        return ConversationResource::make($conversation->refresh()->load(['contact.stage', 'phoneNumber']))
             ->additional(['meta' => ['restarted' => $started, 'outcome' => $outcome]])->response();
     }
 
@@ -182,7 +182,7 @@ final class ConversationController extends Controller
             }
         }
 
-        return ConversationResource::make($conversation->load(['contact', 'phoneNumber']));
+        return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }
 
     private function membership(): TenantMembership

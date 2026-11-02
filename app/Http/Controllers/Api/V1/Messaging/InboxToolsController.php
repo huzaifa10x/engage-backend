@@ -124,7 +124,7 @@ final class InboxToolsController extends Controller
         $conversation->forceFill(['snoozed_until' => $data['until']])->save();
         $this->audit->record('conversation.snoozed', $conversation, after: ['until' => $data['until']]);
 
-        return ConversationResource::make($conversation->load(['contact', 'phoneNumber']));
+        return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }
 
     public function unsnooze(Conversation $conversation): ConversationResource
@@ -132,7 +132,7 @@ final class InboxToolsController extends Controller
         $this->authorizeThread($conversation);
         $conversation->forceFill(['snoozed_until' => null])->save();
 
-        return ConversationResource::make($conversation->load(['contact', 'phoneNumber']));
+        return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }
 
     // ── Business hours and routing ─────────────────────────────────────────────────────────

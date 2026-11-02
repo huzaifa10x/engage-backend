@@ -8,15 +8,16 @@ use App\Domain\Tenancy\Models\Tenant;
 use Illuminate\Support\Carbon;
 
 /**
- * A workspace's Growth Hub switches (tenants.settings.growth), set by the platform team per
- * workspace while Growth Hub is in pilot. Nothing is on by default and no plan includes it:
- * entitlements are settings with no defaults (Technical Specification v1.2 §7).
+ * A workspace's Growth Hub switches (tenants.settings.growth), set by the platform team per workspace
+ * (the feature flag every new feature ships behind). What the workspace then sees depends on its plan:
+ * see GrowthAccess (CN-01: Starter = Meta ad chip only; Growth, Pro, Enterprise = Growth Hub).
  *
  *  enabled                       the feature flag: evidence is recorded and shown only when on
  *  started_at                    when tracking first started; contacts created before it are "Before tracking"
  *  strip_reference_before_flows  growth_strip_reference_before_flows (BE-05): chatbots read the message without its XG- code
  *  max_sites, max_accepted_events_per_calendar_month, detailed_history_days, aggregate_history_days
- *                                quotas, null = not set (pending the owner's commercial decision)
+ *                                kept as settings and left empty (CN-01: no per-plan click quotas or history
+ *                                limits); null = not set. Rate limits and bot filtering apply regardless.
  */
 final class GrowthSettings
 {

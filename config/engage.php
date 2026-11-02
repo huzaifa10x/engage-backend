@@ -192,4 +192,8 @@ return [
         'api_version' => env('SHOPIFY_API_VERSION', '2026-10'),
     ],
 
+    'growth' => [
+        // Change Notice CN-01: internal alert threshold (accepted taps per workspace per calendar month). Never shown to clients, never blocks.
+        'accepted_taps_alert_threshold' => (int) env('GROWTH_TAPS_ALERT_THRESHOLD', 100000),
+    ],
 ];

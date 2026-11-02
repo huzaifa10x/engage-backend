@@ -29,3 +29,5 @@ Schedule::command('engage:webhooks:prune')->dailyAt('02:30')->onOneServer()->wit
 Schedule::command('engage:integrations:run')->everyMinute()->onOneServer()->withoutOverlapping();
 // Chatbots: reminders to customers who stopped answering, abandonment, and Delay blocks.
 Schedule::command('engage:chatbots:tick')->everyMinute()->onOneServer()->withoutOverlapping();
+// Growth Hub (CN-01): internal alert when a workspace passes 100k accepted taps in a month.
+Schedule::command('engage:growth:usage-alerts')->hourlyAt(40)->onOneServer()->withoutOverlapping();

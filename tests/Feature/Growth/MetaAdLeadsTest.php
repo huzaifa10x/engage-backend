@@ -34,6 +34,7 @@ final class MetaAdLeadsTest extends TestCase
         parent::setUp();
         $this->configureMeta();
         $this->tenant = $this->createTenant();
+        $this->subscribe($this->tenant, 'growth'); // CN-01: Growth, Pro and Enterprise get full Growth Hub
         $this->connectNumber($this->tenant);
     }
 
@@ -275,6 +276,31 @@ final class MetaAdLeadsTest extends TestCase
         $this->assertSame('••••UQ2a', $row['details']['click_id']);
         $this->assertStringNotContainsString('120208000000000001', (string) json_encode($row));
         $this->assertStringNotContainsString('ARAkLkA8rmlF', (string) json_encode($row));
+    }
+
+    public function test_starter_shows_the_meta_ad_chip_only(): void
+    {
+        $this->subscribe($this->tenant, 'starter');
+        $this->enableGrowth();
+        $this->inboundFromAd($this->fixture('full'), 'wamid.STARTER-AD');
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.STARTER-PLAIN'], waId: '971500000999', bsuid: null, name: 'No Ad')))->assertOk();
+
+        $owner = $this->addMember($this->tenant, SystemRole::Owner);
+        $this->actingAsMember($owner);
+        [$fromAd, $plain] = $this->inTenant(fn () => [
+            Contact::query()->where('wa_id', '971501234567')->sole()->id,
+            Contact::query()->where('wa_id', '971500000999')->sole()->id,
+        ]);
+
+        $this->assertSame(['status' => 'meta', 'label' => 'Meta ad'], $this->getJson("/api/v1/contacts/{$fromAd}")->assertOk()->json('data.acquisition'));
+        $this->getJson("/api/v1/contacts/{$plain}")->assertOk()->assertJsonPath('data.acquisition', null);
+        $this->getJson("/api/v1/growth/leads/{$fromAd}/evidence")->assertNotFound();
+        $this->getJson('/api/v1/me')->assertOk()->assertJsonPath('data.growth.tier', 'chip');
+
+        // Evidence is still recorded, so an upgrade shows the history at once.
+        $this->subscribe($this->tenant, 'pro');
+        $this->getJson("/api/v1/growth/leads/{$fromAd}/evidence")->assertOk()->assertJsonCount(1, 'data');
+        $this->getJson('/api/v1/me')->assertOk()->assertJsonPath('data.growth.tier', 'full');
     }
 
     public function test_platform_labels_need_proof(): void

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Growth;
 
-use App\Domain\Growth\GrowthSettings;
+use App\Domain\Growth\GrowthAccess;
 use App\Domain\Growth\Models\GrowthEvidence;
 use App\Domain\Growth\Services\MetaReferral;
 use App\Domain\Messaging\Models\Contact;
@@ -20,7 +20,7 @@ final class LeadEvidenceController extends Controller
 {
     public function __invoke(Contact $contact, TenantContext $context): JsonResponse
     {
-        abort_unless(GrowthSettings::for($context->tenant())->enabled, 404);
+        abort_unless(GrowthAccess::full($context->tenant()), 404); // Starter: chip only, no evidence
 
         $rows = GrowthEvidence::query()->where('crm_contact_id', $contact->id)->orderBy('occurred_at')->limit(200)->get();
 

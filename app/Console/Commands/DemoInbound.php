@@ -27,7 +27,8 @@ final class DemoInbound extends Command
         {text=Hi, is this still available : Message text}
         {--from=971501112233 : Customer phone (digits)}
         {--name=Test Customer : Customer profile name}
-        {--workspace=owner@engage.test : Email of a user whose active workspace receives it}';
+        {--workspace=owner@engage.test : Email of a user whose active workspace receives it}
+        {--ad : Arrive from a Meta click-to-WhatsApp ad (adds a referral object)}';
 
     protected $description = '[local only] Simulate an incoming WhatsApp message from a customer.';
 
@@ -69,7 +70,11 @@ final class DemoInbound extends Command
                     'timestamp' => (string) now()->timestamp,
                     'type' => 'text',
                     'text' => ['body' => (string) $this->argument('text')],
-                ], MessageOrigin::Customer);
+                ] + ($this->option('ad') ? ['referral' => [
+                    'source_url' => 'https://fb.me/local-demo', 'source_id' => '120208000000009999', 'source_type' => 'ad',
+                    'headline' => 'Free consultation this week', 'body' => 'Book your free consultation. Limited slots.',
+                    'media_type' => 'image', 'ctwa_clid' => 'ARAlocaldemo'.Str::random(40),
+                ]] : []), MessageOrigin::Customer);
             });
 
             $this->components->info("Message from +{$from} delivered to {$number->display_phone_number}. Check the Team Inbox.");
