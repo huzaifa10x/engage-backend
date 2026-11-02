@@ -68,6 +68,7 @@ Route::middleware(['auth:admin', 'admin.context', TrackAdminSession::class])->gr
             Route::patch('{tenant}/status', [CompanyController::class, 'updateStatus'])->name('status');
             Route::put('{tenant}/plan', [CompanyController::class, 'updatePlan'])->name('plan');
             Route::post('{tenant}/trial', [CompanyController::class, 'extendTrial'])->name('trial');
+            Route::put('{tenant}/growth', [CompanyController::class, 'updateGrowth'])->name('growth');
             Route::put('{tenant}/overrides/{feature}', [CompanyController::class, 'setOverride'])->name('overrides.set');
             Route::delete('{tenant}/overrides/{feature}', [CompanyController::class, 'removeOverride'])->name('overrides.remove');
         });

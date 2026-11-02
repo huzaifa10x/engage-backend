@@ -59,6 +59,11 @@ enum Permission: string
 
     case AuditView = 'audit.view';
 
+    // Growth Hub (R1). Agents have none of these: they see the source chip only.
+    case GrowthView = 'growth.view';       // Leads, source details and evidence (masked)
+    case GrowthManage = 'growth.manage';   // Tracking Setup: websites, numbers, verification
+    case InboxRawText = 'inbox.raw_text';  // "Show raw text" audit toggle on messages
+
     /** @return list<string> */
     public static function values(): array
     {

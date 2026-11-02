@@ -8,6 +8,7 @@ use App\Domain\Audit\AuditLogger;
 use App\Domain\Billing\Enums\SubscriptionStatus;
 use App\Domain\Billing\Models\Subscription;
 use App\Domain\Billing\SubscriptionService;
+use App\Domain\Growth\GrowthSettings;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\Models\PlanVersion;
 use App\Domain\Tenancy\Enums\TenantStatus;
@@ -42,6 +43,25 @@ final class ManageTenant
             $this->audit->record('tenant.status_changed', $tenant,
                 before: ['status' => $before->value], after: ['status' => $status->value],
                 meta: ['reason' => $reason], tenantId: $tenant->getKey());
+        }));
+    }
+
+    /**
+     * Growth Hub pilot switches for one workspace (tenants.settings.growth). The first switch-on
+     * records when tracking started; contacts created before it stay "Before tracking".
+     *
+     * @param  array<string, mixed>  $changes
+     */
+    public function setGrowth(Tenant $tenant, array $changes, string $reason): void
+    {
+        $this->context->bypass(fn () => DB::transaction(function () use ($tenant, $changes, $reason) {
+            $before = (array) (($tenant->settings ?? [])['growth'] ?? []);
+            $settings = (array) ($tenant->settings ?? []);
+            $settings['growth'] = GrowthSettings::merge($tenant, $changes);
+            $tenant->forceFill(['settings' => $settings])->save();
+            GrowthSettings::forget();
+
+            $this->audit->record('tenant.growth_changed', $tenant, before: $before, after: $settings['growth'], meta: ['reason' => $reason], tenantId: $tenant->getKey());
         }));
     }
 

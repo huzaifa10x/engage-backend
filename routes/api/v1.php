@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\DeveloperController;
 use App\Http\Controllers\Api\V1\EntitlementController;
+use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
 use App\Http\Controllers\Api\V1\IntegrationController;
 use App\Http\Controllers\Api\V1\InvitationController;
@@ -304,6 +305,12 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
     Route::get('analytics/overview', [AnalyticsController::class, 'overview'])
         ->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.overview');
+
+    /*
+    | Growth Hub (R1): source evidence for a CRM contact. Behind the per-workspace flag.
+    */
+    Route::get('growth/leads/{contact}/evidence', LeadEvidenceController::class)
+        ->middleware('can:'.Permission::GrowthView->value)->whereUuid('contact')->name('growth.leads.evidence');
 
     /*
     | Contacts & CRM: tags, custom fields, segments, import / export

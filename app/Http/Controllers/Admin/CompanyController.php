@@ -9,6 +9,7 @@ use App\Application\Admin\ManageTenant;
 use App\Domain\Audit\Models\AuditLog;
 use App\Domain\Billing\Enums\SubscriptionStatus;
 use App\Domain\Billing\Models\SubscriptionEvent;
+use App\Domain\Growth\GrowthSettings;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\Enums\PlanVersionStatus;
@@ -174,6 +175,7 @@ final class CompanyController extends Controller
             'subscriptionEvents' => $events,
             'members' => $members,
             'features' => $features,
+            'growth' => GrowthSettings::for($tenant)->toArray(),
             'audit' => $audit,
             'planVersions' => $this->planOptions(),
         ]);
@@ -204,6 +206,32 @@ final class CompanyController extends Controller
             SubscriptionStatus::from($data['status']), $data['trial_days'] ?? null, $data['reason']);
 
         return back()->with('success', 'Plan changed.');
+    }
+
+    /** Growth Hub pilot: the per-workspace flag, the chatbot reference flag and the (optional) quotas. */
+    public function updateGrowth(Request $request, Tenant $tenant, ManageTenant $manage): RedirectResponse
+    {
+        $data = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'strip_reference_before_flows' => ['required', 'boolean'],
+            'max_sites' => ['nullable', 'integer', 'min:0', 'max:1000'],
+            'max_accepted_events_per_calendar_month' => ['nullable', 'integer', 'min:0', 'max:100000000'],
+            'detailed_history_days' => ['nullable', 'integer', 'min:1', 'max:3650'],
+            'aggregate_history_days' => ['nullable', 'integer', 'min:1', 'max:3650'],
+            'reason' => ['required', 'string', 'min:5', 'max:500'],
+        ]);
+
+        $changes = [
+            'enabled' => $request->boolean('enabled'),
+            'strip_reference_before_flows' => $request->boolean('strip_reference_before_flows'),
+        ];
+        foreach (['max_sites', 'max_accepted_events_per_calendar_month', 'detailed_history_days', 'aggregate_history_days'] as $limit) {
+            $changes[$limit] = $request->filled($limit) ? $request->integer($limit) : null; // empty = not set; no defaults
+        }
+
+        $manage->setGrowth($tenant, $changes, (string) $data['reason']);
+
+        return back()->with('success', $data['enabled'] ? 'Growth Hub is on for this company.' : 'Growth Hub is off for this company.');
     }
 
     public function extendTrial(Request $request, Tenant $tenant, ManageTenant $manage): RedirectResponse

@@ -6,6 +6,8 @@ namespace App\Domain\Messaging\Services;
 
 use App\Domain\Chatbots\Jobs\RunChatbot;
 use App\Domain\Chatbots\Services\Chatbots;
+use App\Domain\Growth\GrowthSettings;
+use App\Domain\Growth\Jobs\RecordMessageEvidence;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Events\MessageStored;
@@ -14,11 +16,13 @@ use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Support\Queue\QueueName;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * The single write path for messages that come FROM Meta: customer messages, WhatsApp Business
@@ -32,6 +36,22 @@ final class MessageRecorder
         private readonly ConversationTracker $conversations,
         private readonly ConsentService $consent,
     ) {}
+
+    /**
+     * Growth Hub: where the message came from (a Meta ad referral) is worked out in the background,
+     * after the chat and the chatbot have the message. Never allowed to affect the message itself.
+     */
+    private function queueAttribution(Message $message): void
+    {
+        try {
+            $tenant = app(TenantContext::class)->tenantOrNull();
+            if ($tenant !== null && isset(((array) ($message->content ?? []))['referral']) && GrowthSettings::for($tenant)->enabled) {
+                RecordMessageEvidence::dispatch($message->id)->afterCommit();
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Growth Hub attribution was not queued.', ['message_id' => $message->id, 'error' => $e->getMessage()]);
+        }
+    }
 
     /**
      * @param  array<string, mixed>  $raw  one Cloud API message object
@@ -120,6 +140,7 @@ final class MessageRecorder
                     app(InboxTools::class)->route($conversation);
                 }
             }
+            $this->queueAttribution($message);
         }
 
         // Imported history is old news: no realtime push per message (thousands of them would make

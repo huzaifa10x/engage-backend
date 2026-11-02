@@ -72,6 +72,10 @@ class Contact extends Model
             'opted_out_at' => 'datetime',
             'marketing_opted_out' => 'boolean',
             'last_inbound_at' => 'datetime',
+            // Growth Hub projection (written only by EvidenceRecorder).
+            'acquisition_original' => 'array',
+            'acquisition_latest' => 'array',
+            'first_tracked_enquiry_at' => 'datetime',
         ];
     }
 

@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Domain\Access\Permission;
+use App\Domain\Growth\GrowthSettings;
+use App\Domain\Growth\Services\Acquisition;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -39,6 +43,18 @@ final class ContactResource extends JsonResource
             'marketing_opted_out' => $this->marketing_opted_out,
             'last_inbound_at' => $this->last_inbound_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
+            // Growth Hub: where this contact came from. Null while Growth Hub is off for the workspace;
+            // the chip only ({status, label}) for people without growth.view (Agents).
+            'acquisition' => $this->acquisition(),
         ];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function acquisition(): ?array
+    {
+        $context = app(TenantContext::class);
+        $tenant = $context->tenantOrNull();
+
+        return $tenant === null ? null : Acquisition::present($this->resource, GrowthSettings::for($tenant), $context->can(Permission::GrowthView));
     }
 }

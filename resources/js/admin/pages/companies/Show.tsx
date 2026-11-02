@@ -39,6 +39,13 @@ type Props = {
     features: Feature[];
     audit: { id: string; action: string; actor_type: string; entity_type: string | null; created_at: string }[];
     planVersions: PlanOption[];
+    growth: Growth;
+};
+
+type Growth = {
+    enabled: boolean; started_at: string | null; strip_reference_before_flows: boolean;
+    max_sites: number | null; max_accepted_events_per_calendar_month: number | null;
+    detailed_history_days: number | null; aggregate_history_days: number | null;
 };
 
 const describe = (f: Feature, v: Value): string => {
@@ -50,12 +57,12 @@ const describe = (f: Feature, v: Value): string => {
 };
 
 export default function CompanyShow(props: Props) {
-    const { company, subscription, effectivePlan, members, features, audit, subscriptionEvents, planVersions, whatsapp, signups } = props;
+    const { company, subscription, effectivePlan, members, features, audit, subscriptionEvents, planVersions, whatsapp, signups, growth } = props;
     const abilities = usePage<SharedProps>().props.auth.admin?.abilities ?? [];
     const canManage = abilities.includes('companies.manage');
     const canImpersonate = abilities.includes('impersonate');
 
-    const [modal, setModal] = useState<null | 'plan' | 'trial' | 'status' | 'impersonate' | { feature: Feature }>(null);
+    const [modal, setModal] = useState<null | 'plan' | 'trial' | 'status' | 'impersonate' | 'growth' | { feature: Feature }>(null);
     const close = () => setModal(null);
     const suspended = company.status === 'suspended';
     const featureModal = modal !== null && typeof modal === 'object' ? modal.feature : null;
@@ -234,6 +241,20 @@ export default function CompanyShow(props: Props) {
                 </Table>
             </Card>
 
+            <Card title="Growth Hub (pilot)" className="mt-4" padded
+                aside={canManage ? <Button size="sm" onClick={() => setModal('growth')}>Change</Button> : undefined}>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13.5px]">
+                    <dt className="text-muted">Status</dt><dd><Pill tone={growth.enabled ? 'good' : 'grey'}>{growth.enabled ? 'On' : 'Off'}</Pill></dd>
+                    <dt className="text-muted">Tracking started</dt><dd>{growth.started_at ? dateTime(growth.started_at) : 'Not started'}</dd>
+                    <dt className="text-muted">Strip reference before chatbot</dt><dd>{growth.strip_reference_before_flows ? 'Yes' : 'No'}</dd>
+                    <dt className="text-muted">Websites</dt><dd>{limitText(growth.max_sites)}</dd>
+                    <dt className="text-muted">Accepted taps per month</dt><dd>{limitText(growth.max_accepted_events_per_calendar_month)}</dd>
+                    <dt className="text-muted">Detailed history</dt><dd>{limitText(growth.detailed_history_days, 'days')}</dd>
+                    <dt className="text-muted">Summary history</dt><dd>{limitText(growth.aggregate_history_days, 'days')}</dd>
+                </dl>
+                <p className="mt-3 text-[12.5px] text-muted">Not part of any plan. Contacts created before tracking started stay “Before tracking”.</p>
+            </Card>
+
             <Card title="Recent activity" aside={<Link href={`/admin/audit-log?tenant_id=${company.id}`} className="text-[13px] font-semibold text-brand">Full audit log</Link>} className="mt-4">
                 <Table head={['Action', 'By', 'When']} empty="No activity recorded yet.">
                     {audit.map((a) => (
@@ -249,6 +270,7 @@ export default function CompanyShow(props: Props) {
             <PlanModal open={modal === 'plan'} onClose={close} companyId={company.id} planVersions={planVersions} currentKey={subscription?.plan_key} />
             <TrialModal open={modal === 'trial'} onClose={close} companyId={company.id} />
             <StatusModal open={modal === 'status'} onClose={close} companyId={company.id} suspended={suspended} />
+            <GrowthModal open={modal === 'growth'} onClose={close} companyId={company.id} growth={growth} />
             <ImpersonateModal open={modal === 'impersonate'} onClose={close} companyId={company.id} members={members.filter((m) => m.status === 'active' && !m.disabled)} />
             {featureModal && <OverrideModal key={featureModal.key} feature={featureModal} onClose={close} companyId={company.id} />}
         </AdminLayout>
@@ -286,6 +308,55 @@ function PlanModal({ open, onClose, companyId, planVersions, currentKey }: { ope
                 </div>
                 <Field label="Reason" error={form.errors.reason} hint="Recorded in the audit log.">
                     <Textarea value={form.data.reason} onChange={(e) => form.setData('reason', e.target.value)} placeholder="e.g. Signed annual Growth contract" required />
+                </Field>
+            </form>
+        </Modal>
+    );
+}
+
+const limitText = (v: number | null, unit?: string) => (v === null ? 'Not set' : `${number(v)}${unit ? ` ${unit}` : ''}`);
+
+const LIMITS = [
+    ['max_sites', 'Websites'],
+    ['max_accepted_events_per_calendar_month', 'Accepted taps per month'],
+    ['detailed_history_days', 'Detailed history (days)'],
+    ['aggregate_history_days', 'Summary history (days)'],
+] as const;
+
+function GrowthModal({ open, onClose, companyId, growth }: { open: boolean; onClose: () => void; companyId: string; growth: Growth }) {
+    const form = useForm({
+        enabled: growth.enabled,
+        strip_reference_before_flows: growth.strip_reference_before_flows,
+        max_sites: growth.max_sites,
+        max_accepted_events_per_calendar_month: growth.max_accepted_events_per_calendar_month,
+        detailed_history_days: growth.detailed_history_days,
+        aggregate_history_days: growth.aggregate_history_days,
+        reason: '',
+    });
+    const submit = (e: FormEvent) => {
+        e.preventDefault();
+        form.put(`/admin/companies/${companyId}/growth`, { preserveScroll: true, onSuccess: () => { form.setData('reason', ''); onClose(); } });
+    };
+    return (
+        <Modal open={open} onClose={onClose} title="Growth Hub (pilot)" footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" form="growth-form" disabled={form.processing}>Save</Button></>}>
+            <form id="growth-form" onSubmit={submit} className="space-y-3.5">
+                <label className="flex items-center gap-2 text-[14px]">
+                    <input type="checkbox" checked={form.data.enabled} onChange={(e) => form.setData('enabled', e.target.checked)} />
+                    Turn on Growth Hub for this company
+                </label>
+                <label className="flex items-center gap-2 text-[14px]">
+                    <input type="checkbox" checked={form.data.strip_reference_before_flows} onChange={(e) => form.setData('strip_reference_before_flows', e.target.checked)} />
+                    Remove the website reference code before the chatbot reads the message
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                    {LIMITS.map(([key, label]) => (
+                        <Field key={key} label={label} error={form.errors[key]} hint="Empty = not set">
+                            <Input type="number" min={0} value={form.data[key] ?? ''} onChange={(e) => form.setData(key, e.target.value === '' ? null : Number(e.target.value))} />
+                        </Field>
+                    ))}
+                </div>
+                <Field label="Reason" error={form.errors.reason} hint="Recorded in the audit log.">
+                    <Textarea value={form.data.reason} onChange={(e) => form.setData('reason', e.target.value)} required />
                 </Field>
             </form>
         </Modal>

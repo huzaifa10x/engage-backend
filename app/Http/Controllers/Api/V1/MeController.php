@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Domain\Growth\GrowthSettings;
 use App\Domain\Identity\Models\User;
 use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Plans\Entitlements\EntitlementService;
@@ -68,6 +69,8 @@ final class MeController extends Controller
                 'expires_at' => $session->expires_at->toIso8601String(),
             ],
             'entitlements' => $active?->tenant !== null ? $this->entitlements->for($active->tenant)->toResponseArray() : null,
+            // Growth Hub pilot flag for the active workspace (menus and source panels follow it).
+            'growth' => ['enabled' => $active?->tenant !== null && GrowthSettings::for($active->tenant)->enabled],
         ]]);
     }
 }
