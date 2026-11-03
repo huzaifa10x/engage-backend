@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\WhatsApp;
 
+use App\Application\WhatsApp\AccessRevocation;
+use App\Domain\Audit\Models\AuditLog;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Enums\OnboardingType;
@@ -170,7 +172,11 @@ final class AccessRevocationTest extends TestCase
         $this->connect();
         $this->meta(['graph.facebook.com/*' => $this->authError(200, null, 403)]);
         $this->postJson('/api/v1/templates/sync');
+        $this->assertSame('connected', $this->state()[0], 'one refusal starts the clock, it does not disconnect');
 
+        // Still refused ten minutes later: access is really gone.
+        $this->travel(AccessRevocation::CONFIRM_AFTER_MINUTES + 1)->minutes();
+        $this->postJson('/api/v1/templates/sync');
         $this->assertSame(['disconnected', 'access_revoked'], array_slice($this->state(), 0, 2));
     }
 
@@ -225,9 +231,13 @@ final class AccessRevocationTest extends TestCase
             'graph.facebook.com/*/'.self::WABA.'*' => Http::response(['id' => self::WABA, 'name' => 'Palm Estates']),
         ]);
         $this->artisan('engage:whatsapp:verify-access')->assertSuccessful();
+        $this->assertSame('connected', $this->state()[2], 'first sighting: not yet');
+        $this->travel(AccessRevocation::CONFIRM_AFTER_MINUTES + 1)->minutes();
+        $this->artisan('engage:whatsapp:verify-access')->assertSuccessful();
 
         [, , $numberStatus, $numberReason] = $this->state();
         $this->assertSame(['disconnected', 'offboarded'], [$numberStatus, $numberReason]);
+        $this->assertFalse($this->tokenRevoked(), 'a number taken away on its own never costs the account its credential');
         Notification::assertSentOnDemand(ReconnectRequiredNotification::class);
     }
 
@@ -240,8 +250,10 @@ final class AccessRevocationTest extends TestCase
             'graph.facebook.com/*/'.self::WABA.'*' => Http::response(['id' => self::WABA]),
         ]);
         $this->artisan('engage:whatsapp:verify-access');
+        $this->assertSame('connected', $this->state()[2]);
+        $this->travel(AccessRevocation::CONFIRM_AFTER_MINUTES + 1)->minutes();
+        $this->artisan('engage:whatsapp:verify-access');
         $this->assertSame('disconnected', $this->state()[2]);
-
     }
 
     public function test_a_healthy_number_is_left_alone_and_a_deregistered_one_is_found(): void
@@ -250,14 +262,17 @@ final class AccessRevocationTest extends TestCase
         $this->connect();
         $this->tenantContext()->run($this->tenant, fn () => $this->number->forceFill(['platform_type' => 'CLOUD_API'])->save());
         $this->meta([
-            'graph.facebook.com/*/'.self::PHONE.'*' => Http::sequence()->push(['id' => self::PHONE, 'platform_type' => 'CLOUD_API'])->push(['error' => ['message' => 'Unavailable', 'code' => 2]], 503)->push(['id' => self::PHONE, 'platform_type' => 'NOT_APPLICABLE']),
+            'graph.facebook.com/*/'.self::PHONE.'*' => Http::sequence()->push(['id' => self::PHONE, 'platform_type' => 'CLOUD_API'])->push(['error' => ['message' => 'Unavailable', 'code' => 2]], 503)->push(['id' => self::PHONE, 'platform_type' => 'NOT_APPLICABLE'])->push(['id' => self::PHONE, 'platform_type' => 'NOT_APPLICABLE']),
             'graph.facebook.com/*/'.self::WABA.'*' => Http::response(['id' => self::WABA]),
         ]);
         $this->artisan('engage:whatsapp:verify-access');
         $this->assertSame('connected', $this->state()[2]);
         $this->artisan('engage:whatsapp:verify-access');
         $this->assertSame('connected', $this->state()[2], 'an outage is not a disconnection');
-        // Deregistered from the Cloud API: found on the next check.
+        // Deregistered from the Cloud API: seen, and still so ten minutes later.
+        $this->artisan('engage:whatsapp:verify-access');
+        $this->assertSame('connected', $this->state()[2]);
+        $this->travel(AccessRevocation::CONFIRM_AFTER_MINUTES + 1)->minutes();
         $this->artisan('engage:whatsapp:verify-access');
         $this->assertSame('disconnected', $this->state()[2]);
     }
@@ -270,5 +285,80 @@ final class AccessRevocationTest extends TestCase
         $this->postWebhook($this->webhookBody('account_update', ['event' => 'SOME_NEW_REMOVAL_EVENT']))->assertOk();
 
         $this->assertSame(['disconnected', 'access_revoked'], array_slice($this->state(), 0, 2));
+    }
+
+    // ── 5. False alarms (Brickhub, 22 Oct 2026) ────────────────────────────────────────────
+
+    public function test_a_passing_refusal_on_a_coexistence_number_disconnects_nothing(): void
+    {
+        $this->connect(OnboardingType::Coexistence);
+        $this->tenantContext()->run($this->tenant, fn () => $this->number->forceFill(['is_on_biz_app' => true, 'platform_type' => 'CLOUD_API'])->save());
+
+        // Meta refuses the number once (100/33), then answers normally again two minutes later.
+        $this->meta([
+            'graph.facebook.com/*/'.self::PHONE.'*' => Http::sequence()
+                ->push(['error' => ['message' => 'Object does not exist or missing permissions.', 'code' => 100, 'error_subcode' => 33]], 400)
+                ->whenEmpty(Http::response(['id' => self::PHONE, 'is_on_biz_app' => true, 'platform_type' => 'CLOUD_API'])),
+            'graph.facebook.com/*/'.self::WABA.'*' => Http::response(['id' => self::WABA]),
+        ]);
+        $this->artisan('engage:whatsapp:verify-access');
+        $this->travel(2)->minutes();
+        $this->artisan('engage:whatsapp:verify-access');
+        $this->travel(AccessRevocation::CONFIRM_AFTER_MINUTES + 1)->minutes();
+        $this->artisan('engage:whatsapp:verify-access');
+
+        $this->assertSame(['connected', null, 'connected', null], $this->state());
+        $this->assertFalse($this->tokenRevoked());
+        Notification::assertNothingSent();
+    }
+
+    public function test_a_number_still_receiving_messages_is_never_disconnected_by_the_check(): void
+    {
+        $this->connect();
+        $this->meta([
+            'graph.facebook.com/*/'.self::PHONE.'*' => Http::response(['error' => ['message' => 'Object does not exist or missing permissions.', 'code' => 100, 'error_subcode' => 33]], 400),
+            'graph.facebook.com/*/'.self::WABA.'*' => Http::response(['id' => self::WABA]),
+        ]);
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->postWebhook($this->webhookBody('messages', $this->inboundValue()))->assertOk(); // Meta still delivers to us
+            $this->artisan('engage:whatsapp:verify-access');
+            $this->travel(AccessRevocation::CONFIRM_AFTER_MINUTES + 1)->minutes();
+        }
+
+        $this->assertSame('connected', $this->state()[2], 'live webhooks prove the number still reaches us');
+    }
+
+    public function test_a_number_our_check_disconnected_comes_back_by_itself_when_meta_answers_normally(): void
+    {
+        $this->connect(OnboardingType::Coexistence);
+        $this->tenantContext()->run($this->tenant, fn () => $this->number->forceFill(['is_on_biz_app' => true, 'platform_type' => 'CLOUD_API'])->save());
+        $off = ['id' => self::PHONE, 'is_on_biz_app' => false, 'platform_type' => 'CLOUD_API'];
+        // Off the app on three reads (first sighting, confirmed, recovery attempt in the same run), then back on it.
+        $this->meta([
+            'graph.facebook.com/*/'.self::PHONE.'*' => Http::sequence()->push($off)->push($off)->push($off)
+                ->whenEmpty(Http::response(['id' => self::PHONE, 'is_on_biz_app' => true, 'platform_type' => 'CLOUD_API'])),
+            'graph.facebook.com/*/'.self::WABA.'*' => Http::response(['id' => self::WABA]),
+        ]);
+        $this->artisan('engage:whatsapp:verify-access');
+        $this->travel(AccessRevocation::CONFIRM_AFTER_MINUTES + 1)->minutes();
+        $this->artisan('engage:whatsapp:verify-access');
+        $this->assertSame(['disconnected', 'offboarded', 'disconnected', 'offboarded'], $this->state());
+
+        // The business opens the app again; Meta reports the number back on it.
+        $this->artisan('engage:whatsapp:verify-access')->assertSuccessful();
+
+        $this->assertSame(['connected', null, 'connected', null], $this->state());
+        $this->assertFalse($this->tokenRevoked());
+        $this->assertTrue($this->tenantContext()->bypass(fn () => AuditLog::query()->where('action', 'whatsapp.reconnected')->exists()));
+    }
+
+    public function test_an_account_whose_access_was_removed_is_not_brought_back_by_the_check(): void
+    {
+        $this->connect();
+        $this->postWebhook($this->webhookBody('account_update', ['event' => 'PARTNER_REMOVED']))->assertOk();
+        $this->meta(['graph.facebook.com/*' => fn () => $this->fail('a partner-removed account is not asked about')]);
+        $this->artisan('engage:whatsapp:verify-access')->assertSuccessful();
+        $this->assertSame('disconnected', $this->state()[0]);
     }
 }
