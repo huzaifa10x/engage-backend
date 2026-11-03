@@ -1,0 +1,140 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\Growth;
+
+use App\Application\WhatsApp\NumberAccess;
+use App\Domain\Access\SystemRole;
+use App\Domain\Crm\Models\CrmStage;
+use App\Domain\Growth\GrowthSettings;
+use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Tenancy\Models\Tenant;
+use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Domain\Tenancy\Models\TenantMembership;
+use Tests\Concerns\InteractsWithWhatsapp;
+use Tests\TestCase;
+
+/**
+ * Growth Hub › Leads (Developer Handover §I.4, Technical Specification v1.2 §6): CRM-backed list,
+ * KPI row, filters, Unmatched clicks, export, and where the stage may be changed.
+ */
+final class LeadsTest extends TestCase
+{
+    use InteractsWithWhatsapp;
+
+    private Tenant $tenant;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->configureMeta();
+        $this->tenant = $this->createTenant();
+        $this->subscribe($this->tenant, 'growth');
+        $this->connectNumber($this->tenant);
+        $this->tenantContext()->bypass(function () {
+            $settings = (array) ($this->tenant->settings ?? []);
+            $settings['growth'] = ['enabled' => true, 'started_at' => now()->subMinute()->toIso8601String()];
+            $this->tenant->forceFill(['settings' => $settings])->save();
+        });
+        GrowthSettings::forget();
+
+        // One lead from a Meta ad, one with no source.
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.L1', 'referral' => [
+            'source_id' => '120208000000000001', 'source_type' => 'ad', 'headline' => 'Free consultation this week',
+            'ctwa_clid' => 'ARAsecretclickid0001', 'media_type' => 'image',
+        ]], '971500000001', 'AE.1', 'Khalid')))->assertOk();
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.L2'], '971500000002', 'AE.2', 'Mariam')))->assertOk();
+    }
+
+    private function conversationOf(string $waId): Conversation
+    {
+        return $this->tenantContext()->run($this->tenant, fn () => Conversation::query()
+            ->whereHas('contact', fn ($c) => $c->where('wa_id', $waId))->sole());
+    }
+
+    private function assign(string $waId, TenantMembership $member): void
+    {
+        $this->tenantContext()->run($this->tenant, fn () => $this->conversationOf($waId)->forceFill(['assigned_membership_id' => $member->id])->save());
+    }
+
+    public function test_owners_see_every_lead_with_its_source_and_filters(): void
+    {
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Owner));
+
+        $r = $this->getJson('/api/v1/growth/leads')->assertOk();
+        $this->assertCount(2, $r->json('data'));
+        $this->assertSame(['all' => 2, 'new' => 2, 'unattributed' => 1], $r->json('meta.counts'));
+
+        $meta = $this->getJson('/api/v1/growth/leads?source=meta')->assertOk()->json('data');
+        $this->assertCount(1, $meta);
+        $this->assertSame('Meta ad', $meta[0]['contact']['acquisition']['source']['name']);
+        $this->assertSame('Ad: "Free consultation this week"', $meta[0]['contact']['acquisition']['source']['campaign']);
+        $this->assertStringNotContainsString('ARAsecretclickid0001', (string) json_encode($meta));
+
+        $this->assertCount(0, $this->getJson('/api/v1/growth/leads?source=meta_instagram')->assertOk()->json('data'), 'Instagram only with proof');
+        $this->assertCount(1, $this->getJson('/api/v1/growth/leads?tab=unattributed')->assertOk()->json('data'));
+        $this->assertCount(0, $this->getJson('/api/v1/growth/leads?source=before')->assertOk()->json('data'));
+
+        $kpi = $this->getJson('/api/v1/growth/leads/summary')->assertOk()->json('data');
+        $this->assertSame(2, $kpi['leads']);
+        $this->assertSame(1, $kpi['confirmed']);
+        $this->assertSame(50, $kpi['confirmed_rate']);
+        $this->assertSame(1, $kpi['meta']);
+        $this->assertSame(['total' => 0, 'pending' => 0], $kpi['unmatched_clicks']);
+
+        $this->getJson('/api/v1/growth/leads/unmatched-clicks')->assertOk()->assertJsonCount(0, 'data');
+    }
+
+    public function test_agents_see_only_their_own_leads_and_no_clicks_or_export(): void
+    {
+        $agent = $this->addMember($this->tenant, SystemRole::Agent);
+        $this->assign('971500000001', $agent);
+        $this->tenantContext()->run($this->tenant, fn () => app(NumberAccess::class)->setGrants($agent, [PhoneNumber::query()->sole()->id]));
+        $this->actingAsMember($agent);
+
+        $rows = $this->getJson('/api/v1/growth/leads')->assertOk()->json('data');
+        $this->assertCount(1, $rows);
+        $this->assertSame('Khalid', $rows[0]['contact']['display_name']);
+        $this->assertArrayNotHasKey('original', $rows[0]['contact']['acquisition'], 'agents get the source line, not the evidence');
+
+        $this->assertNull($this->getJson('/api/v1/growth/leads/summary')->assertOk()->json('data.unmatched_clicks'));
+        $this->getJson('/api/v1/growth/leads/unmatched-clicks')->assertForbidden();
+        $this->get('/api/v1/growth/leads/export')->assertForbidden();
+    }
+
+    public function test_export_has_the_source_and_never_click_ids(): void
+    {
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Admin));
+
+        $csv = $this->get('/api/v1/growth/leads/export')->assertOk()->streamedContent();
+        $this->assertStringContainsString('Name,Phone,Source,Campaign,"Match status",Number,"First contact",Agent,Stage,"Last activity"', $csv);
+        $this->assertStringContainsString('Khalid,+971500000001,"Meta ad","Ad: ""Free consultation this week""","Meta ad"', $csv);
+        $this->assertStringNotContainsString('ARAsecretclickid0001', $csv);
+        $this->assertStringNotContainsString('120208000000000001', $csv);
+    }
+
+    public function test_starter_has_no_leads_page(): void
+    {
+        $this->subscribe($this->tenant, 'starter');
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Owner));
+
+        $this->getJson('/api/v1/growth/leads')->assertNotFound();
+        $this->getJson('/api/v1/growth/leads/summary')->assertNotFound();
+    }
+
+    public function test_the_stage_changes_from_chat_and_leads_and_only_owners_and_admins_change_it_on_the_contact_record(): void
+    {
+        $stage = $this->tenantContext()->run($this->tenant, fn () => CrmStage::query()->create(['name' => 'Qualified', 'color' => 'good', 'position' => 0]));
+        $contactId = $this->tenantContext()->run($this->tenant, fn () => Contact::query()->where('wa_id', '971500000001')->value('id'));
+
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Agent));
+        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stage->id, 'via' => 'contact'])->assertForbidden();
+        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stage->id, 'via' => 'chat'])->assertOk();
+        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => null, 'via' => 'leads'])->assertOk();
+
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Admin));
+        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stage->id, 'via' => 'contact'])->assertOk()->assertJsonPath('data.stage.name', 'Qualified');
+    }
+}

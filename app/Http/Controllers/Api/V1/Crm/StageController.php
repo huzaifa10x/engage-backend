@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Crm;
 
+use App\Domain\Access\SystemRole;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Crm\Models\ContactStageEvent;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Crm\Services\ContactStages;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\ContactResource;
 use Illuminate\Http\JsonResponse;
@@ -123,7 +125,17 @@ final class StageController extends Controller
 
     public function move(Request $request, Contact $contact, ContactStages $stages): ContactResource
     {
-        $data = $request->validate(['stage_id' => ['present', 'nullable', 'uuid']]);
+        $data = $request->validate([
+            'stage_id' => ['present', 'nullable', 'uuid'],
+            // Where the change is made: the chat sidebar and Growth Hub › Leads for anyone who may edit
+            // contacts; the Contacts & CRM edit form for Owners and Admins only.
+            'via' => ['sometimes', 'in:chat,leads,contact'],
+        ]);
+        $via = $data['via'] ?? 'chat';
+        if ($via === 'contact') {
+            $role = app(TenantContext::class)->membership()?->role?->systemRole();
+            abort_unless(in_array($role, [SystemRole::Owner, SystemRole::Admin], true), 403, 'Only Owners and Admins change the stage from the contact record.');
+        }
         $stages->move($contact, $data['stage_id']);
 
         return ContactResource::make($contact->load('stage'));

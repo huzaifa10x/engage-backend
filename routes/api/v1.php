@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\Crm\StageController;
 use App\Http\Controllers\Api\V1\DeveloperController;
 use App\Http\Controllers\Api\V1\EntitlementController;
+use App\Http\Controllers\Api\V1\Growth\LeadController;
 use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
 use App\Http\Controllers\Api\V1\IntegrationController;
@@ -310,6 +311,15 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     /*
     | Growth Hub (R1): source evidence for a CRM contact. Behind the per-workspace flag.
     */
+    Route::middleware('can:'.Permission::InboxView->value)->group(function () {
+        Route::get('growth/leads', [LeadController::class, 'index'])->name('growth.leads.index');
+        Route::get('growth/leads/summary', [LeadController::class, 'summary'])->name('growth.leads.summary');
+    });
+    Route::middleware('can:'.Permission::GrowthView->value)->group(function () {
+        Route::get('growth/leads/unmatched-clicks', [LeadController::class, 'unmatchedClicks'])->name('growth.leads.unmatched');
+        Route::get('growth/leads/export', [LeadController::class, 'export'])
+            ->middleware(['can:'.Permission::ContactsExport->value, 'throttle:20,1'])->name('growth.leads.export');
+    });
     Route::get('growth/leads/{contact}/evidence', LeadEvidenceController::class)
         ->middleware('can:'.Permission::GrowthView->value)->whereUuid('contact')->name('growth.leads.evidence');
 
