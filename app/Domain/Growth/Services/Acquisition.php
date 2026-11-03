@@ -35,9 +35,13 @@ final class Acquisition
     }
 
     /**
+     * $summary: the Source panel line everyone who sees the chat may read (source name, ad headline or
+     * campaign, landing page — never codes, click IDs or costs). $details: the evidence-backed fields
+     * (growth.view only).
+     *
      * @return array<string, mixed>|null null when Growth Hub is off for the workspace
      */
-    public static function present(Contact $contact, GrowthSettings $settings, bool $details): ?array
+    public static function present(Contact $contact, GrowthSettings $settings, bool $details, bool $summary = false): ?array
     {
         if (! $settings->enabled) {
             return null;
@@ -55,6 +59,9 @@ final class Acquisition
         }
 
         $out = ['status' => $status, 'label' => $chip];
+        if ($summary || $details) {
+            $out['source'] = self::summary($status, $original, $latest);
+        }
         if (! $details) {
             return $out;
         }
@@ -69,6 +76,35 @@ final class Acquisition
             'landing_page' => $original['landing_path'] ?? $latest['landing_path'] ?? null,
             'confidence' => $original !== null || $latest !== null ? 'confirmed' : null,
         ];
+    }
+
+    /**
+     * Source panel (Technical Specification v1.2 §6, prototype): the source name, the campaign only
+     * from permitted evidence (UTM campaign, or the Meta ad headline Meta sent), the landing path.
+     *
+     * @param  array<string, mixed>|null  $original
+     * @param  array<string, mixed>|null  $latest
+     * @return array{name: string, campaign: ?string, landing_page: ?string}
+     */
+    private static function summary(string $status, ?array $original, ?array $latest): array
+    {
+        if ($status === 'before') {
+            return [
+                'name' => 'Before tracking',
+                'campaign' => $latest !== null ? 'Latest: '.$latest['label'] : null,
+                'landing_page' => $latest['landing_path'] ?? null,
+            ];
+        }
+        if ($original === null) {
+            return ['name' => 'Unknown', 'campaign' => null, 'landing_page' => null];
+        }
+
+        $campaign = $original['campaign'] ?? null;
+        if (($campaign === null || $campaign === '') && ! empty($original['headline'])) {
+            $campaign = 'Ad: "'.$original['headline'].'"';
+        }
+
+        return ['name' => (string) $original['label'], 'campaign' => $campaign ?: null, 'landing_page' => $original['landing_path'] ?? null];
     }
 
     /**

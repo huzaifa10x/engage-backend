@@ -111,6 +111,19 @@ final class MetaAdLeadsTest extends TestCase
             $this->assertArrayNotHasKey('media_type', $fields);
             $this->assertSame('Meta ad', Contact::query()->sole()->acquisition_original['label']);
         });
+
+        $contactId = $this->inTenant(fn () => Contact::query()->sole()->id);
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Admin));
+        $this->assertFalse($this->getJson("/api/v1/growth/leads/{$contactId}/evidence")->assertOk()->json('data.0.details.click_id_sent')); // "Not sent by Meta"
+    }
+
+    // Image/video URLs describe the ad's creative; only the v1.2 candidate fields are kept.
+    public function test_creative_urls_in_the_referral_are_not_stored(): void
+    {
+        $this->enableGrowth();
+        $this->inboundFromAd($this->fixture('full'));
+
+        $this->inTenant(fn () => $this->assertArrayNotHasKey('image_url', GrowthEvidence::query()->sole()->provider_fields['referral']));
     }
 
     // CTWA-03 · minimal referral
@@ -257,7 +270,11 @@ final class MetaAdLeadsTest extends TestCase
         $agent = $this->addMember($this->tenant, SystemRole::Agent);
         $this->actingAsMember($agent);
         $acquisition = $this->getJson("/api/v1/contacts/{$contactId}")->assertOk()->json('data.acquisition');
-        $this->assertSame(['status' => 'meta', 'label' => 'Meta ad'], $acquisition);
+        // Agents get the chip and the Source panel line (name, ad headline): never codes or click IDs.
+        $this->assertSame([
+            'status' => 'meta', 'label' => 'Meta ad',
+            'source' => ['name' => 'Meta ad', 'campaign' => 'Ad: "Free consultation this week"', 'landing_page' => null],
+        ], $acquisition);
         $this->getJson("/api/v1/growth/leads/{$contactId}/evidence")->assertForbidden();
     }
 
@@ -272,8 +289,9 @@ final class MetaAdLeadsTest extends TestCase
 
         $this->assertSame('Meta ad', $row['label']);
         $this->assertSame('Free consultation this week', $row['details']['headline']);
-        $this->assertSame('••••0001', $row['details']['ad_id']);
-        $this->assertSame('••••UQ2a', $row['details']['click_id']);
+        $this->assertSame('120208••••••0001', $row['details']['ad_id']);
+        $this->assertTrue($row['details']['click_id_sent']); // "Present", never the value
+        $this->assertArrayNotHasKey('media_type', $row['details']); // the ad's creative, not shown
         $this->assertStringNotContainsString('120208000000000001', (string) json_encode($row));
         $this->assertStringNotContainsString('ARAkLkA8rmlF', (string) json_encode($row));
     }

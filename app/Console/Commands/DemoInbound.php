@@ -28,7 +28,7 @@ final class DemoInbound extends Command
         {--from=971501112233 : Customer phone (digits)}
         {--name=Test Customer : Customer profile name}
         {--workspace=owner@engage.test : Email of a user whose active workspace receives it}
-        {--ad : Arrive from a Meta click-to-WhatsApp ad (adds a referral object)}';
+        {--ad : Arrive as if the customer tapped the WhatsApp button on a Meta click-to-WhatsApp ad (adds the referral Meta sends)}';
 
     protected $description = '[local only] Simulate an incoming WhatsApp message from a customer.';
 
@@ -70,6 +70,8 @@ final class DemoInbound extends Command
                     'timestamp' => (string) now()->timestamp,
                     'type' => 'text',
                     'text' => ['body' => (string) $this->argument('text')],
+                    // What Meta puts on the first message after the customer taps the ad's WhatsApp
+                    // button. media_type is the ad's creative format (image or video), not what was tapped.
                 ] + ($this->option('ad') ? ['referral' => [
                     'source_url' => 'https://fb.me/local-demo', 'source_id' => '120208000000009999', 'source_type' => 'ad',
                     'headline' => 'Free consultation this week', 'body' => 'Book your free consultation. Limited slots.',

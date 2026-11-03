@@ -14,7 +14,8 @@ use Illuminate\Http\JsonResponse;
 
 /**
  * GET growth/leads/{contact}/evidence — the proof behind a contact's source (growth.view only).
- * IDs Meta or Google give (ad ID, ctwa_clid) are masked; agents never reach this endpoint.
+ * The Meta ad ID is masked, the ad click ID (ctwa_clid) is reported only as sent or not; agents never
+ * reach this endpoint.
  */
 final class LeadEvidenceController extends Controller
 {
@@ -43,25 +44,30 @@ final class LeadEvidenceController extends Controller
             'message_id' => $e->message_id,
             'platform' => $e->provider_fields['platform'] ?? null,
             'platform_proof' => $e->provider_fields['platform_proof'] ?? null,
-            'details' => array_filter([
+            // The customer tapped the WhatsApp call-to-action button on a Meta ad (or post); Meta then
+            // put this referral on their first message. media_type/image_url describe the ad's creative
+            // only, so they are stored but not shown. ctwa_clid is never shown, only whether Meta sent it.
+            'details' => $e->evidence_type === GrowthEvidence::TYPE_META_CTWA ? array_filter([
                 'headline' => $fields['headline'] ?? null,
                 'body' => isset($fields['body']) ? mb_substr((string) $fields['body'], 0, 280) : null,
                 'source_type' => $fields['source_type'] ?? null,
-                'media_type' => $fields['media_type'] ?? null,
                 'source_url' => $fields['source_url'] ?? null,
                 'ad_id' => self::mask($fields['source_id'] ?? null),
-                'click_id' => self::mask($fields['ctwa_clid'] ?? null),
-            ], fn ($v) => $v !== null),
+                'click_id_sent' => isset($fields['ctwa_clid']),
+            ], fn ($v) => $v !== null) : [],
         ];
     }
 
-    /** "••••1234": enough to compare two records, never the whole ID. */
+    /** "238514••••••0417": enough to compare two records, never the whole ID. */
     public static function mask(?string $value): ?string
     {
         if ($value === null || $value === '') {
             return null;
         }
+        if (mb_strlen($value) < 12) {
+            return '••••'.mb_substr($value, -4);
+        }
 
-        return '••••'.mb_substr($value, -4);
+        return mb_substr($value, 0, 6).'••••••'.mb_substr($value, -4);
     }
 }

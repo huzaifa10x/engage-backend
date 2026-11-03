@@ -67,8 +67,10 @@ final class ContactResource extends JsonResource
             return null;
         }
 
-        // Details (sources, headline, landing page) need the full tier and growth.view; otherwise the chip only.
-        $acquisition = Acquisition::present($this->resource, GrowthSettings::for($tenant), $tier === GrowthAccess::FULL && $context->can(Permission::GrowthView));
+        // Full tier: everyone who sees the contact gets the Source panel line (no codes or click IDs);
+        // the evidence-backed details also need growth.view. Starter: the chip only.
+        $full = $tier === GrowthAccess::FULL;
+        $acquisition = Acquisition::present($this->resource, GrowthSettings::for($tenant), $full && $context->can(Permission::GrowthView), $full);
 
         // Starter (chip tier) shows the Meta ad chip only: no chip at all for other statuses.
         if ($tier === GrowthAccess::CHIP && $acquisition !== null && ! str_contains($acquisition['label'], 'Meta ad')) {
