@@ -1,0 +1,20 @@
+# Edge proxy for a staging-only server (docker-compose.staging-edge.yml): automatic HTTPS
+# (Let's Encrypt) for the staging domains, then everything goes to the staging gateway
+# (Caddyfile.staging), which routes it inside the staging stack exactly as on a shared server.
+{
+	email {$ACME_EMAIL}
+}
+
+{$STAGING_DOMAINS} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	request_body {
+		max_size 110MB
+	}
+
+	reverse_proxy gateway:80
+}

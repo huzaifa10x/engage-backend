@@ -12,7 +12,9 @@
 #   npm run release:init          one-time: create the `staging` branch in all three repos
 #
 # Settings (in .deploy.local next to package.json, never committed, or as environment variables):
-#   ENGAGE_SSH=ubuntu@92.5.91.81    how to reach the server (any `ssh` destination, e.g. a Host alias)
+#   PRODUCTION_SSH=engage-prod      how to reach the production server (any `ssh` destination, e.g. a Host alias)
+#   STAGING_SSH=engage-staging      how to reach the staging server
+#   ENGAGE_SSH=…                    older single-server setting: used for whichever of the two is not set
 #   WEB_DIR=../engage-web           local clone of engage-web
 #   SITE_DIR=../engage-site         local clone of engage-site
 set -euo pipefail
@@ -39,8 +41,21 @@ repos=("engage-backend:.")
 server_dir() { [[ "$1" == production ]] && echo /opt/engage || echo /opt/engage-staging; }
 short() { case "$1" in engage-backend) echo backend ;; engage-web) echo web ;; engage-site) echo site ;; esac; }
 
-need_ssh() { [[ -n "${ENGAGE_SSH:-}" ]] || die "Set ENGAGE_SSH (e.g. ENGAGE_SSH=ubuntu@92.5.91.81) in .deploy.local."; }
-remote() { ssh -o BatchMode=yes -o ConnectTimeout=15 "$ENGAGE_SSH" "$@"; }
+PRODUCTION_SSH="${PRODUCTION_SSH:-${ENGAGE_SSH:-}}"
+STAGING_SSH="${STAGING_SSH:-${ENGAGE_SSH:-}}"
+ssh_for() { [[ "$1" == production ]] && echo "$PRODUCTION_SSH" || echo "$STAGING_SSH"; }
+need_ssh() { # need_ssh ENV…
+    local env
+    for env in "$@"; do
+        [[ -n "$(ssh_for "$env")" ]] || die "Set $( [[ "$env" == production ]] && echo PRODUCTION_SSH || echo STAGING_SSH ) in .deploy.local (see .deploy.local.example)."
+    done
+}
+remote() { # remote ENV COMMAND… → runs COMMAND on that environment's server
+    local host
+    host="$(ssh_for "$1")"
+    shift
+    ssh -o BatchMode=yes -o ConnectTimeout=15 "$host" "$@"
+}
 
 fetch_all() {
     local entry name dir
@@ -70,7 +85,7 @@ deploy() {
     local env="$1" hotfix="${2:-}" branch entry name dir deployed
     [[ "$env" == staging || "$env" == production ]] || die "Use: deploy staging | deploy production"
     branch=$([[ "$env" == production ]] && echo main || echo staging)
-    need_ssh
+    if [[ "$env" == production ]]; then need_ssh production staging; else need_ssh staging; fi
     say "Checking what will be deployed to $env (branch $branch)"
     fetch_all
     check_pushed "$branch"
@@ -80,7 +95,7 @@ deploy() {
         for entry in "${repos[@]}"; do
             name="${entry%%:*}" dir="${entry#*:}"
             # What staging runs right now, according to the server.
-            deployed="$(remote "git -C /opt/engage-staging/$(short "$name") rev-parse HEAD 2>/dev/null" || true)"
+            deployed="$(remote staging "git -C /opt/engage-staging/$(short "$name") rev-parse HEAD 2>/dev/null" || true)"
             if [[ -z "$deployed" ]] || ! git -C "$dir" merge-base --is-ancestor "origin/main" "$deployed" 2>/dev/null; then
                 blocked+=("$name")
             fi
@@ -95,7 +110,7 @@ deploy() {
         say "Changes going live"
         for entry in "${repos[@]}"; do
             name="${entry%%:*}" dir="${entry#*:}"
-            deployed="$(remote "git -C /opt/engage/$(short "$name") rev-parse HEAD 2>/dev/null" || true)"
+            deployed="$(remote production "git -C /opt/engage/$(short "$name") rev-parse HEAD 2>/dev/null" || true)"
             printf '  %s\n' "$name"
             if [[ -n "$deployed" ]] && git -C "$dir" cat-file -e "$deployed" 2>/dev/null; then
                 git -C "$dir" log --oneline --no-decorate --max-count=40 "$deployed..origin/main" | sed 's/^/      /'
@@ -111,7 +126,7 @@ deploy() {
     say "Deploying $env on the server"
     local actor
     actor="$(git config user.name || whoami)"
-    remote "DEPLOY_ACTOR=$(printf %q "$actor") bash $(server_dir "$env")/backend/deploy/deploy.sh --env $env all" \
+    remote "$env" "DEPLOY_ACTOR=$(printf %q "$actor") bash $(server_dir "$env")/backend/deploy/deploy.sh --env $env all" \
         || die "The $env deployment FAILED (see above). The server keeps the last good containers for anything not yet restarted.
    To go back to the previous release: npm run rollback:$env"
 
@@ -197,19 +212,19 @@ init() {
 }
 
 status() {
-    need_ssh
+    need_ssh production staging
     for env in production staging; do
-        say "$env"
-        remote "test -d $(server_dir "$env")/backend && bash $(server_dir "$env")/backend/deploy/deploy.sh status || echo '  not set up yet'"
+        say "$env ($(ssh_for "$env"))"
+        remote "$env" "test -d $(server_dir "$env")/backend && bash $(server_dir "$env")/backend/deploy/deploy.sh status || echo '  not set up yet'"
     done
 }
 
 rollback() {
     local env="$1"
-    need_ssh
     [[ "$env" == staging || "$env" == production ]] || die "Use: rollback staging | rollback production"
+    need_ssh "$env"
     [[ "$env" == production ]] && confirm production "This rolls PRODUCTION back to its previous release."
-    remote "DEPLOY_ACTOR=$(printf %q "$(git config user.name || whoami)") bash $(server_dir "$env")/backend/deploy/deploy.sh --env $env rollback" \
+    remote "$env" "DEPLOY_ACTOR=$(printf %q "$(git config user.name || whoami)") bash $(server_dir "$env")/backend/deploy/deploy.sh --env $env rollback" \
         || die "The rollback failed (see above)."
     echo
     echo "The branch still has the faulty commit: fix it (or git revert it) on the branch, or the next deploy brings it back."

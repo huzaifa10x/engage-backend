@@ -54,6 +54,12 @@ main() {
     else
         branch=staging project=engage-staging files=(-f "$here/docker-compose.prod.yml" -f "$here/docker-compose.staging.yml")
     fi
+    # Staging on a server of its own: it terminates HTTPS itself (STAGING_EDGE=true in deploy/.env).
+    local staging_edge=0
+    if [[ "$env" == staging ]] && grep -qE '^STAGING_EDGE="?true"?$' "$here/.env" 2>/dev/null; then
+        staging_edge=1
+        files+=(-f "$here/docker-compose.staging-edge.yml")
+    fi
     local compose=(docker compose --project-directory "$here" -p "$project" "${files[@]}")
     local laravel_env="$root/backend/.env" compose_env="$here/.env" releases="$root/releases.log"
     local backend_services=(app horizon scheduler reverb)
@@ -176,6 +182,7 @@ main() {
         refresh_proxy caddy "$here/Caddyfile"
     else
         refresh_proxy gateway "$here/Caddyfile.staging"
+        [[ $staging_edge -eq 1 ]] && refresh_proxy edge "$here/Caddyfile.staging-edge"
     fi
 
     health_checks
@@ -249,6 +256,9 @@ preflight() {
         if [[ "$env" == staging ]]; then
             [[ "$(value "$compose_env" COMPOSE_PROJECT_NAME)" == engage-staging ]] || problems+=("COMPOSE_PROJECT_NAME=engage-staging is missing from $compose_env.")
             [[ "$(value "$compose_env" IMAGE_PREFIX)" == engage-staging ]] || problems+=("IMAGE_PREFIX=engage-staging is missing from $compose_env (images would overwrite production's).")
+            if [[ $staging_edge -eq 1 ]] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx engage-caddy-1; then
+                problems+=("STAGING_EDGE=true, but production's proxy runs on this server and owns ports 80/443. STAGING_EDGE is only for a staging-only server.")
+            fi
             [[ "$(value "$laravel_env" STRIPE_SECRET)" == sk_live_* ]] && problems+=("Staging has a LIVE Stripe key. Use test keys (sk_test_…) on staging.")
             [[ "$(value "$laravel_env" STRIPE_KEY)" == pk_live_* ]] && problems+=("Staging has a LIVE Stripe publishable key. Use pk_test_… on staging.")
             # Credentials that must never be shared with production (a copied .env is the usual cause).
@@ -372,8 +382,12 @@ health_checks() {
             if [[ "$got" == 000 ]]; then
                 echo "    No HTTPS connection. Usually: DNS for $host does not point to this server yet, or ports"
                 echo "    80/443 are closed. Certificate errors from the edge proxy:"
-                docker compose --project-directory "$prod_root/backend/deploy" -p engage -f "$prod_root/backend/deploy/docker-compose.prod.yml" logs --tail=200 caddy 2>&1 \
-                    | grep -iE "error|challenge|acme|timeout|refused" | grep -i "${host%%.*}" | tail -8 || true
+                if [[ $staging_edge -eq 1 ]]; then
+                    "${compose[@]}" logs --tail=200 edge 2>&1 | grep -iE "error|challenge|acme|timeout|refused" | tail -8 || true
+                else
+                    docker compose --project-directory "$prod_root/backend/deploy" -p engage -f "$prod_root/backend/deploy/docker-compose.prod.yml" logs --tail=200 caddy 2>&1 \
+                        | grep -iE "error|challenge|acme|timeout|refused" | grep -i "${host%%.*}" | tail -8 || true
+                fi
             fi
             return 1
         fi

@@ -1,0 +1,29 @@
+# Staging on a server of its own (production runs elsewhere). There is no production Caddy on this
+# machine to terminate HTTPS for the staging domains, so staging gets its own edge proxy.
+#
+# Turned on by STAGING_EDGE=true in staging's deploy/.env: deploy.sh then adds this file to
+#   docker compose -p engage-staging -f docker-compose.prod.yml -f docker-compose.staging.yml
+# Never use it on a server that also runs production (its Caddy already owns ports 80/443;
+# deploy.sh refuses).
+
+services:
+  edge:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      # Until the staging website has a domain, its entry listens on a name nobody can reach.
+      STAGING_DOMAINS: "${DOMAIN}, ${ADMIN_DOMAIN}, ${SITE_DOMAIN:-http://site.internal}"
+    volumes:
+      - ./Caddyfile.staging-edge:/etc/caddy/Caddyfile:ro
+      - edge_data:/data
+      - edge_config:/config
+    depends_on: [gateway]
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+volumes:
+  edge_data:
+  edge_config:

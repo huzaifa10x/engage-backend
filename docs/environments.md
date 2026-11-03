@@ -1,5 +1,22 @@
 # Staging and production
 
+## Servers (since November 2026)
+
+| Environment | Server | Public IP | SSH alias (your Mac) | Domains |
+| --- | --- | --- | --- | --- |
+| Production | `engage-prod` (A1.Flex, 2 OCPU, 12 GB) | 130.61.98.177 | `ssh engage-prod` | app, engage-admin, engage, engage-web, engage-site (.10xdigital.ae) |
+| Staging | `engage-staging` (A1.Flex, 1 OCPU, 6 GB) | 92.5.91.81 | `ssh engage-staging` | st-app, st-engage-admin, st-engage (.10xdigital.ae) |
+
+Each server has its own SSH key (`~/.ssh/engage-prod` and `~/.ssh/engage-staging` on your Mac) and
+GitHub Actions has a separate key per environment (environment secrets `SERVER_HOST`, `SERVER_USER`,
+`SERVER_SSH_KEY` under Settings → Environments → production / staging). `.deploy.local` sets
+`PRODUCTION_SSH=engage-prod` and `STAGING_SSH=engage-staging`.
+
+On the staging server, staging terminates HTTPS itself: `STAGING_EDGE=true` in
+`/opt/engage-staging/backend/deploy/.env` adds `deploy/docker-compose.staging-edge.yml` (an `edge`
+Caddy on ports 80/443 in front of the staging gateway). Production's `deploy/.env` has no
+`STAGING_DOMAINS`. The single-server layout below still works (leave `STAGING_EDGE` unset).
+
 Two complete, separate copies of 10X Engage run on the same Oracle server. They share only the
 machine and the HTTPS front door; code, branch, database, cache, queues, files, images, secrets,
 cookies and third-party accounts are separate.
@@ -235,7 +252,7 @@ After editing a `.env`: `bash /opt/engage[-staging]/backend/deploy/deploy.sh res
    always; the only production change is that Caddy joins that network and knows the staging
    names. Run `bash /opt/engage/backend/deploy/deploy.sh check` afterwards.
 2. On your computer, in engage-backend: `cp .deploy.local.example .deploy.local` (check
-   `ENGAGE_SSH`, `WEB_DIR`, `SITE_DIR`), then `npm run release:init` — creates `staging` in all
+   `PRODUCTION_SSH`, `STAGING_SSH`, `WEB_DIR`, `SITE_DIR`), then `npm run release:init` — creates `staging` in all
    three repos from `main`.
 3. Each repo → **Settings → Environments**: create **staging** (no rules) and open **production**
    → *Required reviewers*: add yourself. GitHub then waits for your approval before deploying
@@ -290,7 +307,7 @@ dcs exec app php artisan engage:admin:create
 - Nightly: `/opt/engage/backups/db-*.dump` + `media-*.tar.gz` (14 days);
   `/opt/engage-staging/backups/` (3 days). Before migrations: `/opt/engage/backups/pre-deploy-*.dump`.
 - Copy production backups off the server regularly (Oracle Object Storage or your computer):
-  `scp ubuntu@92.5.91.81:/opt/engage/backups/db-<date>.dump .`
+  `scp engage-prod:/opt/engage/backups/db-<date>.dump .`
 
 Restore production's database (stops the app while restoring):
 ```bash
