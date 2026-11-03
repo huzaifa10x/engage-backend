@@ -1,9 +1,4 @@
-# Copy to .deploy.local (never committed) and adjust. Used by `npm run deploy:*` and `npm run release:*`.
-# How to reach each server: a Host alias from ~/.ssh/config (recommended) or user@ip.
-#   production: engage-prod     → 130.61.98.177 (app, engage-admin, engage)
-#   staging:    engage-staging  → 92.5.91.81    (st-app, st-engage-admin, st-engage)
 PRODUCTION_SSH=engage-prod
 STAGING_SSH=engage-staging
-# Your local clones of the other two repositories (relative to engage-backend).
 WEB_DIR=../engage-web
 SITE_DIR=../engage-site
