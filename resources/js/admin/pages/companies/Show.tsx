@@ -22,6 +22,7 @@ type Feature = {
 type WhatsappNumber = {
     id: string; display_phone_number: string | null; verified_name: string | null; quality_rating: string | null;
     messaging_limit_tier: string | null; status: string; onboarding_type: string; coexistence_status: string;
+    disconnect_reason: string | null; attention: { reason: string; since: string | null; detail: Record<string, unknown> | null } | null;
 };
 type Waba = {
     id: string; waba_id: string; name: string | null; business_name: string | null; status: string; ban_state: string | null;
@@ -174,7 +175,15 @@ export default function CompanyShow(props: Props) {
                                         <td><Pill tone={qualityTone(n.quality_rating)} dot>{qualityLabel(n.quality_rating)}</Pill></td>
                                         <td className="tabular-nums">{tierLabel(n.messaging_limit_tier)}</td>
                                         <td>{humanize(n.onboarding_type)}{n.onboarding_type === 'coexistence' && <div className="text-[12px] text-muted">{humanize(n.coexistence_status)}</div>}</td>
-                                        <td><Pill tone={n.status === 'connected' ? 'good' : n.status === 'pending' ? 'info' : 'grey'}>{humanize(n.status)}</Pill></td>
+                                        <td>
+                                            <Pill tone={n.status === 'connected' ? 'good' : n.status === 'pending' ? 'info' : 'grey'}>{humanize(n.status)}</Pill>
+                                            {n.disconnect_reason && <div className="mt-1 text-[12px] text-muted">{humanize(n.disconnect_reason)}</div>}
+                                            {n.attention && (
+                                                <div className="mt-1" title={JSON.stringify(n.attention.detail ?? {})}>
+                                                    <Pill tone="warn">Needs attention · {humanize(n.attention.reason)}</Pill>
+                                                </div>
+                                            )}
+                                        </td>
                                     </tr>
                                 ))}
                             </Table>

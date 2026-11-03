@@ -18,29 +18,34 @@ use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use App\Infrastructure\Meta\GraphClient;
 use App\Infrastructure\Meta\MetaApiException;
+use App\Notifications\InternalAlertNotification;
 use App\Notifications\ReconnectRequiredNotification;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Notification;
 use Throwable;
 
 /**
- * Keeps our records true when a customer takes our access away at Meta.
+ * Keeps our records true when a customer takes our access away at Meta, without ever turning a
+ * monitoring guess into a disconnection.
  *
- * There are three ways we find out, and all of them end in markDisconnected():
- *   1. the account_update webhook says so (PARTNER_REMOVED, ACCOUNT_OFFBOARDED …);
- *   2. Meta refuses one of our API calls with an authorisation error (verify());
- *   3. a check every two minutes asks Meta whether each connected account, and each of its numbers,
- *      is still ours to use.
+ * Only real signals DISCONNECT (markDisconnected()):
+ *   • Meta's account_update webhook: PARTNER_REMOVED, PARTNER_APP_UNINSTALLED, ACCOUNT_DELETED
+ *     (access gone) and ACCOUNT_OFFBOARDED (a WhatsApp Business app number taken off the platform);
+ *   • an invalid token (error 190) confirmed by asking Meta about the account itself.
+ * The credential is revoked only when access as a whole is gone (partner removed / confirmed 190),
+ * never for a single number.
+ *
+ * Polling (every 10 minutes, and after a refused API call) only raises SUSPICION: a number or an
+ * account is marked "needs attention", the 10X Engage team is alerted, and nothing stops working.
+ * Only after ATTENTION_AFTER_CHECKS failed checks in a row, spanning at least ATTENTION_AFTER_MINUTES,
+ * with no webhook from that number (or account) in that time. Every detection stores Meta's actual
+ * response. A healthy answer clears the warning.
  *
  * Nothing is deleted: conversations, contacts and history stay, and reconnecting restores service.
- *
- * Meta sometimes refuses a single read for a few minutes while everything keeps working (seen on
- * a coexistence number that kept receiving messages for weeks after being marked disconnected).
- * So the periodic check only disconnects on a refusal that lasts CONFIRM_AFTER_MINUTES, and never
- * while Meta is still delivering that number's (or account's) webhooks to us. A number taken away
- * on its own never costs the account its credential, and comes back by itself when Meta answers
- * normally again (recover()).
  */
 final class AccessRevocation
 {
@@ -51,11 +56,19 @@ final class AccessRevocation
         'manual' => 'The account was disconnected from Channels.',
     ];
 
-    /** A refusal must last this long (several checks in a row) before anything is disconnected. */
-    public const CONFIRM_AFTER_MINUTES = 10;
+    /** What a "needs attention" flag means, for people. */
+    public const ATTENTION = [
+        'number_refused' => 'Meta refused to show us this number.',
+        'left_business_app' => 'Meta reports this number is no longer on the WhatsApp Business app.',
+        'deregistered' => 'Meta reports this number is not registered on the Cloud API.',
+        'account_refused' => 'Meta refused to show us this WhatsApp Business account.',
+    ];
 
-    /** Webhooks from Meta this recent prove the number (or account) still reaches us. */
-    public const LIVE_TRAFFIC_MINUTES = 360;
+    /** Suspicion becomes "needs attention" only after this many failed checks in a row… */
+    public const ATTENTION_AFTER_CHECKS = 3;
+
+    /** …spanning at least this long, with no webhook from Meta for it in that time. */
+    public const ATTENTION_AFTER_MINUTES = 15;
 
     public function __construct(
         private readonly TenantContext $context,
@@ -75,10 +88,31 @@ final class AccessRevocation
     }
 
     /**
-     * Meta refused a call. A dead token (190) is conclusive. A permission error can be about one
-     * feature only, so before disconnecting anything we ask Meta the simplest possible question
-     * about the account; only if that is refused too is the account marked disconnected.
-     * Must run inside the workspace's tenant context. Returns true when it disconnected the account.
+     * Meta's response, as stored with every detection (no token, no message bodies).
+     *
+     * @param  MetaApiException|array<string, mixed>  $response
+     * @return array<string, mixed>
+     */
+    public static function describe(MetaApiException|array $response): array
+    {
+        if ($response instanceof MetaApiException) {
+            return array_filter([
+                'http_status' => $response->httpStatus,
+                'code' => $response->metaCode,
+                'subcode' => $response->metaSubcode,
+                'message' => mb_substr((string) ($response->error['message'] ?? $response->getMessage()), 0, 200),
+                'fbtrace_id' => $response->fbtraceId,
+            ], fn ($v) => $v !== null && $v !== '');
+        }
+
+        return array_intersect_key($response, array_flip(['platform_type', 'is_on_biz_app', 'code_verification_status', 'status', 'name_status', 'quality_rating']));
+    }
+
+    /**
+     * Asks Meta about the account, then about each connected number. Called by the periodic check and
+     * after one of our API calls was refused. Only an invalid token confirmed on the account itself
+     * disconnects; everything else at most marks "needs attention". Must run inside the workspace's
+     * tenant context. Returns true when it disconnected the account.
      */
     public function verify(WabaAccount $waba, ?int $metaCode = null): bool
     {
@@ -86,54 +120,49 @@ final class AccessRevocation
             return false;
         }
 
-        if ($metaCode !== 190) {
-            try {
-                $token = $this->credentials->tokenFor($waba);
-                $this->graph->getWaba($waba->waba_id, $token);
-                Cache::forget($this->strikeKey('waba', $waba->waba_id));
-
-                // The account still accepts us. A single number can be taken away on its own, though
-                // (disconnected inside the WhatsApp Business app, or removed from the account).
-                return $this->verifyNumbers($waba, $token);
-            } catch (MetaApiException $e) {
-                if (! self::looksRevoked($e)) {
-                    return false; // an outage or an unrelated error: never disconnect on that
-                }
-                $metaCode = $e->metaCode;
-            } catch (Throwable) {
-                return false; // no usable token on our side is handled elsewhere; do not guess
-            }
-
-            // A dead token (190) is conclusive. A permission refusal on the account must last, and
-            // must not come while Meta is still delivering this account's webhooks to us.
-            if ($metaCode !== 190 && ($this->hasLiveTraffic($waba->waba_id) || ! $this->confirmed($this->strikeKey('waba', $waba->waba_id)))) {
-                return false;
-            }
+        try {
+            $token = $this->credentials->tokenFor($waba);
+        } catch (Throwable) {
+            return false; // no usable token on our side is handled elsewhere; do not guess
         }
 
-        $this->markDisconnected($waba, $waba->phoneNumbers()->get(), 'access_revoked', ['meta_code' => $metaCode]);
+        try {
+            $this->graph->getWaba($waba->waba_id, $token);
+        } catch (MetaApiException $e) {
+            if ($e->metaCode === 190) {
+                // Confirmed: Meta rejects the credential for the account itself.
+                $this->markDisconnected($waba, $waba->phoneNumbers()->get(), 'access_revoked', [
+                    'detected_by' => 'account_check', 'trigger_code' => $metaCode, 'meta_response' => self::describe($e),
+                ]);
 
-        return true;
+                return true;
+            }
+            if (self::looksRevoked($e)) {
+                $this->suspect($waba, $waba, 'account_refused', $e, null);
+            }
+
+            return false; // an outage or an unrelated error never changes anything
+        }
+
+        $this->cleared($waba, $waba);
+        $this->verifyNumbers($waba, $token);
+
+        return false;
     }
 
     /**
-     * Asks Meta about each connected number of an account we still have access to, and marks as
-     * disconnected the ones that are gone. A number counts as gone only on a clear signal:
-     *   • Meta says it does not exist or we may not see it any more;
-     *   • it was on the WhatsApp Business app (coexistence) and Meta now says it is not;
-     *   • it was registered on the Cloud API and Meta now says it is registered nowhere.
-     * An outage or any other error changes nothing.
+     * Each connected number of an account we still have access to. Suspicious: Meta refuses the number,
+     * a Business app number is reported off the app, or a Cloud API number is reported registered
+     * nowhere. A field Meta did not return is "unknown", never a change.
      */
-    private function verifyNumbers(WabaAccount $waba, string $token): bool
+    private function verifyNumbers(WabaAccount $waba, string $token): void
     {
-        $gone = collect();
         foreach ($waba->phoneNumbers()->where('status', PhoneNumberStatus::Connected->value)->get() as $number) {
-            $key = $this->strikeKey('number', $number->phone_number_id);
             try {
                 $node = $this->graph->getPhoneNumber($number->phone_number_id, $token);
             } catch (MetaApiException $e) {
-                if (self::looksRevoked($e) && $this->confirmedGone($number, $waba->waba_id, $key)) {
-                    $gone->push($number);
+                if (self::looksRevoked($e)) {
+                    $this->suspect($number, $waba, 'number_refused', $e, $number->phone_number_id);
                 }
 
                 continue;
@@ -141,35 +170,109 @@ final class AccessRevocation
                 continue;
             }
 
-            // Compared with what we stored last time; what Meta says now is stored only while the
-            // number looks fine, so a lasting change is still seen as a change on the next check.
-            $leftTheApp = $number->isCoexistence() && $number->getAttribute('is_on_biz_app') === true && ($node['is_on_biz_app'] ?? null) === false;
-            $deregistered = $number->getAttribute('platform_type') === 'CLOUD_API' && ($node['platform_type'] ?? null) === 'NOT_APPLICABLE';
+            $onApp = array_key_exists('is_on_biz_app', $node) ? $node['is_on_biz_app'] : null;
+            $platform = array_key_exists('platform_type', $node) ? $node['platform_type'] : null;
+            $leftTheApp = $number->isCoexistence() && $number->getAttribute('is_on_biz_app') === true && $onApp === false;
+            $deregistered = $number->getAttribute('platform_type') === 'CLOUD_API' && $platform === 'NOT_APPLICABLE';
+
             if ($leftTheApp || $deregistered) {
-                if ($this->confirmedGone($number, $waba->waba_id, $key)) {
-                    $gone->push($number);
-                    $this->sync->applyPhoneNumber($number, $node);
-                }
+                // What we stored stays as it was, so the same change is seen again on the next check.
+                $this->suspect($number, $waba, $leftTheApp ? 'left_business_app' : 'deregistered', $node, $number->phone_number_id);
 
                 continue;
             }
-            Cache::forget($key);
+
+            $this->cleared($number, $waba);
             $this->sync->applyPhoneNumber($number, $node); // remember what Meta says now, for the next comparison
         }
-
-        if ($gone->isEmpty()) {
-            return false;
-        }
-        $this->markDisconnected($waba, $gone, 'offboarded', ['detected_by' => 'number_check']);
-
-        return true;
     }
 
     /**
-     * Brings back numbers our own check disconnected ("offboarded") once Meta answers normally for
-     * them again: the account still accepts our credential, and the number is on the Cloud API (and,
-     * for a WhatsApp Business app number, still on the app). Runs from the periodic check. Returns
-     * how many numbers were reconnected. Must run inside the workspace's tenant context.
+     * One failed check. Counted in a row; the warning is raised only once the run is long enough and
+     * nothing has come in from Meta for this number (or account) since the run started.
+     */
+    /** @param MetaApiException|array<string, mixed> $response */
+    private function suspect(PhoneNumber|WabaAccount $subject, WabaAccount $waba, string $reason, MetaApiException|array $response, ?string $phoneNumberId): void
+    {
+        $key = $this->strikeKey($subject);
+        /** @var array{count: int, first: int}|null $run */
+        $run = Cache::get($key);
+        $run = is_array($run) ? ['count' => $run['count'] + 1, 'first' => $run['first']] : ['count' => 1, 'first' => now()->getTimestamp()];
+
+        // Messages (or delivery statuses) still arriving prove the number reaches us: start over.
+        if ($this->hasTrafficSince($waba->waba_id, $phoneNumberId, $run['first'])) {
+            $run = ['count' => 1, 'first' => now()->getTimestamp()];
+        }
+        Cache::put($key, $run, now()->addDay());
+
+        $long = now()->getTimestamp() - $run['first'] >= self::ATTENTION_AFTER_MINUTES * 60;
+        if ($run['count'] < self::ATTENTION_AFTER_CHECKS || ! $long || $subject->getAttribute('attention_reason') !== null) {
+            return;
+        }
+
+        $detail = ['meta_response' => self::describe($response), 'checks' => $run['count'], 'since' => date(DATE_ATOM, $run['first'])];
+        $subject->forceFill(['attention_reason' => $reason, 'attention_since' => now(), 'attention_detail' => $detail])->save();
+        $this->audit->record('whatsapp.needs_attention', $waba, meta: $detail + [
+            'reason' => $reason,
+            'numbers' => $phoneNumberId !== null ? [$phoneNumberId] : $waba->phoneNumbers()->pluck('phone_number_id')->all(),
+        ]);
+        $this->alertTeam($subject, $waba, $reason, $detail);
+    }
+
+    /** A healthy answer: the run of failed checks ends and any warning is cleared. */
+    private function cleared(PhoneNumber|WabaAccount $subject, WabaAccount $waba): void
+    {
+        Cache::forget($this->strikeKey($subject));
+        if ($subject->getAttribute('attention_reason') === null) {
+            return;
+        }
+        $was = $subject->getAttribute('attention_reason');
+        $subject->forceFill(['attention_reason' => null, 'attention_since' => null, 'attention_detail' => null])->save();
+        $this->audit->record('whatsapp.attention_cleared', $waba, meta: ['reason' => $was] + ($subject instanceof PhoneNumber ? ['numbers' => [$subject->phone_number_id]] : []));
+    }
+
+    /** The 10X Engage team, not the workspace: a warning is ours to look into, not the client's to fix. */
+    /** @param array<string, mixed> $detail */
+    private function alertTeam(PhoneNumber|WabaAccount $subject, WabaAccount $waba, string $reason, array $detail): void
+    {
+        $tenant = $this->context->tenantOrNull();
+        $what = $subject instanceof PhoneNumber ? (string) ($subject->display_phone_number ?? $subject->phone_number_id) : "WhatsApp account {$waba->waba_id}";
+        $context = ['tenant_id' => $tenant?->id, 'workspace' => $tenant?->name, 'subject' => $what, 'reason' => $reason] + $detail;
+        Log::warning('WhatsApp needs attention: '.self::ATTENTION[$reason], $context);
+
+        $to = config('engage.alerts.email');
+        if (is_string($to) && $to !== '') {
+            Notification::route('mail', $to)->notify(new InternalAlertNotification(
+                "WhatsApp needs attention: {$what} ({$tenant?->name})",
+                self::ATTENTION[$reason].' Nothing was disconnected; the number keeps working until Meta confirms a real disconnection.',
+                $context,
+            ));
+        }
+    }
+
+    /** Has Meta delivered a messages webhook (an inbound message or a delivery status) since then? */
+    private function hasTrafficSince(string $wabaId, ?string $phoneNumberId, int $since): bool
+    {
+        return $this->context->bypass(fn () => DB::table('webhook_inbound_log')
+            ->where('waba_id', $wabaId)
+            ->where('field', 'messages')
+            ->when($phoneNumberId, fn ($q, $id) => $q->where('phone_number_id', $id))
+            ->where('received_at', '>=', date(DATE_ATOM, $since))
+            ->exists());
+    }
+
+    private function strikeKey(Model $subject): string
+    {
+        return $subject instanceof PhoneNumber
+            ? "meta-access-strike:number:{$subject->phone_number_id}"
+            : "meta-access-strike:waba:{$subject->getAttribute('waba_id')}";
+    }
+
+    /**
+     * Brings back numbers marked "offboarded" (by Meta's webhook, or by the old 2-minute check) once Meta
+     * answers normally for them again: the account accepts our credential, the number is on the Cloud API
+     * and, for a WhatsApp Business app number, still on the app. Runs from the periodic check. Returns how
+     * many numbers were reconnected. Must run inside the workspace's tenant context.
      */
     public function recover(WabaAccount $waba): int
     {
@@ -181,6 +284,7 @@ final class AccessRevocation
         }
 
         $back = collect();
+        $seen = [];
         foreach ($waba->phoneNumbers()->where('status', PhoneNumberStatus::Disconnected->value)->where('disconnect_reason', 'offboarded')->get() as $number) {
             try {
                 $node = $this->graph->getPhoneNumber($number->phone_number_id, $token);
@@ -191,6 +295,7 @@ final class AccessRevocation
             $onApp = ! $number->isCoexistence() || ($node['is_on_biz_app'] ?? true) !== false;
             if ($onCloudApi && $onApp) {
                 $back->push($number);
+                $seen[$number->phone_number_id] = self::describe($node);
                 $this->sync->applyPhoneNumber($number, $node);
             }
         }
@@ -198,7 +303,7 @@ final class AccessRevocation
             return 0;
         }
 
-        DB::transaction(function () use ($waba, $back): void {
+        DB::transaction(function () use ($waba, $back, $seen): void {
             foreach ($back as $number) {
                 $number->forceFill([
                     'status' => PhoneNumberStatus::Connected,
@@ -206,21 +311,22 @@ final class AccessRevocation
                     'disconnect_reason' => null,
                     'disconnected_at' => null,
                 ])->save();
-                Cache::forget($this->strikeKey('number', $number->phone_number_id));
+                Cache::forget($this->strikeKey($number));
             }
             if ($waba->status === WabaStatus::Disconnected) {
                 $waba->forceFill(['status' => WabaStatus::Connected, 'disconnected_at' => null, 'disconnect_reason' => null])->save();
             }
-            $this->audit->record('whatsapp.reconnected', $waba, meta: ['numbers' => $back->pluck('phone_number_id')->all(), 'detected_by' => 'number_check']);
+            $this->audit->record('whatsapp.reconnected', $waba, meta: ['numbers' => $back->pluck('phone_number_id')->all(), 'detected_by' => 'number_check', 'meta_response' => $seen]);
         });
 
         return $back->count();
     }
 
     /**
-     * The single place a WhatsApp account or some of its numbers become "disconnected" because of
-     * something that happened at Meta. Marks them, drops the token when nothing is left to use it
-     * for, records it, and tells the workspace (email to owners, bell for those who manage channels).
+     * The single place a WhatsApp account or some of its numbers become "disconnected" because Meta said
+     * so (a webhook, or an invalid token confirmed on the account). Marks them, revokes our credential
+     * only when access as a whole is gone, records why, and tells the workspace (email to owners, bell
+     * for those who manage channels).
      *
      * @param  Collection<int, PhoneNumber>  $numbers  the numbers affected (all of the account's, or one)
      * @param  array<string, mixed>  $meta
@@ -237,6 +343,7 @@ final class AccessRevocation
                     'coexistence_status' => $number->isCoexistence() ? CoexistenceStatus::Offboarded : $number->coexistence_status,
                     'disconnect_reason' => $number->getAttribute('disconnect_reason') ?? $reason,
                     'disconnected_at' => $number->getAttribute('disconnected_at') ?? now(),
+                    'attention_reason' => null, 'attention_since' => null, 'attention_detail' => null,
                 ])->save();
             }
 
@@ -263,47 +370,6 @@ final class AccessRevocation
         if ($tenant !== null && $newly->isNotEmpty()) {
             $this->tell($tenant, $newly, $reason);
         }
-    }
-
-    /** A number looks gone: disconnect it only after the refusal has lasted, and never while it still has traffic. */
-    private function confirmedGone(PhoneNumber $number, string $wabaId, string $key): bool
-    {
-        if ($this->hasLiveTraffic($wabaId, $number->phone_number_id)) {
-            Cache::forget($key);
-
-            return false; // Meta is still delivering this number's messages to us: it is not gone
-        }
-
-        return $this->confirmed($key);
-    }
-
-    /** The first sighting starts the clock; true once the same refusal is seen CONFIRM_AFTER_MINUTES later. */
-    private function confirmed(string $key): bool
-    {
-        $first = Cache::get($key);
-        if (! is_int($first)) {
-            Cache::put($key, now()->getTimestamp(), now()->addHours(6));
-
-            return false;
-        }
-
-        return now()->getTimestamp() - $first >= self::CONFIRM_AFTER_MINUTES * 60;
-    }
-
-    /** Has Meta delivered a messages webhook (an inbound message or a delivery status) recently? */
-    private function hasLiveTraffic(string $wabaId, ?string $phoneNumberId = null): bool
-    {
-        return $this->context->bypass(fn () => DB::table('webhook_inbound_log')
-            ->where('waba_id', $wabaId)
-            ->where('field', 'messages')
-            ->when($phoneNumberId, fn ($q, $id) => $q->where('phone_number_id', $id))
-            ->where('received_at', '>=', now()->subMinutes(self::LIVE_TRAFFIC_MINUTES))
-            ->exists());
-    }
-
-    private function strikeKey(string $kind, string $id): string
-    {
-        return "meta-access-strike:{$kind}:{$id}";
     }
 
     /** @param Collection<int, PhoneNumber> $numbers */

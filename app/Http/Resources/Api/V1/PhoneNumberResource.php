@@ -28,6 +28,11 @@ final class PhoneNumberResource extends JsonResource
             'status' => $this->status->value,
             'disconnect_reason' => $this->getAttribute('disconnect_reason'),
             'disconnected_at' => $this->getAttribute('disconnected_at')?->toIso8601String(),
+            // Set by the periodic Meta check instead of disconnecting: a warning; the number keeps working.
+            'attention' => $this->getAttribute('attention_reason') === null ? null : [
+                'reason' => $this->getAttribute('attention_reason'),
+                'since' => $this->getAttribute('attention_since')?->toIso8601String(),
+            ],
             'quality_rating' => $this->quality_rating,
             'messaging_limit_tier' => $this->messaging_limit_tier,
             // Meta's daily messaging limit for the business (null limit = unlimited), as the platform enforces it.

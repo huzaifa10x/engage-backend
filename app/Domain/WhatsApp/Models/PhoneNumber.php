@@ -64,6 +64,8 @@ class PhoneNumber extends Model
             'app_sync_expires_at' => 'datetime',
             'registered_at' => 'datetime',
             'last_synced_at' => 'datetime',
+            'attention_since' => 'datetime',
+            'attention_detail' => 'array',
         ];
     }
 

@@ -196,4 +196,9 @@ return [
         // Change Notice CN-01: internal alert threshold (accepted taps per workspace per calendar month). Never shown to clients, never blocks.
         'accepted_taps_alert_threshold' => (int) env('GROWTH_TAPS_ALERT_THRESHOLD', 100000),
     ],
+
+    'alerts' => [
+        // Internal alerts for the 10X Engage team (e.g. a WhatsApp number that needs attention). Empty = server log only.
+        'email' => env('ENGAGE_ALERTS_EMAIL'),
+    ],
 ];

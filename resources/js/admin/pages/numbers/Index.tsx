@@ -10,12 +10,13 @@ type Row = {
     id: string; display_phone_number: string | null; verified_name: string | null; quality_rating: string | null;
     messaging_limit_tier: string | null; throughput_level: string | null; status: string; onboarding_type: string;
     coexistence_status: string; name_status: string | null; last_synced_at: string | null;
+    attention_reason: string | null; attention_since: string | null; disconnect_reason: string | null;
     tenant_id: string; tenant: string; waba_id: string; ban_state: string | null; account_review_status: string | null;
 };
 type Event = { id: string; event_type: string; old_value: string | null; new_value: string | null; occurred_at: string; tenant_id: string; tenant: string; display_phone_number: string | null };
 type Props = {
     numbers: Paginated<Row>;
-    totals: Record<'connected' | 'pending' | 'disconnected' | 'green' | 'yellow' | 'red' | 'coexistence', number>;
+    totals: Record<'connected' | 'pending' | 'disconnected' | 'attention' | 'green' | 'yellow' | 'red' | 'coexistence', number>;
     events: Event[];
     filters: { quality?: string; status?: string; type?: string; q?: string };
 };
@@ -32,7 +33,7 @@ export default function NumbersIndex({ numbers, totals, events, filters }: Props
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 <Kpi label="Connected" value={number(totals.connected)} hint={`${totals.pending} onboarding, ${totals.disconnected} disconnected`} />
                 <Kpi label="High quality" value={number(totals.green)} hint="Rated GREEN by Meta" />
-                <Kpi label="Needs attention" value={number(totals.yellow + totals.red)} hint={`${totals.red} rated low`} />
+                <Kpi label="Needs attention" value={number(totals.attention)} hint={`Meta check flagged them; ${number(totals.yellow + totals.red)} rated medium or low`} />
                 <Kpi label="Coexistence numbers" value={number(totals.coexistence)} hint="Shared with the Business app, sent at 15 msg/s" />
             </div>
 
@@ -48,6 +49,7 @@ export default function NumbersIndex({ numbers, totals, events, filters }: Props
                     <option value="connected">Connected</option>
                     <option value="pending">Onboarding</option>
                     <option value="disconnected">Disconnected</option>
+                    <option value="attention">Needs attention</option>
                 </Select>
                 <Select className="w-auto" value={filters.type ?? ''} onChange={(e) => apply({ type: e.target.value || undefined })} aria-label="Onboarding">
                     <option value="">Any onboarding</option>
@@ -77,6 +79,12 @@ export default function NumbersIndex({ numbers, totals, events, filters }: Props
                             </td>
                             <td>
                                 <Pill tone={statusTone(n.status === 'connected' ? 'active' : n.status === 'pending' ? 'trialing' : 'closed')}>{humanize(n.status)}</Pill>
+                                {n.disconnect_reason && <div className="mt-1 text-[12px] text-muted">{humanize(n.disconnect_reason)}</div>}
+                                {n.attention_reason && (
+                                    <div className="mt-1" title={`Since ${relative(n.attention_since)}. The number keeps working; see the company's audit log for Meta's response.`}>
+                                        <Pill tone="warn">Needs attention · {humanize(n.attention_reason)}</Pill>
+                                    </div>
+                                )}
                                 {n.ban_state && n.ban_state !== 'NONE' && <div className="mt-1"><Pill tone="bad">{humanize(n.ban_state)}</Pill></div>}
                             </td>
                             <td className="text-muted">{relative(n.last_synced_at)}</td>

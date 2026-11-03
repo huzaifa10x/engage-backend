@@ -143,6 +143,11 @@ final class CompanyController extends Controller
                     'quality_rating' => $n->quality_rating, 'messaging_limit_tier' => $n->messaging_limit_tier,
                     'status' => $n->status->value, 'onboarding_type' => $n->onboarding_type->value,
                     'coexistence_status' => $n->coexistence_status->value,
+                    'disconnect_reason' => $n->getAttribute('disconnect_reason'),
+                    'attention' => $n->getAttribute('attention_reason') === null ? null : [
+                        'reason' => $n->getAttribute('attention_reason'), 'since' => $n->getAttribute('attention_since')?->toIso8601String(),
+                        'detail' => $n->getAttribute('attention_detail'),
+                    ],
                 ])->values(),
             ]);
 

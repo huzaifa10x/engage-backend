@@ -12,7 +12,7 @@ Schedule::command('queue:prune-failed --hours=336')->daily()->onOneServer();
 Schedule::command('engage:coexistence:import')->everyMinute()->onOneServer()->withoutOverlapping();
 // Fallback for when Meta sends no webhook: a disconnection at Meta shows here within two minutes.
 // (With a webhook it is seconds.) Costs two small API calls per connected account per run.
-Schedule::command('engage:whatsapp:verify-access')->everyTwoMinutes()->onOneServer()->withoutOverlapping();
+Schedule::command('engage:whatsapp:verify-access')->everyTenMinutes()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:coexistence:watch')->hourly()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:billing:reconcile')->hourly()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:retention:apply')->dailyAt('02:30')->onOneServer()->withoutOverlapping();

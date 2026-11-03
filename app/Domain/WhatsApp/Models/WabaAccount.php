@@ -52,6 +52,8 @@ class WabaAccount extends Model
             'connected_at' => 'datetime',
             'disconnected_at' => 'datetime',
             'last_synced_at' => 'datetime',
+            'attention_since' => 'datetime',
+            'attention_detail' => 'array',
             'mm_status' => MarketingMessagesStatus::class,
             'mm_requested_at' => 'datetime',
             'mm_onboarded_at' => 'datetime',
