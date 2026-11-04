@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\DeveloperController;
 use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\Growth\LeadController;
 use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
+use App\Http\Controllers\Api\V1\Growth\MetaAdController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
 use App\Http\Controllers\Api\V1\IntegrationController;
 use App\Http\Controllers\Api\V1\InvitationController;
@@ -321,9 +322,12 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
     Route::middleware('can:'.Permission::GrowthView->value)->group(function () {
         Route::get('growth/leads/unmatched-clicks', [LeadController::class, 'unmatchedClicks'])->name('growth.leads.unmatched');
+        Route::get('growth/meta-ads', [MetaAdController::class, 'index'])->name('growth.meta-ads.index');
         Route::get('growth/leads/export', [LeadController::class, 'export'])
             ->middleware(['can:'.Permission::ContactsExport->value, 'throttle:20,1'])->name('growth.leads.export');
     });
+    Route::put('growth/meta-ads/{ad}', [MetaAdController::class, 'update'])
+        ->middleware('can:'.Permission::GrowthManage->value)->whereUuid('ad')->name('growth.meta-ads.update');
     Route::get('growth/leads/{contact}/evidence', LeadEvidenceController::class)
         ->middleware('can:'.Permission::GrowthView->value)->whereUuid('contact')->name('growth.leads.evidence');
 

@@ -13,6 +13,7 @@ use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Growth Hub › Leads reads the CRM: one row per WhatsApp conversation (contact + number), joined
@@ -35,6 +36,7 @@ final class LeadQuery
         'stage_id' => ['nullable', 'string', 'max:36'], // a stage id or "none"
         'days' => ['nullable', 'integer', 'in:7,30,90,365'],
         'tab' => ['nullable', 'in:all,new,unattributed'],
+        'ad' => ['nullable', 'uuid'], // a growth_meta_ads id: leads whose original source is that ad
     ];
 
     public function __construct(private readonly TenantContext $context, private readonly NumberAccess $access) {}
@@ -82,6 +84,11 @@ final class LeadQuery
             ->when($f['stage_id'] ?? null, fn ($q, string $id) => $q->whereHas('contact', fn ($c) => $id === 'none' ? $c->whereNull('stage_id') : $c->where('stage_id', $id)))
             ->when($f['status'] ?? null, fn ($q, string $s) => $q->whereHas('contact', fn ($c) => self::status($c, $s, $settings->startedAt)))
             ->when($f['source'] ?? null, fn ($q, string $s) => $q->whereHas('contact', fn ($c) => self::source($c, $s, $settings->startedAt)));
+
+        if (! empty($f['ad'])) {
+            $sourceId = DB::table('growth_meta_ads')->where('id', $f['ad'])->value('source_id'); // RLS: own workspace only
+            $query->whereHas('contact', fn ($c) => $sourceId === null ? $c->whereRaw('false') : $c->whereRaw("acquisition_original->>'ad_id' = ?", [$sourceId]));
+        }
 
         if ($withTab) {
             $this->tab($query, (string) ($f['tab'] ?? 'all'));

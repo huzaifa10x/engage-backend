@@ -23,6 +23,8 @@ use Illuminate\Support\Str;
  */
 class EvidenceRecorder
 {
+    public function __construct(private readonly MetaAds $ads) {}
+
     /** Meta click-to-WhatsApp referral on this message → evidence. Returns null when there is none or it was already recorded. */
     public function recordMetaReferral(Message $message, Tenant $tenant): ?GrowthEvidence
     {
@@ -31,14 +33,22 @@ class EvidenceRecorder
             return null;
         }
 
-        $occurredAt = $message->getAttribute('meta_timestamp') ?? $message->created_at ?? now();
+        $occurredAt = Carbon::parse($message->getAttribute('meta_timestamp') ?? $message->created_at ?? now());
 
         return DB::transaction(function () use ($message, $tenant, $fields, $occurredAt) {
+            // Facebook or Instagram only with proof: the ad link itself, or the ad tagged as one
+            // platform only in Tracking Setup. Otherwise plain "Meta ad".
+            $tagged = $this->ads->seen($tenant, $fields, $occurredAt);
+            $proven = MetaReferral::platformFromUrl($fields['source_url'] ?? null)
+                ?? ($tagged !== null ? ['platform' => $tagged, 'proof' => MetaAds::TAG_PROOF[$tagged]] : null);
+
             $id = (string) Str::uuid7();
             $inserted = DB::table('growth_evidence')->insertOrIgnore([
                 'id' => $id,
                 'tenant_id' => $tenant->id,
                 'crm_contact_id' => $message->contact_id,
+                'conversation_id' => $message->conversation_id,
+                'phone_number_id' => $message->getAttribute('phone_number_id'),
                 'message_id' => $message->id,
                 'wa_message_id' => $message->wamid,
                 'click_id' => null,
@@ -46,7 +56,7 @@ class EvidenceRecorder
                 'confidence' => 'confirmed',
                 'source' => 'meta_ad',
                 // The referral has no platform field: platform and its proof stay empty until proven.
-                'provider_fields' => json_encode(['referral' => $fields, 'platform' => null, 'platform_proof' => null], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                'provider_fields' => json_encode(['referral' => $fields, 'platform' => $proven['platform'] ?? null, 'platform_proof' => $proven['proof'] ?? null], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                 'conflict' => false,
                 'occurred_at' => $occurredAt,
                 'created_at' => now(),
@@ -59,9 +69,10 @@ class EvidenceRecorder
             $evidence = GrowthEvidence::query()->findOrFail($id);
             $this->project($evidence, $tenant, [
                 'source' => 'meta_ad',
-                'label' => MetaReferral::label(),
-                'platform' => null,
+                'label' => MetaReferral::label($proven['platform'] ?? null),
+                'platform' => $proven['platform'] ?? null,
                 'headline' => $fields['headline'] ?? null,
+                'ad_id' => $fields['source_id'] ?? null, // groups leads by ad; never shown to agents
                 'campaign' => null, // source_id is not a campaign ID: never shown as one
                 'landing_path' => null,
             ]);

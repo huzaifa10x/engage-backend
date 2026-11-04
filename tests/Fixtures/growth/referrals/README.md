@@ -2,13 +2,14 @@
 
 `messages[].referral` objects used by `tests/Feature/Growth/MetaAdLeadsTest.php`.
 
-How the chat starts: the customer taps the WhatsApp call-to-action button ("Send message" /
-"WhatsApp") on a Click-to-WhatsApp ad or boosted post. WhatsApp opens with the business number, the
-customer sends the first message, and Meta attaches `referral` to that message only. `media_type`
-(`image`/`video`) and `image_url`/`video_url`/`thumbnail_url` describe the ad's creative, not
-something the customer tapped; Growth Hub stores `media_type` (v1.2 candidate field) and never shows
-it. Only `source_id`, `source_type`, `source_url`, `headline`, `body`, `ctwa_clid` and `media_type`
-are kept; anything else in the object is ignored.
+How the chat starts: the customer taps the WhatsApp button on a Click-to-WhatsApp ad (or a boosted
+post). WhatsApp opens with the business number, the customer sends the first message, and Meta
+attaches `referral` to that message in the normal webhook. Every field is kept against the contact
+and the conversation: `source_type` (`ad` | `post`), `source_id` (the ad ID, groups leads by ad),
+`source_url`, `headline`, `body`, `media_type` with `image_url` / `video_url` / `thumbnail_url` (the
+ad creative, shown in Source details) and `ctwa_clid` (the click ID, stored privately, never shown).
+The referral has no platform field: "Meta ad · Instagram" needs proof (an Instagram `source_url`,
+or the ad tagged as Instagram-only in Tracking Setup).
 
 **Status: synthetic.** These follow the shape in Meta's Cloud API webhook reference. Sprint 0 check 5
 replaces them with real payloads captured from three test ads (Instagram-only, Facebook-only, both

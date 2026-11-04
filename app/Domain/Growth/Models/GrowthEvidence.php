@@ -17,6 +17,8 @@ use Illuminate\Support\Carbon;
  * @property string $id
  * @property string $tenant_id
  * @property string $crm_contact_id
+ * @property ?string $conversation_id
+ * @property ?string $phone_number_id
  * @property ?string $message_id
  * @property string $wa_message_id
  * @property ?string $click_id
@@ -37,7 +39,7 @@ class GrowthEvidence extends Model
 
     protected $table = 'growth_evidence';
 
-    protected $fillable = ['tenant_id', 'crm_contact_id', 'message_id', 'wa_message_id', 'click_id', 'evidence_type', 'confidence', 'source', 'provider_fields', 'conflict', 'occurred_at'];
+    protected $fillable = ['tenant_id', 'crm_contact_id', 'conversation_id', 'phone_number_id', 'message_id', 'wa_message_id', 'click_id', 'evidence_type', 'confidence', 'source', 'provider_fields', 'conflict', 'occurred_at'];
 
     protected function casts(): array
     {

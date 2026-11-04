@@ -9,11 +9,13 @@ use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Jobs\RecordMessageEvidence;
 use App\Domain\Growth\Models\GrowthEvidence;
 use App\Domain\Growth\Services\EvidenceRecorder;
+use App\Domain\Growth\Services\MetaAds;
 use App\Domain\Growth\Services\MetaReferral;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\Models\Tenant;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use RuntimeException;
 use Tests\Concerns\InteractsWithWhatsapp;
@@ -109,7 +111,8 @@ final class MetaAdLeadsTest extends TestCase
             $fields = GrowthEvidence::query()->sole()->provider_fields['referral'];
             $this->assertArrayNotHasKey('ctwa_clid', $fields);
             $this->assertArrayNotHasKey('media_type', $fields);
-            $this->assertSame('Meta ad', Contact::query()->sole()->acquisition_original['label']);
+            // The fixture's source_url is an Instagram post link: that is proof of Instagram.
+            $this->assertSame('Meta ad · Instagram', Contact::query()->sole()->acquisition_original['label']);
         });
 
         $contactId = $this->inTenant(fn () => Contact::query()->sole()->id);
@@ -117,13 +120,84 @@ final class MetaAdLeadsTest extends TestCase
         $this->assertFalse($this->getJson("/api/v1/growth/leads/{$contactId}/evidence")->assertOk()->json('data.0.details.click_id_sent')); // "Not sent by Meta"
     }
 
-    // Image/video URLs describe the ad's creative; only the v1.2 candidate fields are kept.
-    public function test_creative_urls_in_the_referral_are_not_stored(): void
+    // Every referral field is kept: the ad creative (media_type, image_url) is shown in Source details.
+    public function test_every_referral_field_is_kept_against_the_contact_and_the_conversation(): void
     {
         $this->enableGrowth();
         $this->inboundFromAd($this->fixture('full'));
 
-        $this->inTenant(fn () => $this->assertArrayNotHasKey('image_url', GrowthEvidence::query()->sole()->provider_fields['referral']));
+        $this->inTenant(function () {
+            $e = GrowthEvidence::query()->sole();
+            $this->assertSame('https://scontent.xx.fbcdn.net/v/redacted.jpg', $e->provider_fields['referral']['image_url']);
+            $this->assertSame(Conversation::query()->sole()->id, $e->conversation_id);
+            $this->assertNotNull($e->phone_number_id);
+        });
+
+        $contactId = $this->inTenant(fn () => Contact::query()->sole()->id);
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Admin));
+        $d = $this->getJson("/api/v1/growth/leads/{$contactId}/evidence")->assertOk()->json('data.0.details');
+        $this->assertSame('image', $d['media_type']);
+        $this->assertSame('https://scontent.xx.fbcdn.net/v/redacted.jpg', $d['creative_url']);
+        // The full ad ID never leaves the server (it groups leads internally).
+        $this->assertStringNotContainsString('120208000000000001', (string) $this->getJson("/api/v1/contacts/{$contactId}")->getContent());
+    }
+
+    public function test_a_repeated_webhook_keeps_a_referral_the_first_copy_did_not_have(): void
+    {
+        $this->enableGrowth();
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.TWICE'])))->assertOk();
+        $this->inboundFromAd($this->fixture('full'), 'wamid.TWICE');
+        $this->inboundFromAd($this->fixture('full'), 'wamid.TWICE');
+
+        $this->inTenant(function () {
+            $this->assertSame(1, Message::query()->count());
+            $this->assertSame(1, GrowthEvidence::query()->count());
+            $this->assertSame('Meta ad', Contact::query()->sole()->acquisition_original['label']);
+        });
+    }
+
+    public function test_an_instagram_ad_link_proves_instagram_and_an_ad_tagged_one_platform_relabels_its_leads(): void
+    {
+        $this->enableGrowth();
+        $this->inboundFromAd(['source_id' => '120208000000000010', 'source_type' => 'ad', 'source_url' => 'https://www.instagram.com/p/Cabc123/'], 'wamid.IG');
+        $this->inTenant(fn () => $this->assertSame('Meta ad · Instagram', Contact::query()->sole()->acquisition_original['label']));
+
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.FB', 'referral' => ['source_id' => '120208000000000020', 'source_type' => 'ad', 'source_url' => 'https://fb.me/x']], '971500000077', 'AE.77', 'Omar')))->assertOk();
+        $this->inTenant(fn () => $this->assertSame('Meta ad', Contact::query()->where('wa_id', '971500000077')->sole()->acquisition_original['label']));
+
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Owner));
+        $ads = collect($this->getJson('/api/v1/growth/meta-ads')->assertOk()->json('data'));
+        $this->assertCount(2, $ads);
+        $fb = $ads->firstWhere('ad_id', '120208••••••0020');
+        $this->assertSame(1, $fb['leads']);
+
+        $this->putJson("/api/v1/growth/meta-ads/{$fb['id']}", ['platform' => 'facebook'])->assertOk()->assertJsonPath('data.leads_updated', 1);
+        $this->inTenant(function () {
+            $c = Contact::query()->where('wa_id', '971500000077')->sole();
+            $this->assertSame('Meta ad · Facebook', $c->acquisition_original['label']);
+            $this->assertSame('This ad runs on Facebook only (set in Tracking Setup)', GrowthEvidence::query()->where('wa_message_id', 'wamid.FB')->sole()->provider_fields['platform_proof']);
+        });
+
+        // Leads grouped by ad, and the "Meta ad · Facebook" filter now finds it.
+        $this->assertCount(1, $this->getJson("/api/v1/growth/leads?ad={$fb['id']}")->assertOk()->json('data'));
+        $this->assertCount(1, $this->getJson('/api/v1/growth/leads?source=meta_facebook')->assertOk()->json('data'));
+
+        // A new lead from the tagged ad is Facebook from the start; clearing the tag makes it plain "Meta ad".
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.FB2', 'referral' => ['source_id' => '120208000000000020']], '971500000088', 'AE.88', 'Lina')))->assertOk();
+        $this->inTenant(fn () => $this->assertSame('Meta ad · Facebook', Contact::query()->where('wa_id', '971500000088')->sole()->acquisition_original['label']));
+        $this->putJson("/api/v1/growth/meta-ads/{$fb['id']}", ['platform' => null])->assertOk()->assertJsonPath('data.leads_updated', 2);
+        $this->inTenant(fn () => $this->assertSame('Meta ad', Contact::query()->where('wa_id', '971500000088')->sole()->acquisition_original['label']));
+    }
+
+    public function test_agents_cannot_tag_ads(): void
+    {
+        $this->enableGrowth();
+        $this->inboundFromAd($this->fixture('full'));
+        $id = $this->inTenant(fn () => DB::table('growth_meta_ads')->value('id'));
+
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Agent));
+        $this->putJson("/api/v1/growth/meta-ads/{$id}", ['platform' => 'instagram'])->assertForbidden();
+        $this->getJson('/api/v1/growth/meta-ads')->assertForbidden();
     }
 
     // CTWA-03 · minimal referral
@@ -176,7 +250,7 @@ final class MetaAdLeadsTest extends TestCase
         Queue::assertPushed(RecordMessageEvidence::class, 1);
         $messageId = $this->inTenant(fn () => Message::query()->sole()->id);
 
-        $this->app->instance(EvidenceRecorder::class, new class extends EvidenceRecorder
+        $this->app->instance(EvidenceRecorder::class, new class(app(MetaAds::class)) extends EvidenceRecorder
         {
             public function recordMetaReferral(Message $message, Tenant $tenant): ?GrowthEvidence
             {
@@ -291,7 +365,7 @@ final class MetaAdLeadsTest extends TestCase
         $this->assertSame('Free consultation this week', $row['details']['headline']);
         $this->assertSame('120208••••••0001', $row['details']['ad_id']);
         $this->assertTrue($row['details']['click_id_sent']); // "Present", never the value
-        $this->assertArrayNotHasKey('media_type', $row['details']); // the ad's creative, not shown
+        $this->assertSame('image', $row['details']['media_type']); // the ad's creative (Source details)
         $this->assertStringNotContainsString('120208000000000001', (string) json_encode($row));
         $this->assertStringNotContainsString('ARAkLkA8rmlF', (string) json_encode($row));
     }

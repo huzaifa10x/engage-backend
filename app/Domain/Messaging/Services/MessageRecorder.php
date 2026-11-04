@@ -65,6 +65,13 @@ final class MessageRecorder
             if ($existing->type === 'media_placeholder' && in_array($raw['type'] ?? null, InboundMessageParser::MEDIA_TYPES, true)) {
                 $this->upgradePlaceholder($existing, $number, $raw);
             }
+            // Meta can deliver a message twice: deduplicate on the message ID, but keep the ad referral
+            // if this copy has one the stored copy doesn't (attribution is idempotent per message).
+            $content = (array) ($existing->content ?? []);
+            if (isset($raw['referral']) && is_array($raw['referral']) && ! isset($content['referral']) && $existing->direction === Message::INBOUND) {
+                $existing->forceFill(['content' => $content + ['referral' => $raw['referral']]])->save();
+                $this->queueAttribution($existing);
+            }
 
             return null; // already stored
         }

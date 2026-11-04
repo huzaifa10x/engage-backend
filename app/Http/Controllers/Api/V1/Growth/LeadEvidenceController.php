@@ -44,17 +44,21 @@ final class LeadEvidenceController extends Controller
             'message_id' => $e->message_id,
             'platform' => $e->provider_fields['platform'] ?? null,
             'platform_proof' => $e->provider_fields['platform_proof'] ?? null,
-            // The customer tapped the WhatsApp call-to-action button on a Meta ad (or post); Meta then
-            // put this referral on their first message. media_type/image_url describe the ad's creative
-            // only, so they are stored but not shown. ctwa_clid is never shown, only whether Meta sent it.
+            // The customer tapped the WhatsApp button on a Click-to-WhatsApp ad (or boosted post) and
+            // sent a message; Meta attached this referral to it. media_type and image_url / video_url
+            // are the ad's creative. ctwa_clid is stored privately: only whether Meta sent it is shown.
             'details' => $e->evidence_type === GrowthEvidence::TYPE_META_CTWA ? array_filter([
                 'headline' => $fields['headline'] ?? null,
                 'body' => isset($fields['body']) ? mb_substr((string) $fields['body'], 0, 280) : null,
                 'source_type' => $fields['source_type'] ?? null,
                 'source_url' => $fields['source_url'] ?? null,
+                'media_type' => $fields['media_type'] ?? null,
+                'creative_url' => $fields['image_url'] ?? $fields['thumbnail_url'] ?? null,
+                'video_url' => $fields['video_url'] ?? null,
                 'ad_id' => self::mask($fields['source_id'] ?? null),
                 'click_id_sent' => isset($fields['ctwa_clid']),
             ], fn ($v) => $v !== null) : [],
+            'conversation_id' => $e->conversation_id,
         ];
     }
 

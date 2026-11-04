@@ -112,6 +112,11 @@ final class Acquisition
      */
     private static function touch(mixed $raw): ?array
     {
-        return is_array($raw) && isset($raw['source'], $raw['label']) ? $raw : null;
+        if (! is_array($raw) || ! isset($raw['source'], $raw['label'])) {
+            return null;
+        }
+        unset($raw['ad_id']); // used to group leads by ad on the server; the ID itself is never sent
+
+        return $raw;
     }
 }

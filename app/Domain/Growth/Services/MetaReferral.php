@@ -13,11 +13,33 @@ namespace App\Domain\Growth\Services;
  */
 final class MetaReferral
 {
-    /** Candidate fields (v1.2 §2) and their maximum stored length. */
+    /**
+     * Every field Meta sends on a Click-to-WhatsApp referral, with its maximum stored length:
+     * source_type (ad | post), source_id (the ad ID), source_url (ad or post link), headline/body
+     * (the ad text the person saw), media_type with image_url / video_url / thumbnail_url (the ad
+     * creative), ctwa_clid (the click ID for this tap — kept private, never shown to agents).
+     */
     public const FIELDS = [
         'source_id' => 64, 'source_type' => 20, 'source_url' => 2048, 'headline' => 512,
         'body' => 2048, 'ctwa_clid' => 512, 'media_type' => 20,
+        'image_url' => 2048, 'video_url' => 2048, 'thumbnail_url' => 2048,
     ];
+
+    /** Instagram hosts: a source_url on one of these proves the ad was seen on Instagram. */
+    private const INSTAGRAM_HOSTS = ['instagram.com', 'www.instagram.com', 'l.instagram.com', 'ig.me'];
+
+    /**
+     * Platform proven by the ad link itself, or null. Only an unmistakable Instagram link counts;
+     * fb.me short links are used for ads on both platforms and prove nothing.
+     *
+     * @return array{platform: string, proof: string}|null
+     */
+    public static function platformFromUrl(?string $url): ?array
+    {
+        $host = is_string($url) ? strtolower((string) parse_url($url, PHP_URL_HOST)) : '';
+
+        return in_array($host, self::INSTAGRAM_HOSTS, true) ? ['platform' => 'instagram', 'proof' => 'The ad link is an Instagram link'] : null;
+    }
 
     /**
      * @return ?array<string, string> the present fields, or null when this is not a usable referral
