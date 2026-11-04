@@ -18,7 +18,7 @@ use Illuminate\Support\Str;
  */
 final class Sites
 {
-    public const COLLECTOR_URL = 'https://e.10xengage.com';
+    public const COLLECTOR_URL = 'https://e.10xdigital.ae';
 
     /** Exact prefilled messages (§1). {reference} is replaced by the browser. */
     public const TEMPLATES = [

@@ -198,7 +198,7 @@ return [
         // Website tracker (R1): the public collector the tracker script and its beacons use, and the
         // host its routes answer on. Kill switch: GROWTH_TRACKER_ENABLED=false turns every site's
         // tracking off within 5 minutes (links open untracked).
-        'collector_url' => env('GROWTH_COLLECTOR_URL', 'https://e.10xengage.com'),
+        'collector_url' => env('GROWTH_COLLECTOR_URL', 'https://e.10xdigital.ae'),
         'collector_host' => env('GROWTH_COLLECTOR_HOST'),
         'tracker_enabled' => (bool) env('GROWTH_TRACKER_ENABLED', true),
     ],

@@ -70,7 +70,7 @@ http://{$ADMIN_DOMAIN} {
 }
 
 # Growth Hub website tracker on staging (COLLECTOR_DOMAIN in the staging deploy/.env, e.g.
-# st-e.10xengage.com; add it to production's STAGING_DOMAINS so its certificate is issued there).
+# st-e.10xdigital.ae; add it to production's STAGING_DOMAINS so its certificate is issued there).
 http://{$COLLECTOR_DOMAIN} {
 	header -Server
 

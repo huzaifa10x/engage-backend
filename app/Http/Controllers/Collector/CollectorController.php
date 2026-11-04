@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response as BaseResponse;
 
 /**
- * The public tracker endpoints on e.10xengage.com, served by the separate collector container
+ * The public tracker endpoints on e.10xdigital.ae, served by the separate collector container
  * (Technical Specification v1.2 §3, §4, §8; Blueprint v1.4 hostnames):
  *
  *   GET  /sdk/v1/e.min.js?key=pk_site_…   the tracker script

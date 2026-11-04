@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 
 /**
- * The click collector behind e.10xengage.com/v1/c (Technical Specification v1.2 §3, §8): turns a
+ * The click collector behind e.10xdigital.ae/v1/c (Technical Specification v1.2 §3, §8): turns a
  * tracker beacon into an accepted click and its reference, atomically, or refuses it. The browser's
  * code is an untrusted claim until it is bound here to (workspace, site, mapping, number, event).
  *

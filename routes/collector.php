@@ -6,7 +6,7 @@ use App\Http\Controllers\Collector\CollectorController;
 use Illuminate\Support\Facades\Route;
 
 /*
-| Growth Hub tracker endpoints (e.10xengage.com, its own container in production). No session, no
+| Growth Hub tracker endpoints (e.10xdigital.ae, its own container in production). No session, no
 | cookies, no CSRF: these are called from client websites with a public site key. Abuse limits are
 | applied per site and per visitor inside the collector; the throttle here is a coarse backstop.
 */

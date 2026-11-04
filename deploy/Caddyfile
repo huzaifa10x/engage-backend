@@ -66,7 +66,7 @@
 	redir https://{$SITE_DOMAIN}{uri} 301
 }
 
-# Growth Hub website tracker (COLLECTOR_DOMAIN, e.g. e.10xengage.com): the tracker script, its
+# Growth Hub website tracker (COLLECTOR_DOMAIN, e.g. e.10xdigital.ae): the tracker script, its
 # configuration and the tap beacons, all to the separate collector container. Nothing else here.
 {$COLLECTOR_DOMAIN} {
 	import common

@@ -33,7 +33,7 @@ services:
       retries: 10
       start_period: 30s
 
-  # Growth Hub tracker collector (e.10xengage.com/v1/c, /v1/config, /sdk/v1/e.min.js): isolated from
+  # Growth Hub tracker collector (e.10xdigital.ae/v1/c, /v1/config, /sdk/v1/e.min.js): isolated from
   # the webhook and inbox containers, low priority (Technical Specification v1.2 §3: 0.5 CPU, 1 GB,
   # 128 processes, a small database pool, strict timeouts).
   collector:
@@ -113,7 +113,7 @@ services:
       EXTRA_DOMAINS: ${EXTRA_DOMAINS:-}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
-      # Growth Hub tracker host (e.10xengage.com). Until set, a name nobody can reach.
+      # Growth Hub tracker host (e.10xdigital.ae). Until set, a name nobody can reach.
       COLLECTOR_DOMAIN: ${COLLECTOR_DOMAIN:-http://collector.internal}
       # Staging hostnames, comma separated (st-app…, st-engage-admin…, st-engage…). Their HTTPS
       # certificates live here; the requests go on to the staging stack's gateway.
