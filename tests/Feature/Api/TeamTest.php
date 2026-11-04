@@ -64,10 +64,15 @@ final class TeamTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.role.key', 'agent');
 
-        // Token is single-use.
+        // Accepting again (double click, refresh) is the same outcome, not an error.
+        $this->postJson("/api/v1/invitations/{$token}/accept")->assertOk()->assertJsonPath('data.role.key', 'agent');
+
+        // Token is single-use: nobody else can use it.
+        Sanctum::actingAs(User::factory()->create(['email' => 'new.agent@example.com.other']));
         $this->postJson("/api/v1/invitations/{$token}/accept")
             ->assertStatus(410)
-            ->assertJsonPath('error.code', 'invitation_invalid');
+            ->assertJsonPath('error.code', 'invitation_invalid')
+            ->assertJsonPath('error.details.reason', 'accepted');
     }
 
     public function test_last_owner_cannot_be_demoted(): void

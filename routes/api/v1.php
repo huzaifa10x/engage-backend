@@ -48,6 +48,10 @@ use Illuminate\Support\Facades\Route;
 /*
 | Public website (no sign-in): the live plan catalog for the pricing page, and the demo/contact form.
 */
+// The invitation page, before signing in: workspace, role, masked invited email, whether it is still valid.
+Route::get('invitations/{token}', [InvitationController::class, 'show'])
+    ->where('token', '[A-Za-z0-9]{64}')->middleware('throttle:30,1')->name('invitations.show');
+
 Route::prefix('public')->name('public.')->group(function () {
     Route::get('plans', [PublicSiteController::class, 'plans'])->middleware('throttle:120,1')->name('plans');
     Route::post('leads', [PublicSiteController::class, 'lead'])->middleware('throttle:6,1')->name('leads');

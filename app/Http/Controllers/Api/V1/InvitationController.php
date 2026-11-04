@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Application\Team\AcceptInvitation;
+use App\Application\Team\InvitationStatus;
 use App\Application\Team\InviteMember;
 use App\Application\Team\RevokeInvitation;
 use App\Domain\Access\Models\Role;
 use App\Domain\Identity\Models\User;
+use App\Domain\Tenancy\Exceptions\InvitationInvalid;
 use App\Domain\Tenancy\Models\Invitation;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\InviteMemberRequest;
@@ -41,6 +43,19 @@ final class InvitationController extends Controller
         $revoke($invitation);
 
         return response()->noContent();
+    }
+
+    /** GET invitations/{token}: what the invitation page shows before accepting (no sign-in needed). */
+    public function show(Request $request, string $token, InvitationStatus $status): JsonResponse
+    {
+        /** @var ?User $viewer */
+        $viewer = $request->user('sanctum');
+        $data = $status($token, $viewer);
+        if ($data === null) {
+            throw InvitationInvalid::because('not_found');
+        }
+
+        return response()->json(['data' => $data]);
     }
 
     public function accept(Request $request, string $token, AcceptInvitation $accept): JsonResponse
