@@ -207,9 +207,9 @@ final class InboxToolsTest extends TestCase
         $this->postJson("/api/v1/conversations/{$mine->id}/read")->assertOk();
         $this->getJson('/api/v1/notifications')->assertJsonPath('data.unread_conversations', 1);
 
-        // The agent sees the one assigned to them plus the unassigned one.
+        // Agents only see the chats assigned to them: the unassigned one is for Owners and Admins.
         $this->actingAsMember($agent);
-        $this->getJson('/api/v1/notifications')->assertOk()->assertJsonPath('data.unread_conversations', 2);
+        $this->getJson('/api/v1/notifications')->assertOk()->assertJsonPath('data.unread_conversations', 1);
     }
 
     public function test_conversations_of_a_disconnected_number_are_kept_and_say_so(): void

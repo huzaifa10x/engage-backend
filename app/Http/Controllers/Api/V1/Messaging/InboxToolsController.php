@@ -194,8 +194,9 @@ final class InboxToolsController extends Controller
         $me = $membership->id;
         $items = MemberNotification::query()->where('membership_id', $me)->orderByDesc('created_at')->orderByDesc('id')->limit(30)->get();
 
-        // Unread conversations on numbers this member can use: assigned to them, or not assigned to anyone.
-        $unread = fn () => $this->access->scope(Conversation::query(), $membership, 'phone_number_id')
+        // Unread conversations that are theirs to answer: assigned to them, or (Owner/Admin) not assigned
+        // to anyone. Agents never see other people's chats here either.
+        $unread = fn () => $this->access->scopeChats(Conversation::query(), $membership)
             ->where('status', ConversationStatus::Open->value)->where('unread_count', '>', 0)->whereNotNull('last_inbound_at')
             ->where(fn ($q) => $q->whereNull('assigned_membership_id')->orWhere('assigned_membership_id', $me))
             ->where(fn ($q) => $q->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now()));
@@ -237,8 +238,11 @@ final class InboxToolsController extends Controller
         $today = now()->setTimezone($tenant->timezone ?: 'UTC')->startOfDay()->utc();
         $month = now()->setTimezone($tenant->timezone ?: 'UTC')->startOfMonth()->utc();
 
-        $conversations = fn () => $this->access->scope(Conversation::query()->whereNotNull('last_message_at'), $membership, 'phone_number_id');
-        $messages = fn () => $this->access->scope(Message::query(), $membership, 'phone_number_id');
+        // Counts follow chat visibility: agents count only the chats assigned to them.
+        $conversations = fn () => $this->access->scopeChats(Conversation::query()->whereNotNull('last_message_at'), $membership);
+        $messages = fn () => $this->access->seesAllChats($membership)
+            ? $this->access->scope(Message::query(), $membership, 'phone_number_id')
+            : Message::query()->whereIn('conversation_id', $this->access->scopeChats(Conversation::query(), $membership)->select('id'));
 
         return response()->json(['data' => [
             'conversations_today' => $conversations()->where('last_inbound_at', '>=', $today)->count(),
@@ -255,7 +259,7 @@ final class InboxToolsController extends Controller
     private function authorizeThread(Conversation $conversation): void
     {
         $membership = $this->context->membership()?->loadMissing('role') ?? abort(403);
-        $this->access->ensureCanAccess($membership, $conversation->phoneNumber()->firstOrFail());
+        $this->access->ensureCanSeeChat($membership, $conversation);
     }
 
     /**

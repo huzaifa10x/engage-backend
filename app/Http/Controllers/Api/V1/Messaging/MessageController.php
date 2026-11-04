@@ -12,9 +12,11 @@ use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\WhatsApp\Exceptions\WhatsappException;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\MessageResource;
+use App\Support\Api\ErrorCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -30,7 +32,7 @@ final class MessageController extends Controller
     /** Newest first; pass ?cursor= from meta.next_cursor to load older messages. */
     public function index(Request $request, Conversation $conversation): AnonymousResourceCollection
     {
-        $this->access->ensureCanAccess($this->membership(), $conversation->phoneNumber()->firstOrFail());
+        $this->access->ensureCanSeeChat($this->membership(), $conversation);
         $perPage = (int) ($request->validate(['per_page' => ['nullable', 'integer', 'min:1', 'max:100']])['per_page'] ?? 50);
 
         return MessageResource::collection(
@@ -43,7 +45,7 @@ final class MessageController extends Controller
     /** Reply in a thread. Honours the Idempotency-Key header (safe client retries). */
     public function store(Request $request, Conversation $conversation, SendMessage $send): JsonResponse
     {
-        $this->access->ensureCanAccess($this->membership(), $conversation->phoneNumber()->firstOrFail());
+        $this->access->ensureCanSeeChat($this->membership(), $conversation);
 
         $message = $send->toConversation($conversation, $this->payload($request), MessageOrigin::Agent, $this->membership(), $this->idempotencyKey($request));
 
@@ -76,7 +78,20 @@ final class MessageController extends Controller
             }
         }
 
-        $message = $send->toContact($number, $contact, $this->payload($request), MessageOrigin::Agent, $this->membership(), $this->idempotencyKey($request));
+        // Agents only work on their own chats: not on a chat that belongs to a teammate, and a chat
+        // they start is theirs (so it stays in their list).
+        $me = $this->membership();
+        $agent = ! $this->access->seesAllChats($me);
+        $existing = Conversation::query()->where('contact_id', $contact->id)->where('phone_number_id', $number->id)->first();
+        if ($agent && $existing !== null && $existing->assigned_membership_id !== null && $existing->assigned_membership_id !== $me->id) {
+            throw new WhatsappException('This chat is assigned to another teammate.', ErrorCode::NumberAccessDenied, 403);
+        }
+
+        $message = $send->toContact($number, $contact, $this->payload($request), MessageOrigin::Agent, $me, $this->idempotencyKey($request));
+        if ($agent) {
+            $mine = Conversation::query()->whereKey($message->conversation_id)->whereNull('assigned_membership_id')->first();
+            $mine?->forceFill(['assigned_membership_id' => $me->id])->save(); // broadcasts the assignment
+        }
 
         return MessageResource::make($message->load('media'))->response()->setStatusCode(202);
     }

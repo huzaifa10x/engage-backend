@@ -53,29 +53,35 @@ final class LeadController extends Controller
         return LeadResource::collection($rows)->additional(['meta' => ['counts' => $counts, 'sees_all' => $this->leads->seesAll()]]);
     }
 
-    /** KPI row: WhatsApp leads in 30 days and how many of them have a confirmed source. */
+    /**
+     * KPI row, counted exactly like the list: ad leads with a paid touch in the last 30 days (the
+     * "All leads" tab with the default period shows the same number). New customers: their first
+     * message came from the ad; returning: they were already customers (or wrote before) and came
+     * back through an ad.
+     */
     public function summary(): JsonResponse
     {
         $this->ensureFull();
         $tenant = $this->context->tenant();
         $startedAt = GrowthSettings::for($tenant)->startedAt;
         $since = now()->subDays(30);
+        $paid = "'".implode("','", Acquisition::PAID_SOURCES)."'";
+        // The touch counted for a lead: its latest paid touch.
+        $touch = 'coalesce(acquisition_latest, acquisition_original)';
 
-        // New enquiries after tracking began, counted once per contact.
-        $count = function (?callable $extra = null) use ($since, $startedAt): int {
-            return $this->leads->visible()->whereHas('contact', function ($c) use ($since, $startedAt, $extra) {
-                LeadQuery::tracked($c, $startedAt)->where('contacts.created_at', '>=', $since);
-                if ($extra !== null) {
-                    $extra($c);
-                }
-            })->distinct()->count('contact_id');
+        $count = function (?callable $extra = null): int {
+            $q = $this->leads->filtered(['days' => 30], withTab: false);
+            if ($extra !== null) {
+                $q->whereHas('contact', $extra);
+            }
+
+            return $q->count();
         };
 
         $leads = $count();
-        $confirmed = $count(fn ($c) => $c->whereNotNull('acquisition_original'));
-        $meta = $count(fn ($c) => $c->whereRaw("acquisition_original->>'source' = 'meta_ad'"));
-        $posts = $count(fn ($c) => $c->whereRaw("acquisition_original->>'source' = 'meta_ad'")->whereRaw("acquisition_original->>'source_type' = 'post'"));
-        $instagram = $count(fn ($c) => $c->whereRaw("acquisition_original->>'source' = 'meta_ad'")->whereRaw("acquisition_original->>'platform' = 'instagram'"));
+        $new = $count(fn ($c) => LeadQuery::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' IN ({$paid})"));
+        $posts = $count(fn ($c) => $c->whereRaw("{$touch}->>'source_type' = 'post'"));
+        $instagram = $count(fn ($c) => $c->whereRaw("{$touch}->>'platform' = 'instagram'"));
         $webLost = $count(fn ($c) => $c->whereRaw("acquisition_original->>'type' = 'website_unregistered'"));
 
         $clicks = null;
@@ -89,9 +95,8 @@ final class LeadController extends Controller
 
         return response()->json(['data' => [
             'leads' => $leads,
-            'confirmed' => $confirmed,
-            'confirmed_rate' => $leads > 0 ? (int) round($confirmed / $leads * 100) : null,
-            'meta' => $meta,
+            'new_customers' => $new,
+            'returning' => $leads - $new,
             'meta_instagram' => $instagram,
             'meta_posts' => $posts, // of the Meta leads, those from boosted posts
             'website_lost' => $webLost,

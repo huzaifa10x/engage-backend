@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Messaging\Models;
 
 use App\Domain\Messaging\Enums\ConversationStatus;
+use App\Domain\Messaging\Events\ConversationAssigned;
 use App\Domain\Tenancy\Concerns\BelongsToTenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -37,6 +38,16 @@ use Illuminate\Support\Carbon;
 class Conversation extends Model
 {
     use BelongsToTenant, HasUuids;
+
+    /** Assignment changes are pushed to the people whose chat list changes (ConversationAssigned). */
+    protected static function booted(): void
+    {
+        static::updated(function (self $c): void {
+            if ($c->wasChanged('assigned_membership_id')) {
+                ConversationAssigned::dispatch((string) $c->tenant_id, (string) $c->id, (string) $c->phone_number_id, $c->getOriginal('assigned_membership_id'), $c->assigned_membership_id);
+            }
+        });
+    }
 
     protected $attributes = [
         'status' => 'open',

@@ -46,7 +46,7 @@ final class ConversationController extends Controller
         $membership = $this->membership();
 
         $query = Conversation::query()->with(['contact.stage', 'phoneNumber'])->whereNotNull('last_message_at');
-        $this->access->scope($query, $membership, 'phone_number_id');
+        $this->access->scopeChats($query, $membership); // agents: only the chats assigned to them
 
         $query
             ->when($data['phone_number_id'] ?? null, fn ($q, $id) => $q->where('phone_number_id', $id))
@@ -221,6 +221,6 @@ final class ConversationController extends Controller
 
     private function authorizeThread(Conversation $conversation): void
     {
-        $this->access->ensureCanAccess($this->membership(), $conversation->phoneNumber()->firstOrFail());
+        $this->access->ensureCanSeeChat($this->membership(), $conversation);
     }
 }

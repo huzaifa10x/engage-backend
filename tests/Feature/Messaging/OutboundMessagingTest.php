@@ -257,6 +257,9 @@ final class OutboundMessagingTest extends TestCase
         $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'x'])->assertForbidden();
 
         $this->actingAsMember($this->owner)->putJson("/api/v1/team/members/{$agent->id}/numbers", ['phone_number_ids' => [$this->number->id]])->assertOk();
+        // The number alone is not enough: agents see the chats assigned to them.
+        $this->actingAsMember($agent)->getJson('/api/v1/conversations')->assertOk()->assertJsonCount(0, 'data');
+        $this->actingAsMember($this->owner)->patchJson("/api/v1/conversations/{$conversation->id}", ['assigned_membership_id' => $agent->id])->assertOk();
 
         $this->actingAsMember($agent)->getJson('/api/v1/conversations')->assertOk()->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.window.open', true)->assertJsonPath('data.0.contact.display_name', 'Sara Ahmed');

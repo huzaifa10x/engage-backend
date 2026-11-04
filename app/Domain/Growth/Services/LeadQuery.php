@@ -65,6 +65,18 @@ final class LeadQuery
     }
 
     /**
+     * Growth Hub › Leads lists paid-advertising leads only (a Click-to-WhatsApp ad or boosted post
+     * brought them: first message or a later touch). Ordinary chats stay in Chat and Contacts.
+     *
+     * @param  Builder<Contact>  $c
+     */
+    public static function paidLead(Builder $c): void
+    {
+        $paid = "'".implode("','", Acquisition::PAID_SOURCES)."'";
+        $c->where(fn ($w) => $w->whereRaw("acquisition_original->>'source' IN ({$paid})")->orWhereRaw("acquisition_latest->>'source' IN ({$paid})"));
+    }
+
+    /**
      * @param  array<string, mixed>  $f
      * @return Builder<Conversation>
      */
@@ -75,7 +87,11 @@ final class LeadQuery
         $query = $this->visible();
 
         $query
-            ->when(empty($f['from']), fn ($q) => $q->where('last_message_at', '>=', now()->subDays((int) ($f['days'] ?? 30))))
+            // Leads with a paid touch in the period (the Marketing drill-down uses its own cohort instead).
+            ->when(empty($f['from']), fn ($q) => $q->whereHas('contact', function ($c) use ($f) {
+                self::paidLead($c);
+                $c->whereRaw("coalesce((acquisition_latest->>'occurred_at')::timestamptz, (acquisition_original->>'occurred_at')::timestamptz) >= ?", [now()->subDays((int) ($f['days'] ?? 30))]);
+            }))
             ->when($f['phone_number_id'] ?? null, fn ($q, string $id) => $q->where('phone_number_id', $id))
             ->when($f['assigned'] ?? null, fn ($q, string $a) => match ($a) {
                 'unassigned' => $q->whereNull('assigned_membership_id'),

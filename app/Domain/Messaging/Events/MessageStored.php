@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Events;
 
+use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
@@ -22,12 +23,26 @@ final class MessageStored implements ShouldBroadcast, ShouldDispatchAfterCommit
 
     public string $queue = 'notifications';
 
-    public function __construct(public readonly Message $message, public readonly bool $created) {}
+    /** The chat's assignee when the event was raised (in the workspace's context). */
+    public readonly ?string $assignee;
+
+    public function __construct(public readonly Message $message, public readonly bool $created)
+    {
+        $assignee = Conversation::query()->whereKey($message->conversation_id)->value('assigned_membership_id');
+        $this->assignee = is_string($assignee) ? $assignee : null;
+    }
 
     /** @return list<PrivateChannel> */
     public function broadcastOn(): array
     {
-        return [new PrivateChannel("tenant.{$this->message->tenant_id}.number.{$this->message->phone_number_id}")];
+        // The number's channel is for people who see every chat on it (Owners, Admins); the assignee
+        // gets the event on their own channel. Agents never receive other people's chats.
+        $channels = [new PrivateChannel("tenant.{$this->message->tenant_id}.number.{$this->message->phone_number_id}")];
+        if ($this->assignee !== null) {
+            $channels[] = new PrivateChannel("tenant.{$this->message->tenant_id}.member.{$this->assignee}");
+        }
+
+        return $channels;
     }
 
     public function broadcastAs(): string

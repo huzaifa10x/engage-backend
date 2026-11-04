@@ -6,6 +6,7 @@ namespace App\Application\WhatsApp;
 
 use App\Domain\Access\Permission;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Exceptions\WhatsappException;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -35,6 +36,49 @@ final class NumberAccess
 
         return in_array('*', (array) $role?->getAttribute('permissions'), true)
             || in_array(Permission::ChannelsManage->value, (array) $role?->getAttribute('permissions'), true);
+    }
+
+    /**
+     * Chat visibility. Owners and Admins (anyone who may assign chats) see every chat on their
+     * numbers; everyone else only the chats assigned to them. Assigning a chat never hides it from
+     * an Owner or Admin. Enforced in every inbox query, not only in the screen.
+     */
+    public function seesAllChats(TenantMembership $membership): bool
+    {
+        return $membership->loadMissing('role')->role?->grants(Permission::InboxAssign) ?? false;
+    }
+
+    /**
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $query  a conversations query
+     * @return Builder<TModel>
+     */
+    public function scopeChats(Builder $query, TenantMembership $membership, string $numberColumn = 'phone_number_id', string $assigneeColumn = 'assigned_membership_id'): Builder
+    {
+        $this->scope($query, $membership->loadMissing('role'), $numberColumn);
+
+        return $this->seesAllChats($membership) ? $query : $query->where($assigneeColumn, $membership->id);
+    }
+
+    /** The member may open this chat: its number, and (for agents) assigned to them. */
+    public function ensureCanSeeChat(TenantMembership $membership, Conversation $conversation): void
+    {
+        $this->ensureCanAccess($membership->loadMissing('role'), $conversation->phoneNumber()->firstOrFail());
+        if (! $this->seesAllChats($membership) && $conversation->assigned_membership_id !== $membership->id) {
+            throw new WhatsappException('This chat is assigned to another teammate.', ErrorCode::NumberAccessDenied, 403);
+        }
+    }
+
+    public function canSeeChat(TenantMembership $membership, Conversation $conversation): bool
+    {
+        try {
+            $this->ensureCanSeeChat($membership, $conversation);
+
+            return true;
+        } catch (WhatsappException) {
+            return false;
+        }
     }
 
     /** @return list<string>|null internal phone_numbers.id values; null = all numbers */

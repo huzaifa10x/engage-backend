@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Messaging;
 
 use App\Application\WhatsApp\NumberAccess;
+use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\MediaStorage;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\TenantContext;
-use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -77,7 +77,7 @@ final class MediaController extends Controller
 
         $message = Message::query()->where('media_id', $media->id)->first();
         if ($message !== null) {
-            $access->ensureCanAccess($context->membership()?->loadMissing('role') ?? abort(403), PhoneNumber::query()->findOrFail($message->phone_number_id));
+            $access->ensureCanSeeChat($context->membership()?->loadMissing('role') ?? abort(403), Conversation::query()->findOrFail($message->conversation_id));
         }
 
         // Customers can send any file. Only types a browser shows without running anything are opened

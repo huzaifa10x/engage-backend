@@ -39,7 +39,11 @@ final class Acquisition
      * campaign, landing page — never codes, click IDs or costs). $details: the evidence-backed fields
      * (growth.view only).
      *
-     * @return array<string, mixed>|null null when Growth Hub is off for the workspace
+     * Lead tracking is for paid advertising: a contact gets a source only when a paid source brought
+     * it (its first message, or a later touch). Ordinary chats and contacts show no lead source at all —
+     * no "Before tracking" or "Unattributed" chip in Contacts or Chat.
+     *
+     * @return array<string, mixed>|null null when Growth Hub is off, or the contact is not an ad lead
      */
     public static function present(Contact $contact, GrowthSettings $settings, bool $details, bool $summary = false): ?array
     {
@@ -49,6 +53,9 @@ final class Acquisition
 
         $original = self::touch($contact->getAttribute('acquisition_original'));
         $latest = self::touch($contact->getAttribute('acquisition_latest'));
+        if (! self::paid($original) && ! self::paid($latest)) {
+            return null;
+        }
         $before = self::beforeTracking($contact, $settings);
 
         $status = $before ? 'before' : ($original !== null ? (self::SOURCE_STATUS[$original['source']] ?? 'unattributed') : 'unattributed');
@@ -56,6 +63,8 @@ final class Acquisition
         $chip = $status === 'meta' ? (string) $original['label'] : self::LABELS[$status];
         if ($before && $latest !== null) {
             $chip = 'Before tracking · Latest: '.$latest['label'];
+        } elseif ($status === 'unattributed' && $latest !== null) {
+            $chip = 'Unattributed · Latest: '.$latest['label']; // first message had no ad, a later one did
         }
 
         $out = ['status' => $status, 'label' => $chip];
@@ -105,6 +114,15 @@ final class Acquisition
         }
 
         return ['name' => (string) $original['label'], 'campaign' => $campaign ?: null, 'landing_page' => $original['landing_path'] ?? null];
+    }
+
+    /** Sources that count as paid advertising (website paid campaigns join with website tracking). */
+    public const PAID_SOURCES = ['meta_ad', 'google_ads'];
+
+    /** @param array<string, mixed>|null $touch */
+    public static function paid(?array $touch): bool
+    {
+        return $touch !== null && in_array($touch['source'] ?? null, self::PAID_SOURCES, true);
     }
 
     /**

@@ -59,32 +59,45 @@ final class LeadsTest extends TestCase
         $this->tenantContext()->run($this->tenant, fn () => $this->conversationOf($waId)->forceFill(['assigned_membership_id' => $member->id])->save());
     }
 
-    public function test_owners_see_every_lead_with_its_source_and_filters(): void
+    public function test_leads_are_paid_ad_leads_only_and_the_kpis_match_the_list(): void
     {
         $this->actingAsMember($this->addMember($this->tenant, SystemRole::Owner));
 
+        // Khalid came from an ad; Mariam just wrote in: she is a contact and a chat, not a lead.
         $r = $this->getJson('/api/v1/growth/leads')->assertOk();
-        $this->assertCount(2, $r->json('data'));
-        $this->assertSame(['all' => 2, 'new' => 2, 'unattributed' => 1], $r->json('meta.counts'));
-
-        $meta = $this->getJson('/api/v1/growth/leads?source=meta')->assertOk()->json('data');
-        $this->assertCount(1, $meta);
-        $this->assertSame('Meta ad', $meta[0]['contact']['acquisition']['source']['name']);
-        $this->assertSame('Ad: "Free consultation this week"', $meta[0]['contact']['acquisition']['source']['campaign']);
-        $this->assertStringNotContainsString('ARAsecretclickid0001', (string) json_encode($meta));
-
+        $this->assertCount(1, $r->json('data'));
+        $this->assertSame('Khalid', $r->json('data.0.contact.display_name'));
+        $this->assertSame(['all' => 1, 'new' => 1, 'unattributed' => 0], $r->json('meta.counts'));
+        $this->assertSame('Meta ad', $r->json('data.0.contact.acquisition.source.name'));
+        $this->assertSame('Ad: "Free consultation this week"', $r->json('data.0.contact.acquisition.source.campaign'));
+        $this->assertStringNotContainsString('ARAsecretclickid0001', (string) $r->getContent());
         $this->assertCount(0, $this->getJson('/api/v1/growth/leads?source=meta_instagram')->assertOk()->json('data'), 'Instagram only with proof');
-        $this->assertCount(1, $this->getJson('/api/v1/growth/leads?tab=unattributed')->assertOk()->json('data'));
-        $this->assertCount(0, $this->getJson('/api/v1/growth/leads?source=before')->assertOk()->json('data'));
 
         $kpi = $this->getJson('/api/v1/growth/leads/summary')->assertOk()->json('data');
-        $this->assertSame(2, $kpi['leads']);
-        $this->assertSame(1, $kpi['confirmed']);
-        $this->assertSame(50, $kpi['confirmed_rate']);
-        $this->assertSame(1, $kpi['meta']);
+        $this->assertSame(1, $kpi['leads'], 'the same number as the All leads tab');
+        $this->assertSame(1, $kpi['new_customers']);
+        $this->assertSame(0, $kpi['returning']);
         $this->assertSame(['total' => 0, 'pending' => 0], $kpi['unmatched_clicks']);
-
         $this->getJson('/api/v1/growth/leads/unmatched-clicks')->assertOk()->assertJsonCount(0, 'data');
+
+        // Ordinary contacts carry no lead source anywhere (no "Unattributed" / "Before tracking" chip).
+        $mariam = collect($this->getJson('/api/v1/contacts')->assertOk()->json('data'))->firstWhere('display_name', 'Mariam');
+        $this->assertNull($mariam['acquisition']);
+        $chat = collect($this->getJson('/api/v1/conversations')->assertOk()->json('data'))->first(fn ($c) => $c['contact']['display_name'] === 'Mariam');
+        $this->assertNull($chat['contact']['acquisition']);
+    }
+
+    public function test_a_customer_who_comes_back_through_an_ad_is_a_returning_lead(): void
+    {
+        // Mariam (no ad at first) later taps an ad.
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.L3', 'timestamp' => (string) now()->addMinute()->timestamp, 'referral' => ['source_id' => '120208000000000009', 'source_type' => 'ad']], '971500000002', 'AE.2', 'Mariam')))->assertOk();
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Owner));
+
+        $this->assertCount(2, $this->getJson('/api/v1/growth/leads')->assertOk()->json('data'));
+        $kpi = $this->getJson('/api/v1/growth/leads/summary')->json('data');
+        $this->assertSame([2, 1, 1], [$kpi['leads'], $kpi['new_customers'], $kpi['returning']]);
+        $mariam = collect($this->getJson('/api/v1/contacts')->json('data'))->firstWhere('display_name', 'Mariam');
+        $this->assertSame('Unattributed · Latest: Meta ad', $mariam['acquisition']['label']);
     }
 
     public function test_agents_see_only_their_own_leads_and_no_clicks_or_export(): void

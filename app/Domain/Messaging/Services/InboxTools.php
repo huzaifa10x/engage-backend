@@ -7,6 +7,7 @@ namespace App\Domain\Messaging\Services;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\Permission;
 use App\Domain\Messaging\Enums\ConversationStatus;
+use App\Domain\Messaging\Events\ConversationAssigned;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\MemberNotification;
 use App\Domain\Plans\Entitlements\EntitlementService;
@@ -95,6 +96,7 @@ final class InboxTools
 
             $claimed = Conversation::query()->whereKey($conversation->id)->whereNull('assigned_membership_id')->update(['assigned_membership_id' => $pick->id]);
             if ($claimed === 1) {
+                ConversationAssigned::dispatch((string) $conversation->tenant_id, (string) $conversation->id, (string) $conversation->phone_number_id, null, $pick->id);
                 $this->notify($pick, 'assigned', 'A new conversation was assigned to you', $conversation->contact?->displayName(), "/inbox?c={$conversation->id}", email: true);
             }
         } catch (Throwable $e) {
