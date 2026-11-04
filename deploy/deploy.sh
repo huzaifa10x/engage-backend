@@ -228,8 +228,27 @@ refresh_proxy() {
 
 update() {
     log "Updating $1 from origin/$branch"
-    if ! git -C "$1" fetch --quiet origin "$branch"; then
-        fail_early "Branch \"$branch\" does not exist on GitHub for $(basename "$1"). Create it first (docs/environments.md)."
+    # GitHub sometimes refuses a valid deploy key or fails for a few minutes: try up to 5 times,
+    # 15 s apart, and report what actually went wrong (not "branch does not exist" for everything).
+    local attempt err=""
+    for attempt in 1 2 3 4 5; do
+        if err="$(git -C "$1" fetch --quiet origin "$branch" 2>&1)"; then
+            err=""
+            break
+        fi
+        if grep -qiE "couldn't find remote ref|not our ref" <<<"$err"; then
+            fail_early "Branch \"$branch\" does not exist on GitHub for $(basename "$1"). Create it first (docs/environments.md)."
+            return 1
+        fi
+        [[ $attempt -lt 5 ]] && printf '  ! GitHub did not accept the fetch for %s, trying again in 15 s (%s/5)\n' "$(basename "$1")" "$attempt" >&2 && sleep 15
+    done
+    if [[ -n "$err" ]]; then
+        printf '%s\n' "$err" >&2
+        if grep -qi "permission denied (publickey)" <<<"$err"; then
+            fail_early "GitHub refused this server's deploy key for $(basename "$1") 5 times. If the key is listed under the repo's Settings → Deploy keys, GitHub is having trouble (https://www.githubstatus.com): try again later."
+        else
+            fail_early "Could not fetch $(basename "$1") from GitHub (tried 5 times). See the message above."
+        fi
         return 1
     fi
     git -C "$1" checkout --quiet -B "$branch" "origin/$branch"

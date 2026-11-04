@@ -57,11 +57,22 @@ remote() { # remote ENV COMMAND… → runs COMMAND on that environment's server
     ssh -o BatchMode=yes -o ConnectTimeout=15 "$host" "$@"
 }
 
+# retry CMD…: GitHub sometimes refuses a valid key or answers "Internal Server Error" for a few
+# minutes. Try up to 5 times, 15 s apart, before giving up.
+retry() {
+    local n
+    for n in 1 2 3 4 5; do
+        "$@" && return 0
+        [[ $n -lt 5 ]] && printf '  \033[33m!\033[0m GitHub did not answer properly, trying again in 15 s (%s/5)\n' "$n" >&2 && sleep 15
+    done
+    return 1
+}
+
 fetch_all() {
     local entry name dir
     for entry in "${repos[@]}"; do
         name="${entry%%:*}" dir="${entry#*:}"
-        git -C "$dir" fetch --quiet --prune --tags origin || die "Could not reach GitHub for $name."
+        retry git -C "$dir" fetch --quiet --prune --tags origin || die "Could not reach GitHub for $name (tried 5 times). Check https://www.githubstatus.com and try again later."
     done
 }
 
@@ -136,7 +147,7 @@ deploy() {
         for entry in "${repos[@]}"; do
             name="${entry%%:*}" dir="${entry#*:}"
             git -C "$dir" tag -a "$tag" origin/main -m "Production release $tag by $actor" 2>/dev/null \
-                && git -C "$dir" push --quiet origin "$tag" && ok "$name tagged $tag" || true
+                && retry git -C "$dir" push --quiet origin "$tag" && ok "$name tagged $tag" || true
         done
     fi
     say "✅ $env deployed and healthy"
@@ -161,10 +172,17 @@ promote() {
         git -C "$dir" log --oneline --no-decorate --max-count=40 origin/main..origin/staging | sed 's/^/      /'
     done
     confirm promote "main will be moved to what is on staging now (nothing is deployed yet)."
+    local failed=()
     for entry in "${repos[@]}"; do
         name="${entry%%:*}" dir="${entry#*:}"
-        git -C "$dir" push --quiet origin origin/staging:refs/heads/main && ok "$name: main = staging ($(git -C "$dir" rev-parse --short origin/staging))"
+        if retry git -C "$dir" push --quiet origin origin/staging:refs/heads/main; then
+            ok "$name: main = staging ($(git -C "$dir" rev-parse --short origin/staging))"
+        else
+            failed+=("$name")
+        fi
     done
+    # Never say "deploy next" when main did not move: production would get nothing, or only part.
+    [[ ${#failed[@]} -eq 0 ]] || die "main was NOT moved for: ${failed[*]} (GitHub refused the push). Run npm run release:promote again; do not deploy production yet."
     echo
     echo "Next: npm run deploy:production"
 }
@@ -183,7 +201,7 @@ sync() {
         tmp="$(mktemp -d)"
         git -C "$dir" worktree add --quiet --detach "$tmp" origin/staging
         if git -C "$tmp" merge --no-edit --quiet -m "Merge main into staging (hotfix sync)" origin/main; then
-            git -C "$tmp" push --quiet origin HEAD:refs/heads/staging && ok "$name: main merged into staging"
+            retry git -C "$tmp" push --quiet origin HEAD:refs/heads/staging && ok "$name: main merged into staging"
         else
             git -C "$tmp" merge --abort || true
             git -C "$dir" worktree remove --force "$tmp"
