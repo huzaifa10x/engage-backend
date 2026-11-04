@@ -6,6 +6,7 @@ namespace App\Domain\Growth\Jobs;
 
 use App\Domain\Growth\GrowthAccess;
 use App\Domain\Growth\Services\EvidenceRecorder;
+use App\Domain\Growth\Website\WebsiteMatcher;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\TenantContext;
 use App\Support\Queue\QueueName;
@@ -39,7 +40,7 @@ final class RecordMessageEvidence implements ShouldQueue
         return [10, 60];
     }
 
-    public function handle(TenantContext $context, EvidenceRecorder $recorder): void
+    public function handle(TenantContext $context, EvidenceRecorder $recorder, WebsiteMatcher $website): void
     {
         $tenant = $context->tenantOrNull();
         $message = Message::query()->find($this->messageId);
@@ -47,7 +48,14 @@ final class RecordMessageEvidence implements ShouldQueue
             return;
         }
 
-        if ($recorder->recordMetaReferral($message, $tenant) !== null && GrowthAccess::full($tenant)) {
+        // Meta first: when a message carries both an ad referral and a website code, Meta is its origin.
+        $changed = $recorder->recordMetaReferral($message, $tenant) !== null;
+        // Website codes: tracked websites are part of Growth Hub (not the Starter chip).
+        if (GrowthAccess::full($tenant)) {
+            $changed = $website->redeem($message, $tenant) === 'matched' || $changed;
+        }
+
+        if ($changed && GrowthAccess::full($tenant)) {
             RefreshMarketingAnalytics::dispatch($tenant->id, 2); // the lead's source changes its bucket
         }
     }

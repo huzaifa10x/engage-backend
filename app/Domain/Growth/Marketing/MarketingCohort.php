@@ -30,6 +30,7 @@ final class MarketingCohort
         'meta_facebook' => 'Meta ad · Facebook',
         'meta_unsplit' => 'Meta ad (platform not split)',
         'google_ads' => 'Google Ads',
+        'google_organic' => 'Google organic',
         'organic' => 'Organic',
         'direct' => 'Direct',
         'other_campaign' => 'Other campaign',
@@ -38,7 +39,7 @@ final class MarketingCohort
     ];
 
     /** Buckets with confirmed evidence (reference matched, Meta ad, multiple sources). */
-    public const CONFIRMED = ['meta_instagram', 'meta_facebook', 'meta_unsplit', 'google_ads', 'organic', 'direct', 'other_campaign'];
+    public const CONFIRMED = ['meta_instagram', 'meta_facebook', 'meta_unsplit', 'google_ads', 'google_organic', 'organic', 'direct', 'other_campaign'];
 
     /**
      * @param  array{contacted: list<string>, qualified: list<string>}  $mapping
@@ -67,7 +68,7 @@ final class MarketingCohort
                            WHEN c.acquisition_original->>'source' = 'meta_ad' THEN
                                CASE c.acquisition_original->>'platform' WHEN 'instagram' THEN 'meta_instagram' WHEN 'facebook' THEN 'meta_facebook' ELSE 'meta_unsplit' END
                            WHEN c.acquisition_original->>'type' = 'website_unregistered' THEN 'website_unavailable'
-                           WHEN c.acquisition_original->>'source' IN ('google_ads', 'organic', 'direct') THEN c.acquisition_original->>'source'
+                           WHEN c.acquisition_original->>'source' IN ('google_ads', 'google_organic', 'organic', 'direct') THEN c.acquisition_original->>'source'
                            WHEN c.acquisition_original->>'source' IS NOT NULL THEN 'other_campaign'
                            ELSE 'unattributed'
                        END AS bucket,

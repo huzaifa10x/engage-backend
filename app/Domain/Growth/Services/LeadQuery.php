@@ -30,7 +30,7 @@ final class LeadQuery
     /** Filters for the list, counts and export. */
     public const RULES = [
         'q' => ['nullable', 'string', 'max:100'],
-        'source' => ['nullable', 'in:meta,meta_paid,meta_post,meta_instagram,meta_facebook,google_ads,organic,direct,unknown,before'],
+        'source' => ['nullable', 'in:meta,meta_paid,meta_post,meta_instagram,meta_facebook,google_ads,paid_other,website,organic,direct,unknown,before'],
         'status' => ['nullable', 'in:ref,meta,multi,web,unattributed,before'],
         'phone_number_id' => ['nullable', 'uuid'],
         'assigned' => ['nullable', 'string', 'max:36'], // a membership id, "me" or "unassigned"
@@ -182,9 +182,11 @@ final class LeadQuery
     {
         match ($status) {
             'before' => $startedAt === null ? $c->whereRaw('false') : $c->where('contacts.created_at', '<', $startedAt),
-            'meta' => self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' = 'meta_ad'"),
-            'unattributed' => self::tracked($c, $startedAt)->where(fn ($w) => $w->whereNull('acquisition_original')->orWhereRaw("coalesce(acquisition_original->>'source', '') <> 'meta_ad'")),
-            // Reference matched, Multiple sources and Website · details unavailable come with website tracking.
+            'meta' => self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' = 'meta_ad' AND coalesce(acquisition_original->>'type', 'meta_ctwa') = 'meta_ctwa' AND coalesce((acquisition_original->>'conflict')::boolean, false) = false"),
+            'multi' => self::tracked($c, $startedAt)->whereRaw("coalesce((acquisition_original->>'conflict')::boolean, false) = true"),
+            'ref' => self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'type' = 'website_reference'"),
+            'web' => self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'type' = 'website_unregistered'"),
+            'unattributed' => self::tracked($c, $startedAt)->whereNull('acquisition_original'),
             default => $c->whereRaw('false'),
         };
     }
@@ -192,8 +194,20 @@ final class LeadQuery
     /** @param Builder<Contact> $c */
     public static function source(Builder $c, string $source, ?Carbon $startedAt): void
     {
-        if (in_array($source, ['before', 'unknown', 'meta', 'meta_paid', 'meta_post', 'meta_instagram', 'meta_facebook'], true)) {
-            self::status($c, ['before' => 'before', 'unknown' => 'unattributed'][$source] ?? 'meta', $startedAt);
+        if ($source === 'before' || $source === 'unknown') {
+            self::status($c, $source === 'before' ? 'before' : 'unattributed', $startedAt);
+
+            return;
+        }
+        if ($source === 'website') {
+            // Any lead whose first message came from a tracked website tap.
+            self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'type' IN ('website_reference', 'website_unregistered')");
+
+            return;
+        }
+        if (in_array($source, ['meta', 'meta_paid', 'meta_post', 'meta_instagram', 'meta_facebook'], true)) {
+            // Meta: a Click-to-WhatsApp ad, or a website tap from a Meta ad (utm_source=ig / fb).
+            self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' = 'meta_ad'");
             // Paid ads vs boosted posts (referral source_type; older touches without it count as ads).
             if ($source === 'meta_paid' || $source === 'meta_post') {
                 $c->whereRaw("coalesce(acquisition_original->>'source_type', 'ad') ".($source === 'meta_post' ? '=' : '<>')." 'post'");
@@ -206,7 +220,7 @@ final class LeadQuery
             return;
         }
 
-        // Google Ads, Organic, Direct: website sources (arrive with website tracking).
+        // Google Ads, other paid campaigns, Organic, Direct: website sources.
         self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' = ?", [$source]);
     }
 

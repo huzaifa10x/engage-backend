@@ -33,6 +33,25 @@ services:
       retries: 10
       start_period: 30s
 
+  # Growth Hub tracker collector (e.10xengage.com/v1/c, /v1/config, /sdk/v1/e.min.js): isolated from
+  # the webhook and inbox containers, low priority (Technical Specification v1.2 §3: 0.5 CPU, 1 GB,
+  # 128 processes, a small database pool, strict timeouts).
+  collector:
+    <<: *backend
+    command: ["sh", "-c", "php artisan optimize && exec frankenphp run --config /app/deploy/collector.Caddyfile"]
+    environment:
+      PGOPTIONS: "-c statement_timeout=3000 -c lock_timeout=2000"
+    cpus: 0.5
+    mem_limit: 1g
+    pids_limit: 128
+    cpu_shares: 256
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   horizon:
     <<: *backend
     command: ["sh", "-c", "php artisan optimize && exec php artisan horizon"]
@@ -94,6 +113,8 @@ services:
       EXTRA_DOMAINS: ${EXTRA_DOMAINS:-}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
+      # Growth Hub tracker host (e.10xengage.com). Until set, a name nobody can reach.
+      COLLECTOR_DOMAIN: ${COLLECTOR_DOMAIN:-http://collector.internal}
       # Staging hostnames, comma separated (st-app…, st-engage-admin…, st-engage…). Their HTTPS
       # certificates live here; the requests go on to the staging stack's gateway.
       STAGING_DOMAINS: ${STAGING_DOMAINS:-http://staging.internal}

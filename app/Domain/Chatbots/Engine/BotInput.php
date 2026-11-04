@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Domain\Chatbots\Engine;
 
+use App\Domain\Growth\GrowthSettings;
+use App\Domain\Growth\Website\Reference;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Tenancy\TenantContext;
 
 /** What the customer sent, reduced to what the engine routes on. */
 final class BotInput
@@ -31,7 +34,23 @@ final class BotInput
         $reply = $content['button_reply'] ?? $content['list_reply'] ?? null;
         $payload = is_array($reply) && isset($reply['id']) ? (string) $reply['id'] : (isset($content['payload']) ? (string) $content['payload'] : null);
 
-        return new self($message->body, $payload, isset($content['referral']), $message->type, $content, $message->id, $message->media_id);
+        return new self(self::textFor($message), $payload, isset($content['referral']), $message->type, $content, $message->id, $message->media_id);
+    }
+
+    /**
+     * Growth Hub BE-05 (growth_strip_reference_before_flows, per workspace, off by default): when on,
+     * keyword triggers, the welcome flow and Request opt-in read the message without its website code
+     * ("Hi … (Ref: XG-…)" → "Hi …"); a message that was only the code reads as empty, which starts the
+     * welcome flow. Off: exactly the message as received. The stored message never changes.
+     */
+    public static function textFor(Message $message): ?string
+    {
+        $tenant = app(TenantContext::class)->tenantOrNull();
+        if ($tenant === null || $message->body === null || ! GrowthSettings::for($tenant)->stripReferenceBeforeFlows) {
+            return $message->body;
+        }
+
+        return Reference::clean($message->body);
     }
 
     /** Lower-case, trimmed, without punctuation at the ends: "  Menu! " → "menu". */

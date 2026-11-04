@@ -10,6 +10,7 @@ use App\Domain\Growth\GrowthAccess;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Services\Acquisition;
 use App\Domain\Growth\Services\LeadQuery;
+use App\Domain\Growth\Website\WebsiteSource;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\TenantContext;
@@ -82,7 +83,13 @@ final class LeadController extends Controller
         $new = $count(fn ($c) => LeadQuery::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' IN ({$paid})"));
         $posts = $count(fn ($c) => $c->whereRaw("{$touch}->>'source_type' = 'post'"));
         $instagram = $count(fn ($c) => $c->whereRaw("{$touch}->>'platform' = 'instagram'"));
-        $webLost = $count(fn ($c) => $c->whereRaw("acquisition_original->>'type' = 'website_unregistered'"));
+        // Website taps whose details were lost (valid code, tap never registered): not leads (no
+        // campaign is known), counted for the website card only.
+        $webLost = DB::table('contacts')->where('tenant_id', $tenant->id)->whereNull('deleted_at')
+            ->whereRaw("acquisition_original->>'type' = 'website_unregistered'")
+            ->whereRaw("(acquisition_original->>'occurred_at')::timestamptz >= ?", [$since])->count();
+        // Website cards show only once the workspace tracks a website.
+        $websites = DB::table('growth_sites')->where('tenant_id', $tenant->id)->count();
 
         $clicks = null;
         if ($this->leads->seesAll()) {
@@ -99,8 +106,9 @@ final class LeadController extends Controller
             'returning' => $leads - $new,
             'meta_instagram' => $instagram,
             'meta_posts' => $posts, // of the Meta leads, those from boosted posts
-            'website_lost' => $webLost,
-            'unmatched_clicks' => $clicks,
+            'website_lost' => $websites > 0 ? $webLost : null,
+            'unmatched_clicks' => $websites > 0 ? $clicks : null,
+            'websites' => $websites,
             'sees_all' => $this->leads->seesAll(),
         ]]);
     }
@@ -119,9 +127,10 @@ final class LeadController extends Controller
             ->whereIn('status', ['registered', 'expired'])
             ->where('received_at', '>=', now()->subDays(30))
             ->orderByDesc('received_at')->limit(200)
-            ->get(['id', 'received_at', 'page_path', 'campaign_json', 'status']);
+            ->get(['id', 'site_id', 'received_at', 'page_path', 'campaign_json', 'referrer_host', 'status']);
+        $domains = DB::table('growth_sites')->where('tenant_id', $this->context->tenant()->id)->pluck('domain', 'id');
 
-        return response()->json(['data' => $rows->map(function (object $r) {
+        return response()->json(['data' => $rows->map(function (object $r) use ($domains) {
             $at = Carbon::parse((string) $r->received_at);
             $pending = $r->status === 'registered' && $at->gt(now()->subDay());
             $campaign = (array) json_decode((string) $r->campaign_json, true);
@@ -129,8 +138,10 @@ final class LeadController extends Controller
             return [
                 'id' => 'clk_'.substr((string) $r->id, 0, 6),
                 'received_at' => $at->toIso8601String(),
+                'site' => $domains[$r->site_id] ?? null,
                 'page' => $r->page_path,
-                'source' => self::clickSource($campaign),
+                'source' => WebsiteSource::classify($campaign, $r->referrer_host, $domains[$r->site_id] ?? null)['label'],
+                'campaign' => isset($campaign['utm_campaign']) ? (string) $campaign['utm_campaign'] : null,
                 'status' => $pending ? 'pending' : 'unattributed',
                 'note' => $pending ? 'Waiting up to 24 h for a message' : 'No message within 24 h',
             ];
@@ -181,20 +192,6 @@ final class LeadController extends Controller
             });
             fclose($out);
         }, $membership), 'leads-'.now()->format('Y-m-d').'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
-    }
-
-    /** @param array<string, mixed> $campaign */
-    private static function clickSource(array $campaign): string
-    {
-        $utm = trim(implode(' · ', array_filter([$campaign['utm_source'] ?? null, $campaign['utm_campaign'] ?? null], fn ($v) => is_string($v) && $v !== '')));
-        if ($utm !== '') {
-            return $utm;
-        }
-        if (! empty($campaign['gclid']) || ! empty($campaign['gbraid']) || ! empty($campaign['wbraid'])) {
-            return 'Google Ads';
-        }
-
-        return ! empty($campaign['fbclid']) ? 'Meta (fbclid)' : 'Direct';
     }
 
     private function ensureFull(): void

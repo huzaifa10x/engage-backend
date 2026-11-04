@@ -8,6 +8,7 @@ use App\Domain\Chatbots\Jobs\RunChatbot;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Jobs\RecordMessageEvidence;
+use App\Domain\Growth\Website\Reference;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Events\MessageStored;
@@ -38,14 +39,15 @@ final class MessageRecorder
     ) {}
 
     /**
-     * Growth Hub: where the message came from (a Meta ad referral) is worked out in the background,
+     * Growth Hub: where the message came from (a Meta ad referral, a website code) is worked out in the background,
      * after the chat and the chatbot have the message. Never allowed to affect the message itself.
      */
     private function queueAttribution(Message $message): void
     {
         try {
             $tenant = app(TenantContext::class)->tenantOrNull();
-            if ($tenant !== null && isset(((array) ($message->content ?? []))['referral']) && GrowthSettings::for($tenant)->enabled) {
+            $proof = isset(((array) ($message->content ?? []))['referral']) || Reference::extract($message->body) !== null; // a Meta ad referral or a website code
+            if ($tenant !== null && $proof && GrowthSettings::for($tenant)->enabled) {
                 RecordMessageEvidence::dispatch($message->id)->afterCommit();
             }
         } catch (\Throwable $e) {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Messaging\Services;
 
 use App\Application\Messaging\SendMessage;
+use App\Domain\Chatbots\Engine\BotInput;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
@@ -48,7 +49,7 @@ final class AutoReply
             return; // the team is at work: a person will answer
         }
         // "STOP" / "START" already get their own confirmation.
-        if (in_array($inbound->type, ['text', 'button', 'interactive'], true) && $this->consent->keywordIntent((string) $inbound->body) !== null) {
+        if (in_array($inbound->type, ['text', 'button', 'interactive'], true) && $this->consent->keywordIntent((string) BotInput::textFor($inbound)) !== null) {
             return;
         }
 

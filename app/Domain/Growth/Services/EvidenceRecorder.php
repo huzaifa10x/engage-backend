@@ -65,9 +65,16 @@ class EvidenceRecorder
                 return null; // same message already recorded
             }
 
+            // A website code on the same message: both kept, flagged; Meta is the message's origin.
+            $conflict = GrowthEvidence::query()->where('wa_message_id', $message->wamid)->where('evidence_type', GrowthEvidence::TYPE_WEBSITE)->update(['conflict' => true]) > 0;
+            if ($conflict) {
+                GrowthEvidence::query()->whereKey($id)->update(['conflict' => true]);
+            }
+
             /** @var GrowthEvidence $evidence */
             $evidence = GrowthEvidence::query()->findOrFail($id);
             $this->project($evidence, $tenant, [
+                'conflict' => $conflict,
                 'source' => 'meta_ad',
                 'label' => MetaReferral::label($proven['platform'] ?? null, $fields['source_type'] ?? null),
                 'platform' => $proven['platform'] ?? null,
@@ -82,8 +89,13 @@ class EvidenceRecorder
         });
     }
 
-    /** @param array<string, mixed> $touch */
-    private function project(GrowthEvidence $evidence, Tenant $tenant, array $touch): void
+    /**
+     * Projects one piece of evidence onto its CRM contact (original source once, latest touch, first
+     * tracked enquiry). Also used by the website matcher.
+     *
+     * @param  array<string, mixed>  $touch
+     */
+    public function project(GrowthEvidence $evidence, Tenant $tenant, array $touch): void
     {
         /** @var ?Contact $contact */
         $contact = Contact::query()->withTrashed()->lockForUpdate()->find($evidence->crm_contact_id);

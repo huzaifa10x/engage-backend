@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Domain\Access\Permission;
+use App\Domain\Growth\Website\Reference;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Tenancy\TenantContext;
 use App\Support\Meta\MetaErrorCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -16,6 +19,10 @@ final class MessageResource extends JsonResource
     public function toArray(Request $request): array
     {
         $media = $this->relationLoaded('media') ? $this->media : null;
+        // Growth Hub: a customer's message is shown without its website code ("… (Ref: XG-…)").
+        // Owners and Admins can show the raw text (audit); agents never see the code.
+        $clean = $this->direction === Message::INBOUND ? Reference::clean($this->body) : $this->body;
+        $hasCode = $clean !== $this->body;
 
         return [
             'id' => $this->id,
@@ -24,8 +31,9 @@ final class MessageResource extends JsonResource
             'origin' => $this->origin->value,
             'type' => $this->type,
             'status' => $this->status->value,
-            'body' => $this->body,
-            'content' => (object) ($this->content ?? []),
+            'body' => $clean,
+            'raw_body' => $hasCode && app(TenantContext::class)->can(Permission::GrowthManage) ? $this->body : null,
+            'content' => (object) ($hasCode ? ['body' => $clean] + (array) $this->content : ($this->content ?? [])),
             'template' => $this->template,
             'media' => $media === null ? null : [
                 'id' => $media->id,

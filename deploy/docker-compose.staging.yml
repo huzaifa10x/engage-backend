@@ -19,6 +19,7 @@ services:
       DOMAIN: ${DOMAIN}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN}
       SITE_DOMAIN: ${SITE_DOMAIN:-site.internal}
+      COLLECTOR_DOMAIN: ${COLLECTOR_DOMAIN:-collector.internal}
     volumes:
       - ./Caddyfile.staging:/etc/caddy/Caddyfile:ro
     networks:

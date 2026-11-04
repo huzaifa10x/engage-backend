@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Models;
 
+use App\Domain\Growth\Website\Reference;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Tenancy\Concerns\BelongsToTenant;
@@ -121,7 +122,12 @@ class Message extends Model
     /** Short text for conversation lists / notifications. */
     public function preview(): string
     {
-        $text = $this->body !== null && $this->body !== '' ? $this->body : match ($this->type) {
+        // Inbox previews never show a website code (Growth Hub): "Hi … (Ref: XG-…)" → "Hi …".
+        $body = $this->direction === self::INBOUND ? Reference::clean($this->body) : $this->body;
+        if ($body === '' && $this->body !== '') {
+            $body = 'Message from your website';
+        }
+        $text = $body !== null && $body !== '' ? $body : match ($this->type) {
             'image' => '📷 Photo',
             'video' => '🎬 Video',
             'audio' => '🎤 Audio',

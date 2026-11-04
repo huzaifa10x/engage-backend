@@ -13,8 +13,10 @@ use Illuminate\Support\Carbon;
  * people allowed to see evidence get the details. Status keys:
  *   before        Before tracking — the contact existed before Growth Hub started for the workspace
  *   meta          Meta ad — the first message came from a click-to-WhatsApp ad
+ *   ref           Reference matched — a website tap (registered click) matched to the first message
+ *   multi         Multiple sources — a Meta ad and a website code on the same message (Meta is the origin)
+ *   web           Website · details unavailable — a valid code whose tap never registered
  *   unattributed  no proof of source
- * (ref, multi and web arrive with website tracking.)
  */
 final class Acquisition
 {
@@ -27,7 +29,8 @@ final class Acquisition
         'unattributed' => 'Unattributed',
     ];
 
-    private const SOURCE_STATUS = ['meta_ad' => 'meta'];
+    /** Evidence type of the original touch → status. */
+    private const TYPE_STATUS = ['meta_ctwa' => 'meta', 'website_reference' => 'ref', 'website_unregistered' => 'web'];
 
     public static function beforeTracking(Contact $contact, GrowthSettings $settings): bool
     {
@@ -58,9 +61,14 @@ final class Acquisition
         }
         $before = self::beforeTracking($contact, $settings);
 
-        $status = $before ? 'before' : ($original !== null ? (self::SOURCE_STATUS[$original['source']] ?? 'unattributed') : 'unattributed');
-        // The chip names the platform-aware source ("Meta ad · Instagram") when there is one.
-        $chip = $status === 'meta' ? (string) $original['label'] : self::LABELS[$status];
+        $status = $before ? 'before' : ($original !== null ? self::statusOf($original) : 'unattributed');
+        // The chip names the platform-aware source ("Meta ad · Instagram", "Google Ads") when there is one.
+        $chip = match ($status) {
+            'meta' => (string) $original['label'],
+            'ref' => 'Reference matched · '.$original['label'],
+            'multi' => 'Multiple sources · '.$original['label'],
+            default => self::LABELS[$status],
+        };
         if ($before && $latest !== null) {
             $chip = 'Before tracking · Latest: '.$latest['label'];
         } elseif ($status === 'unattributed' && $latest !== null) {
@@ -116,8 +124,21 @@ final class Acquisition
         return ['name' => (string) $original['label'], 'campaign' => $campaign ?: null, 'landing_page' => $original['landing_path'] ?? null];
     }
 
-    /** Sources that count as paid advertising (website paid campaigns join with website tracking). */
-    public const PAID_SOURCES = ['meta_ad', 'google_ads'];
+    /**
+     * Sources that count as paid advertising: Meta ads (Click-to-WhatsApp, or a website tap from a
+     * Meta ad), Google Ads (gclid / gbraid / wbraid or a paid Google UTM) and other paid UTM campaigns.
+     * Organic, direct and referral website taps are recorded and counted in Analytics › Marketing,
+     * but they are not leads.
+     */
+    public const PAID_SOURCES = ['meta_ad', 'google_ads', 'paid_other'];
+
+    /** @param array<string, mixed> $touch */
+    public static function statusOf(array $touch): string
+    {
+        $status = self::TYPE_STATUS[$touch['type'] ?? ''] ?? (($touch['source'] ?? null) === 'meta_ad' ? 'meta' : 'unattributed');
+
+        return ! empty($touch['conflict']) && $status === 'meta' ? 'multi' : $status;
+    }
 
     /** @param array<string, mixed>|null $touch */
     public static function paid(?array $touch): bool
@@ -133,7 +154,9 @@ final class Acquisition
         if (! is_array($raw) || ! isset($raw['source'], $raw['label'])) {
             return null;
         }
-        unset($raw['ad_id']); // used to group leads by ad on the server; the ID itself is never sent
+        // ad_id groups leads by ad on the server; Google / Meta click IDs are kept for later conversion
+        // uploads. Neither is ever sent to the browser.
+        unset($raw['ad_id'], $raw['click_ids']);
 
         return $raw;
     }

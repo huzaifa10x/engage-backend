@@ -1,0 +1,25 @@
+# Growth Hub tracker collector (e.10xengage.com): the same Laravel image, in its own container with
+# its own CPU, memory and process limits (docker-compose.prod.yml › collector), so website traffic
+# can never slow WhatsApp webhooks or the inbox. At most 4 PHP threads = at most 4 database
+# connections (Technical Specification v1.2 §3: a dedicated pool of about 5).
+{
+	frankenphp {
+		num_threads 4
+		max_threads 4
+	}
+	auto_https off
+	admin off
+}
+
+:8000 {
+	root * /app/public
+	encode zstd br gzip
+	# Only the tracker endpoints exist here.
+	@tracker path /v1/c /v1/config /v1/v /sdk/v1/e.min.js /up
+	handle @tracker {
+		php_server
+	}
+	handle {
+		respond 404
+	}
+}

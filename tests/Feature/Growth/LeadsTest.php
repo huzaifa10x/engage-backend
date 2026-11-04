@@ -77,7 +77,10 @@ final class LeadsTest extends TestCase
         $this->assertSame(1, $kpi['leads'], 'the same number as the All leads tab');
         $this->assertSame(1, $kpi['new_customers']);
         $this->assertSame(0, $kpi['returning']);
-        $this->assertSame(['total' => 0, 'pending' => 0], $kpi['unmatched_clicks']);
+        // No website tracked yet: the website cards (details lost, unmatched clicks) are hidden.
+        $this->assertSame(0, $kpi['websites']);
+        $this->assertNull($kpi['unmatched_clicks']);
+        $this->assertNull($kpi['website_lost']);
         $this->getJson('/api/v1/growth/leads/unmatched-clicks')->assertOk()->assertJsonCount(0, 'data');
 
         // Ordinary contacts carry no lead source anywhere (no "Unattributed" / "Before tracking" chip).

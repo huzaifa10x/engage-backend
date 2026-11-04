@@ -11,6 +11,7 @@ use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Services\DataTriggers;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Developer\Services\EmitMessageWebhooks;
+use App\Domain\Growth\Models\GrowthSite;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Identity\Models\User;
 use App\Domain\Messaging\Events\MessageStored;
@@ -91,6 +92,7 @@ class AppServiceProvider extends ServiceProvider
             'message_template' => MessageTemplate::class,
             'campaign' => Campaign::class,
             'chatbot_flow' => ChatbotFlow::class,
+            'growth_site' => GrowthSite::class,
         ]);
 
         // Strict mode minus preventAccessingMissingAttributes: freshly created models only hold the

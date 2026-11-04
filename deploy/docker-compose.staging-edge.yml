@@ -14,7 +14,7 @@ services:
     environment:
       ACME_EMAIL: ${ACME_EMAIL}
       # Until the staging website has a domain, its entry listens on a name nobody can reach.
-      STAGING_DOMAINS: "${DOMAIN}, ${ADMIN_DOMAIN}, ${SITE_DOMAIN:-http://site.internal}"
+      STAGING_DOMAINS: "${DOMAIN}, ${ADMIN_DOMAIN}, ${SITE_DOMAIN:-http://site.internal}, ${COLLECTOR_DOMAIN:-http://collector.internal}"
     volumes:
       - ./Caddyfile.staging-edge:/etc/caddy/Caddyfile:ro
       - edge_data:/data

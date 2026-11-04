@@ -68,3 +68,18 @@ http://{$ADMIN_DOMAIN} {
 		reverse_proxy app:8000
 	}
 }
+
+# Growth Hub website tracker on staging (COLLECTOR_DOMAIN in the staging deploy/.env, e.g.
+# st-e.10xengage.com; add it to production's STAGING_DOMAINS so its certificate is issued there).
+http://{$COLLECTOR_DOMAIN} {
+	header -Server
+
+	@tracker path /v1/c /v1/config /v1/v /sdk/v1/e.min.js
+	handle @tracker {
+		reverse_proxy collector:8000
+	}
+
+	handle {
+		respond 404
+	}
+}

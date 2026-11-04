@@ -37,6 +37,12 @@ class GrowthEvidence extends Model
 
     public const TYPE_META_CTWA = 'meta_ctwa';
 
+    /** A website reference matched to a registered click. */
+    public const TYPE_WEBSITE = 'website_reference';
+
+    /** A valid website code whose click never registered (ad blocker, network): "Website · details unavailable". */
+    public const TYPE_WEBSITE_UNREGISTERED = 'website_unregistered';
+
     protected $table = 'growth_evidence';
 
     protected $fillable = ['tenant_id', 'crm_contact_id', 'conversation_id', 'phone_number_id', 'message_id', 'wa_message_id', 'click_id', 'evidence_type', 'confidence', 'source', 'provider_fields', 'conflict', 'occurred_at'];

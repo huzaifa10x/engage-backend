@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-use App\Http\Middleware\FirstPartyMediaLink;
 use App\Http\Middleware\Admin\EnsureAbility as AdminAbility;
 use App\Http\Middleware\Admin\HandleInertiaRequests as AdminInertia;
 use App\Http\Middleware\Admin\PlatformContext as AdminPlatformContext;
 use App\Http\Middleware\AssignRequestId;
 use App\Http\Middleware\EnsureFeature;
+use App\Http\Middleware\FirstPartyMediaLink;
 use App\Http\Middleware\ForceJsonResponse;
 use App\Http\Middleware\ResolveTenant;
 use App\Http\Middleware\SecurityHeaders;
@@ -34,6 +34,12 @@ return Application::configure(basePath: dirname(__DIR__))
             $admin = Route::middleware(['web', AdminInertia::class])->name('admin.')->prefix('admin');
             $domain = config('engage.admin_domain');
             ($domain ? $admin->domain($domain) : $admin)->group(base_path('routes/admin.php'));
+
+            // Growth Hub tracker endpoints (no web/api middleware: public, cookie-free). With
+            // GROWTH_COLLECTOR_HOST set they answer only on that host (e.10xengage.com).
+            $collector = Route::middleware([]);
+            $host = config('engage.growth.collector_host');
+            ($host ? $collector->domain($host) : $collector)->group(base_path('routes/collector.php'));
         },
     )
     ->withBroadcasting(__DIR__.'/../routes/channels.php', ['prefix' => 'api', 'middleware' => ['api', 'auth:sanctum', 'tenant']])

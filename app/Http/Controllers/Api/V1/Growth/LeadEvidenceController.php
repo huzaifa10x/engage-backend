@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Growth;
 use App\Domain\Growth\GrowthAccess;
 use App\Domain\Growth\Models\GrowthEvidence;
 use App\Domain\Growth\Services\MetaReferral;
+use App\Domain\Growth\Website\WebsiteEvidence;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
@@ -25,7 +26,7 @@ final class LeadEvidenceController extends Controller
 
         $rows = GrowthEvidence::query()->where('crm_contact_id', $contact->id)->orderBy('occurred_at')->limit(200)->get();
 
-        return response()->json(['data' => $rows->map(fn (GrowthEvidence $e) => self::present($e))->values()]);
+        return response()->json(['data' => $rows->map(fn (GrowthEvidence $e) => array_replace(self::present($e), WebsiteEvidence::present($e)))->values()]);
     }
 
     /** @return array<string, mixed> */

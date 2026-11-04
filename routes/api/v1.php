@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\Growth\LeadController;
 use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
 use App\Http\Controllers\Api\V1\Growth\MetaAdController;
+use App\Http\Controllers\Api\V1\Growth\SiteController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
 use App\Http\Controllers\Api\V1\IntegrationController;
 use App\Http\Controllers\Api\V1\InvitationController;
@@ -342,6 +343,20 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
     Route::put('growth/meta-ads/{ad}', [MetaAdController::class, 'update'])
         ->middleware('can:'.Permission::GrowthManage->value)->whereUuid('ad')->name('growth.meta-ads.update');
+    // Tracking Setup › Websites: read with growth.view, change with growth.manage.
+    Route::middleware('can:'.Permission::GrowthView->value)->group(function () {
+        Route::get('growth/sites', [SiteController::class, 'index'])->name('growth.sites.index');
+        Route::get('growth/sites/{site}', [SiteController::class, 'show'])->whereUuid('site')->name('growth.sites.show');
+        Route::get('growth/sites/{site}/health', [SiteController::class, 'health'])->whereUuid('site')->name('growth.sites.health');
+        Route::get('growth/sites/{site}/test', [SiteController::class, 'test'])->whereUuid('site')->name('growth.sites.test');
+    });
+    Route::middleware('can:'.Permission::GrowthManage->value)->group(function () {
+        Route::post('growth/sites', [SiteController::class, 'store'])->middleware('throttle:20,1')->name('growth.sites.store');
+        Route::patch('growth/sites/{site}', [SiteController::class, 'update'])->whereUuid('site')->name('growth.sites.update');
+        Route::delete('growth/sites/{site}', [SiteController::class, 'destroy'])->whereUuid('site')->name('growth.sites.destroy');
+        Route::post('growth/sites/{site}/verification-session', [SiteController::class, 'verification'])->whereUuid('site')->middleware('throttle:30,1')->name('growth.sites.verification');
+        Route::post('growth/sites/{site}/test-session', [SiteController::class, 'startTest'])->whereUuid('site')->middleware('throttle:30,1')->name('growth.sites.test-session');
+    });
     Route::get('growth/leads/{contact}/evidence', LeadEvidenceController::class)
         ->middleware('can:'.Permission::GrowthView->value)->whereUuid('contact')->name('growth.leads.evidence');
 

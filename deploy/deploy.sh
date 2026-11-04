@@ -62,7 +62,7 @@ main() {
     fi
     local compose=(docker compose --project-directory "$here" -p "$project" "${files[@]}")
     local laravel_env="$root/backend/.env" compose_env="$here/.env" releases="$root/releases.log"
-    local backend_services=(app horizon scheduler reverb)
+    local backend_services=(app collector horizon scheduler reverb)
 
     log() { printf '\n\033[1;34m▸ %s\033[0m\n' "$*"; }
     ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
