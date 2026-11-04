@@ -37,7 +37,7 @@ final class LeadEvidenceController extends Controller
             'id' => $e->id,
             'type' => $e->evidence_type,
             'source' => $e->source,
-            'label' => $e->evidence_type === GrowthEvidence::TYPE_META_CTWA ? MetaReferral::label($e->provider_fields['platform'] ?? null) : $e->source,
+            'label' => $e->evidence_type === GrowthEvidence::TYPE_META_CTWA ? MetaReferral::label($e->provider_fields['platform'] ?? null, $fields['source_type'] ?? null) : $e->source,
             'confidence' => $e->confidence,
             'conflict' => $e->conflict,
             'occurred_at' => $e->occurred_at->toIso8601String(),

@@ -111,8 +111,8 @@ final class MetaAdLeadsTest extends TestCase
             $fields = GrowthEvidence::query()->sole()->provider_fields['referral'];
             $this->assertArrayNotHasKey('ctwa_clid', $fields);
             $this->assertArrayNotHasKey('media_type', $fields);
-            // The fixture's source_url is an Instagram post link: that is proof of Instagram.
-            $this->assertSame('Meta ad · Instagram', Contact::query()->sole()->acquisition_original['label']);
+            // A boosted post (source_type post) whose source_url is an Instagram link: proof of Instagram.
+            $this->assertSame('Meta boosted post · Instagram', Contact::query()->sole()->acquisition_original['label']);
         });
 
         $contactId = $this->inTenant(fn () => Contact::query()->sole()->id);
@@ -187,6 +187,51 @@ final class MetaAdLeadsTest extends TestCase
         $this->inTenant(fn () => $this->assertSame('Meta ad · Facebook', Contact::query()->where('wa_id', '971500000088')->sole()->acquisition_original['label']));
         $this->putJson("/api/v1/growth/meta-ads/{$fb['id']}", ['platform' => null])->assertOk()->assertJsonPath('data.leads_updated', 2);
         $this->inTenant(fn () => $this->assertSame('Meta ad', Contact::query()->where('wa_id', '971500000088')->sole()->acquisition_original['label']));
+    }
+
+    public function test_boosted_posts_are_told_apart_from_paid_ads(): void
+    {
+        $this->enableGrowth();
+        $this->inboundFromAd(['source_id' => '120208000000000030', 'source_type' => 'post', 'source_url' => 'https://fb.me/p'], 'wamid.POST');
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.PAID', 'referral' => ['source_id' => '120208000000000031', 'source_type' => 'ad']], '971500000055', 'AE.55', 'Reem')))->assertOk();
+
+        $this->inTenant(fn () => $this->assertSame('Meta boosted post', Contact::query()->where('wa_id', '971501234567')->sole()->acquisition_original['label']));
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Owner));
+        $this->assertSame('Reem', $this->getJson('/api/v1/growth/leads?source=meta_paid')->assertOk()->json('data.0.contact.display_name'));
+        $this->assertCount(1, $this->getJson('/api/v1/growth/leads?source=meta_post')->assertOk()->json('data'));
+        $this->assertCount(2, $this->getJson('/api/v1/growth/leads?source=meta')->assertOk()->json('data'));
+        $this->assertSame(1, $this->getJson('/api/v1/growth/leads/summary')->assertOk()->json('data.meta_posts'));
+    }
+
+    public function test_each_ad_shows_its_receiving_number_and_how_far_its_leads_got_within_30_days(): void
+    {
+        $this->enableGrowth();
+        $this->inboundFromAd(['source_id' => '120208000000000040', 'source_type' => 'ad'], 'wamid.O1');
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.O2', 'referral' => ['source_id' => '120208000000000040']], '971500000066', 'AE.66', 'Ali')))->assertOk();
+
+        [$qualified, $won] = $this->inTenant(fn () => [
+            \App\Domain\Crm\Models\CrmStage::query()->create(['name' => 'Qualified', 'color' => 'info', 'position' => 1]),
+            \App\Domain\Crm\Models\CrmStage::query()->create(['name' => 'Won', 'color' => 'good', 'position' => 2]),
+        ]);
+        $this->inTenant(function () use ($qualified, $won) {
+            $stages = app(\App\Domain\Crm\Services\ContactStages::class);
+            $first = Contact::query()->where('wa_id', '971501234567')->sole();
+            $second = Contact::query()->where('wa_id', '971500000066')->sole();
+            $stages->move($first, $qualified->id);
+            $stages->move($second, $qualified->id);
+            // Won, but after the 30-day window: the second lead still counts as Qualified.
+            $this->travel(31)->days();
+            $stages->move($second, $won->id);
+            $this->travelBack();
+            $stages->move($first, $won->id);
+        });
+
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Owner));
+        $ad = $this->getJson('/api/v1/growth/meta-ads')->assertOk()->json('data.0');
+        $this->assertSame(2, $ad['leads']);
+        $this->assertSame('+971 58 549 6310', $ad['numbers'][0]['display_phone_number']);
+        $this->assertSame(2, $ad['numbers'][0]['chats']);
+        $this->assertSame([['name' => 'Won', 'leads' => 1], ['name' => 'Qualified', 'leads' => 1]], array_map(fn ($o) => ['name' => $o['stage']['name'], 'leads' => $o['leads']], $ad['outcomes']));
     }
 
     public function test_agents_cannot_tag_ads(): void

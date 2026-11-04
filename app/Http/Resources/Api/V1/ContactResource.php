@@ -73,7 +73,7 @@ final class ContactResource extends JsonResource
         $acquisition = Acquisition::present($this->resource, GrowthSettings::for($tenant), $full && $context->can(Permission::GrowthView), $full);
 
         // Starter (chip tier) shows the Meta ad chip only: no chip at all for other statuses.
-        if ($tier === GrowthAccess::CHIP && $acquisition !== null && ! str_contains($acquisition['label'], 'Meta ad')) {
+        if ($tier === GrowthAccess::CHIP && $acquisition !== null && ! str_contains($acquisition['label'], 'Meta ')) {
             return null;
         }
 

@@ -69,8 +69,9 @@ class EvidenceRecorder
             $evidence = GrowthEvidence::query()->findOrFail($id);
             $this->project($evidence, $tenant, [
                 'source' => 'meta_ad',
-                'label' => MetaReferral::label($proven['platform'] ?? null),
+                'label' => MetaReferral::label($proven['platform'] ?? null, $fields['source_type'] ?? null),
                 'platform' => $proven['platform'] ?? null,
+                'source_type' => $fields['source_type'] ?? null, // ad | post: paid ads vs boosted posts
                 'headline' => $fields['headline'] ?? null,
                 'ad_id' => $fields['source_id'] ?? null, // groups leads by ad; never shown to agents
                 'campaign' => null, // source_id is not a campaign ID: never shown as one

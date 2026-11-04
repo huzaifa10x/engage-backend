@@ -74,6 +74,7 @@ final class LeadController extends Controller
         $leads = $count();
         $confirmed = $count(fn ($c) => $c->whereNotNull('acquisition_original'));
         $meta = $count(fn ($c) => $c->whereRaw("acquisition_original->>'source' = 'meta_ad'"));
+        $posts = $count(fn ($c) => $c->whereRaw("acquisition_original->>'source' = 'meta_ad'")->whereRaw("acquisition_original->>'source_type' = 'post'"));
         $instagram = $count(fn ($c) => $c->whereRaw("acquisition_original->>'source' = 'meta_ad'")->whereRaw("acquisition_original->>'platform' = 'instagram'"));
         $webLost = $count(fn ($c) => $c->whereRaw("acquisition_original->>'type' = 'website_unregistered'"));
 
@@ -92,6 +93,7 @@ final class LeadController extends Controller
             'confirmed_rate' => $leads > 0 ? (int) round($confirmed / $leads * 100) : null,
             'meta' => $meta,
             'meta_instagram' => $instagram,
+            'meta_posts' => $posts, // of the Meta leads, those from boosted posts
             'website_lost' => $webLost,
             'unmatched_clicks' => $clicks,
             'sees_all' => $this->leads->seesAll(),

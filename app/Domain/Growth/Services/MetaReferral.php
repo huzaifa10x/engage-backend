@@ -66,12 +66,18 @@ final class MetaReferral
     }
 
     /** "Meta ad" — with the platform only when it was proven (never in Sprint 1). */
-    public static function label(?string $platform = null): string
+    /**
+     * "Meta ad", or "Meta boosted post" for source_type post (paid ads and boosted posts are told
+     * apart), with "· Instagram" / "· Facebook" only when the platform was proven.
+     */
+    public static function label(?string $platform = null, ?string $sourceType = null): string
     {
+        $base = $sourceType === 'post' ? 'Meta boosted post' : 'Meta ad';
+
         return match ($platform) {
-            'instagram' => 'Meta ad · Instagram',
-            'facebook' => 'Meta ad · Facebook',
-            default => 'Meta ad',
+            'instagram' => $base.' · Instagram',
+            'facebook' => $base.' · Facebook',
+            default => $base,
         };
     }
 }

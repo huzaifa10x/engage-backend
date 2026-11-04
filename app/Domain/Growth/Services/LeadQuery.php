@@ -29,7 +29,7 @@ final class LeadQuery
     /** Filters for the list, counts and export. */
     public const RULES = [
         'q' => ['nullable', 'string', 'max:100'],
-        'source' => ['nullable', 'in:meta,meta_instagram,meta_facebook,google_ads,organic,direct,unknown,before'],
+        'source' => ['nullable', 'in:meta,meta_paid,meta_post,meta_instagram,meta_facebook,google_ads,organic,direct,unknown,before'],
         'status' => ['nullable', 'in:ref,meta,multi,web,unattributed,before'],
         'phone_number_id' => ['nullable', 'uuid'],
         'assigned' => ['nullable', 'string', 'max:36'], // a membership id, "me" or "unassigned"
@@ -126,8 +126,12 @@ final class LeadQuery
     /** @param Builder<Contact> $c */
     public static function source(Builder $c, string $source, ?Carbon $startedAt): void
     {
-        if (in_array($source, ['before', 'unknown', 'meta', 'meta_instagram', 'meta_facebook'], true)) {
+        if (in_array($source, ['before', 'unknown', 'meta', 'meta_paid', 'meta_post', 'meta_instagram', 'meta_facebook'], true)) {
             self::status($c, ['before' => 'before', 'unknown' => 'unattributed'][$source] ?? 'meta', $startedAt);
+            // Paid ads vs boosted posts (referral source_type; older touches without it count as ads).
+            if ($source === 'meta_paid' || $source === 'meta_post') {
+                $c->whereRaw("coalesce(acquisition_original->>'source_type', 'ad') ".($source === 'meta_post' ? '=' : '<>')." 'post'");
+            }
             // "Meta ad · Instagram / Facebook" only with stored proof (Blueprint v1.4).
             if ($source === 'meta_instagram' || $source === 'meta_facebook') {
                 $c->whereRaw("acquisition_original->>'platform' = ?", [$source === 'meta_instagram' ? 'instagram' : 'facebook']);

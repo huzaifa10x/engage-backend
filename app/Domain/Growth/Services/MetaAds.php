@@ -83,7 +83,7 @@ final class MetaAds
                 $fields['platform'] = $next['platform'] ?? null;
                 $fields['platform_proof'] = $next['proof'] ?? null;
                 $e->forceFill(['provider_fields' => $fields])->save();
-                $this->relabel($e->crm_contact_id, $e->id, $fields['platform']);
+                $this->relabel($e->crm_contact_id, $e->id, $fields['platform'], $fields['referral']['source_type'] ?? null);
                 $changed++;
             }
 
@@ -94,7 +94,7 @@ final class MetaAds
     }
 
     /** The contact's original / latest touch that came from this evidence shows the new label. */
-    private function relabel(string $contactId, string $evidenceId, ?string $platform): void
+    private function relabel(string $contactId, string $evidenceId, ?string $platform, ?string $sourceType): void
     {
         /** @var ?Contact $contact */
         $contact = Contact::query()->withTrashed()->lockForUpdate()->find($contactId);
@@ -105,7 +105,7 @@ final class MetaAds
         foreach (['acquisition_original', 'acquisition_latest'] as $column) {
             $touch = $contact->getAttribute($column);
             if (is_array($touch) && ($touch['evidence_id'] ?? null) === $evidenceId) {
-                $updates[$column] = ['platform' => $platform, 'label' => MetaReferral::label($platform)] + $touch;
+                $updates[$column] = ['platform' => $platform, 'label' => MetaReferral::label($platform, $sourceType), 'source_type' => $sourceType] + $touch;
             }
         }
         if ($updates !== []) {
