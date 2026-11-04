@@ -23,6 +23,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 /** Team inbox threads. Every query is limited to the numbers this member may use. */
 final class ConversationController extends Controller
@@ -72,6 +73,26 @@ final class ConversationController extends Controller
         return ConversationResource::collection($query->cursorPaginate((int) ($data['per_page'] ?? 30)));
     }
 
+    /**
+     * Who this conversation can be assigned to: active teammates, each marked with whether they can
+     * use the conversation's WhatsApp number (Owners and Admins: every number; others: their grants).
+     */
+    public function assignees(Conversation $conversation): JsonResponse
+    {
+        $this->authorizeThread($conversation);
+        $this->context->authorize(Permission::InboxAssign);
+        $number = $conversation->phoneNumber()->firstOrFail();
+
+        $members = TenantMembership::query()->active()->with(['user', 'role'])->orderBy('created_at')->get();
+
+        return response()->json(['data' => $members->map(fn (TenantMembership $m) => [
+            'id' => $m->id,
+            'name' => $m->user->name ?? 'Teammate',
+            'role' => $m->role?->name,
+            'can_access' => $this->access->canAccess($m, $number),
+        ])->values()]);
+    }
+
     public function show(Conversation $conversation): ConversationResource
     {
         $this->authorizeThread($conversation);
@@ -93,8 +114,16 @@ final class ConversationController extends Controller
         if (array_key_exists('assigned_membership_id', $data)) {
             $this->context->authorize(Permission::InboxAssign);
             if ($data['assigned_membership_id'] !== null) {
-                $assignee = TenantMembership::query()->with('role')->findOrFail($data['assigned_membership_id']);
-                $this->access->ensureCanAccess($assignee, $conversation->phoneNumber()->firstOrFail());
+                $assignee = TenantMembership::query()->with(['role', 'user'])->findOrFail($data['assigned_membership_id']);
+                $number = $conversation->phoneNumber()->firstOrFail();
+                $name = $assignee->user->name ?? 'This teammate';
+                // The check is about the person being assigned, not the one assigning: say so.
+                if (! $assignee->isActive()) {
+                    throw ValidationException::withMessages(['assigned_membership_id' => "{$name} is not an active member of this workspace."]);
+                }
+                if (! $this->access->canAccess($assignee, $number)) {
+                    throw ValidationException::withMessages(['assigned_membership_id' => "{$name} doesn't have access to {$number->display_phone_number}. Give them this number in Team & Roles, or assign someone else."]);
+                }
             }
         }
 

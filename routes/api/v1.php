@@ -390,6 +390,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::post('notifications/read', [InboxToolsController::class, 'readNotifications'])->name('notifications.read');
         Route::get('dashboard/summary', [InboxToolsController::class, 'dashboard'])->name('dashboard.summary');
         Route::patch('conversations/{conversation}', [ConversationController::class, 'update'])->name('conversations.update');
+        Route::get('conversations/{conversation}/assignees', [ConversationController::class, 'assignees'])->name('conversations.assignees');
         Route::post('conversations/{conversation}/read', [ConversationController::class, 'read'])->name('conversations.read');
         Route::get('conversations/{conversation}/messages', [MessageController::class, 'index'])->name('conversations.messages.index');
         Route::get('media/{media}', [MediaController::class, 'show'])->name('media.show');

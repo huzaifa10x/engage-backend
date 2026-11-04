@@ -24,12 +24,13 @@ use Illuminate\Support\Carbon;
  * @property Carbon $expires_at
  * @property ?Carbon $accepted_at
  * @property ?Carbon $revoked_at
+ * @property ?list<string> $phone_number_ids
  */
 class Invitation extends Model
 {
     use BelongsToTenant, HasUuids;
 
-    protected $fillable = ['tenant_id', 'email', 'role_id', 'token_hash', 'invited_by_user_id', 'expires_at', 'accepted_at', 'revoked_at'];
+    protected $fillable = ['tenant_id', 'email', 'role_id', 'token_hash', 'invited_by_user_id', 'expires_at', 'accepted_at', 'revoked_at', 'phone_number_ids'];
 
     protected $hidden = ['token_hash'];
 
@@ -39,6 +40,7 @@ class Invitation extends Model
             'expires_at' => 'datetime',
             'accepted_at' => 'datetime',
             'revoked_at' => 'datetime',
+            'phone_number_ids' => 'array',
         ];
     }
 

@@ -33,7 +33,9 @@ final class InvitationController extends Controller
         /** @var Role $role */
         $role = $request->role();
 
-        $result = $invite($request->string('email')->toString(), $role);
+        /** @var list<string>|null $numbers */
+        $numbers = $request->has('phone_number_ids') ? array_values((array) $request->input('phone_number_ids')) : null;
+        $result = $invite($request->string('email')->toString(), $role, $numbers);
 
         return InvitationResource::make($result['invitation']->load('role'))->response()->setStatusCode(201);
     }

@@ -18,6 +18,7 @@ final class InvitationResource extends JsonResource
             'id' => $this->id,
             'email' => $this->email,
             'role' => RoleResource::make($this->whenLoaded('role')),
+            'phone_number_ids' => $this->phone_number_ids ?? [],
             'expires_at' => $this->expires_at->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
         ];

@@ -21,6 +21,9 @@ final class InviteMemberRequest extends FormRequest
         return [
             'email' => ['required', 'email:rfc', 'max:190'],
             'role_id' => ['required', 'uuid'],
+            // Numbers the person may use once they join (ignored for roles that have every number).
+            'phone_number_ids' => ['sometimes', 'array', 'max:100'],
+            'phone_number_ids.*' => ['uuid', 'distinct'],
         ];
     }
 

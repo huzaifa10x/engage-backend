@@ -60,6 +60,13 @@ final class NumberAccess
         return $ids === null ? $query : $query->whereIn($column, $ids);
     }
 
+    public function canAccess(TenantMembership $membership, PhoneNumber $number): bool
+    {
+        $ids = $this->grantedIds($membership);
+
+        return $ids === null || in_array($number->id, $ids, true);
+    }
+
     public function ensureCanAccess(TenantMembership $membership, PhoneNumber $number): void
     {
         $ids = $this->grantedIds($membership);

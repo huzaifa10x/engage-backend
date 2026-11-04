@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\Team;
 
+use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Identity\Models\User;
 use App\Domain\Tenancy\Enums\MembershipStatus;
@@ -13,6 +14,7 @@ use App\Domain\Tenancy\Models\Invitation;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -26,6 +28,7 @@ final class AcceptInvitation
     public function __construct(
         private readonly TenantContext $context,
         private readonly AuditLogger $audit,
+        private readonly NumberAccess $numbers,
     ) {}
 
     public function __invoke(User $user, string $token): TenantMembership
@@ -80,6 +83,13 @@ final class AcceptInvitation
                         'joined_at' => now(),
                     ],
                 );
+
+                // The numbers chosen when inviting (roles with every number need none). Numbers removed
+                // from the workspace since the invitation was sent are skipped.
+                $ids = (array) ($invitation->phone_number_ids ?? []);
+                if ($ids !== [] && ! $this->numbers->hasAllNumbers($membership->load('role'))) {
+                    $this->numbers->setGrants($membership, PhoneNumber::query()->whereIn('id', $ids)->pluck('id')->all());
+                }
 
                 $invitation->forceFill(['accepted_at' => now()])->save();
                 $user->forceFill(['last_active_tenant_id' => $invitation->tenant_id])->save();
