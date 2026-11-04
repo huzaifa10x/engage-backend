@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\Growth;
 
 use App\Domain\Access\SystemRole;
+use App\Domain\Crm\Models\CrmStage;
+use App\Domain\Crm\Services\ContactStages;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Jobs\RecordMessageEvidence;
 use App\Domain\Growth\Models\GrowthEvidence;
@@ -210,11 +212,11 @@ final class MetaAdLeadsTest extends TestCase
         $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['id' => 'wamid.O2', 'referral' => ['source_id' => '120208000000000040']], '971500000066', 'AE.66', 'Ali')))->assertOk();
 
         [$qualified, $won] = $this->inTenant(fn () => [
-            \App\Domain\Crm\Models\CrmStage::query()->create(['name' => 'Qualified', 'color' => 'info', 'position' => 1]),
-            \App\Domain\Crm\Models\CrmStage::query()->create(['name' => 'Won', 'color' => 'good', 'position' => 2]),
+            CrmStage::query()->create(['name' => 'Qualified', 'color' => 'info', 'position' => 1]),
+            CrmStage::query()->create(['name' => 'Won', 'color' => 'good', 'position' => 2]),
         ]);
         $this->inTenant(function () use ($qualified, $won) {
-            $stages = app(\App\Domain\Crm\Services\ContactStages::class);
+            $stages = app(ContactStages::class);
             $first = Contact::query()->where('wa_id', '971501234567')->sole();
             $second = Contact::query()->where('wa_id', '971500000066')->sole();
             $stages->move($first, $qualified->id);

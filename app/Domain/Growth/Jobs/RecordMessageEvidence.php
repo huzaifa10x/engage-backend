@@ -47,7 +47,9 @@ final class RecordMessageEvidence implements ShouldQueue
             return;
         }
 
-        $recorder->recordMetaReferral($message, $tenant);
+        if ($recorder->recordMetaReferral($message, $tenant) !== null && GrowthAccess::full($tenant)) {
+            RefreshMarketingAnalytics::dispatch($tenant->id, 2); // the lead's source changes its bucket
+        }
     }
 
     public function failed(?Throwable $e): void

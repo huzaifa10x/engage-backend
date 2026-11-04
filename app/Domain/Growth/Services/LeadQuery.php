@@ -8,6 +8,7 @@ use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\Permission;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Growth\GrowthSettings;
+use App\Domain\Growth\Marketing\MarketingCohort;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\TenantContext;
@@ -37,6 +38,13 @@ final class LeadQuery
         'days' => ['nullable', 'integer', 'in:7,30,90,365'],
         'tab' => ['nullable', 'in:all,new,unattributed'],
         'ad' => ['nullable', 'uuid'], // a growth_meta_ads id: leads whose original source is that ad
+        // Drill-down from Analytics → Marketing: the new-lead cohort of a period (local dates), with
+        // its source bucket, campaign and funnel step, counted exactly as the report counts it.
+        'from' => ['nullable', 'date_format:Y-m-d', 'required_with:to'],
+        'to' => ['nullable', 'date_format:Y-m-d', 'required_with:from', 'after_or_equal:from'],
+        'bucket' => ['nullable', 'string', 'max:40'],
+        'campaign' => ['nullable', 'string', 'max:120'],
+        'step' => ['nullable', 'in:contacted,qualified'],
     ];
 
     public function __construct(private readonly TenantContext $context, private readonly NumberAccess $access) {}
@@ -67,7 +75,7 @@ final class LeadQuery
         $query = $this->visible();
 
         $query
-            ->where('last_message_at', '>=', now()->subDays((int) ($f['days'] ?? 30)))
+            ->when(empty($f['from']), fn ($q) => $q->where('last_message_at', '>=', now()->subDays((int) ($f['days'] ?? 30))))
             ->when($f['phone_number_id'] ?? null, fn ($q, string $id) => $q->where('phone_number_id', $id))
             ->when($f['assigned'] ?? null, fn ($q, string $a) => match ($a) {
                 'unassigned' => $q->whereNull('assigned_membership_id'),
@@ -85,6 +93,10 @@ final class LeadQuery
             ->when($f['status'] ?? null, fn ($q, string $s) => $q->whereHas('contact', fn ($c) => self::status($c, $s, $settings->startedAt)))
             ->when($f['source'] ?? null, fn ($q, string $s) => $q->whereHas('contact', fn ($c) => self::source($c, $s, $settings->startedAt)));
 
+        if (! empty($f['from']) && ! empty($f['to'])) {
+            $this->cohort($query, $f);
+        }
+
         if (! empty($f['ad'])) {
             $sourceId = DB::table('growth_meta_ads')->where('id', $f['ad'])->value('source_id'); // RLS: own workspace only
             $query->whereHas('contact', fn ($c) => $sourceId === null ? $c->whereRaw('false') : $c->whereRaw("acquisition_original->>'ad_id' = ?", [$sourceId]));
@@ -95,6 +107,44 @@ final class LeadQuery
         }
 
         return $query;
+    }
+
+    /**
+     * Only the leads the Marketing report counted: one conversation per lead, on the number its first
+     * message came in on, so the list has exactly as many rows as the number clicked.
+     *
+     * @param  Builder<Conversation>  $query
+     * @param  array<string, mixed>  $f
+     */
+    private function cohort(Builder $query, array $f): void
+    {
+        $tenant = $this->context->tenant();
+        [$sql, $bindings] = MarketingCohort::sql($tenant, MarketingCohort::mapping($tenant), (string) $f['from'], (string) $f['to']);
+        $where = [];
+        $extra = [];
+        if (! empty($f['bucket'])) {
+            if ($f['bucket'] === 'meta') {
+                $where[] = "x.bucket IN ('meta_instagram', 'meta_facebook', 'meta_unsplit')";
+            } else {
+                $where[] = 'x.bucket = ?';
+                $extra[] = $f['bucket'];
+            }
+        }
+        if (! empty($f['campaign'])) {
+            $where[] = 'x.campaign_key = ?';
+            $extra[] = $f['campaign'];
+        }
+        if (($f['step'] ?? null) === 'contacted') {
+            $where[] = 'x.contacted';
+        } elseif (($f['step'] ?? null) === 'qualified') {
+            $where[] = 'x.qualified';
+        }
+        $filter = $where === [] ? '' : ' WHERE '.implode(' AND ', $where);
+
+        $query->whereRaw(
+            "(conversations.contact_id, conversations.phone_number_id::text) IN (SELECT x.contact_id, x.number_id FROM ({$sql}) x{$filter})",
+            [...$bindings, ...$extra],
+        );
     }
 
     /** @param Builder<Conversation> $query */

@@ -31,3 +31,6 @@ Schedule::command('engage:integrations:run')->everyMinute()->onOneServer()->with
 Schedule::command('engage:chatbots:tick')->everyMinute()->onOneServer()->withoutOverlapping();
 // Growth Hub (CN-01): internal alert when a workspace passes 100k accepted taps in a month.
 Schedule::command('engage:growth:usage-alerts')->hourlyAt(40)->onOneServer()->withoutOverlapping();
+// Analytics → Marketing: recent days every 5 minutes, the 30-day qualification window nightly.
+Schedule::command('engage:growth:marketing-refresh --days=2')->everyFiveMinutes()->onOneServer()->withoutOverlapping();
+Schedule::command('engage:growth:marketing-refresh --days=31')->dailyAt('03:10')->onOneServer()->withoutOverlapping();

@@ -7,6 +7,8 @@ namespace App\Domain\Crm\Services;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Crm\Models\ContactStageEvent;
 use App\Domain\Crm\Models\CrmStage;
+use App\Domain\Growth\GrowthAccess;
+use App\Domain\Growth\Jobs\RefreshMarketingAnalytics;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Support\Facades\DB;
@@ -54,6 +56,12 @@ final class ContactStages
             ]);
 
             $this->audit->record('contact.stage_changed', $locked, before: ['stage_id' => $from], after: ['stage_id' => $to]);
+
+            // Analytics → Marketing counts stage changes within 30 days of the first enquiry.
+            $tenant = $this->context->tenantOrNull();
+            if ($tenant !== null && GrowthAccess::full($tenant)) {
+                RefreshMarketingAnalytics::dispatch($tenant->id)->afterCommit();
+            }
 
             return $event;
         });

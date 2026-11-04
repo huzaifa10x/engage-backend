@@ -6,6 +6,7 @@ use App\Domain\Access\Permission;
 use App\Http\Controllers\Api\V1\AccountEmailController;
 use App\Http\Controllers\Api\V1\ActiveTenantController;
 use App\Http\Controllers\Api\V1\Analytics\AnalyticsController;
+use App\Http\Controllers\Api\V1\Analytics\MarketingController;
 use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\Billing\BillingController;
@@ -312,6 +313,19 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
     Route::get('analytics/overview', [AnalyticsController::class, 'overview'])
         ->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.overview');
+
+    // Analytics → Marketing (Growth Hub, CN-01): Owner and Admin; agents have no access.
+    Route::middleware('can:'.Permission::GrowthView->value)->prefix('analytics/marketing')->name('analytics.marketing.')->group(function () {
+        Route::get('overview', [MarketingController::class, 'overview'])->name('overview');
+        Route::get('sources', [MarketingController::class, 'sources'])->name('sources');
+        Route::get('campaigns', [MarketingController::class, 'campaigns'])->name('campaigns');
+        Route::get('funnel', [MarketingController::class, 'funnel'])->name('funnel');
+        Route::get('trend', [MarketingController::class, 'trend'])->name('trend');
+        Route::get('stage-mapping', [MarketingController::class, 'mapping'])->name('stage-mapping');
+        Route::get('export', [MarketingController::class, 'export'])->middleware('throttle:20,1')->name('export');
+        Route::put('stage-mapping', [MarketingController::class, 'updateMapping'])
+            ->middleware('can:'.Permission::GrowthManage->value)->name('stage-mapping.update');
+    });
 
     /*
     | Growth Hub (R1): source evidence for a CRM contact. Behind the per-workspace flag.

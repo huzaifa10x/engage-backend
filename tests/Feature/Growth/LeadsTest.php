@@ -11,8 +11,8 @@ use App\Domain\Growth\GrowthSettings;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\Models\Tenant;
-use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\WhatsApp\Models\PhoneNumber;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
 
