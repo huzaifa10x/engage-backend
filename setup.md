@@ -70,3 +70,7 @@ Deploye all
 npm run deploy:staging
 npm run release:promote
 npm run deploy:production
+
+Direct to Production
+npm run release:promote
+npm run deploy:production -- --hotfix
