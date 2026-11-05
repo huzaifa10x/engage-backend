@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\Domain\Growth\Jobs;
 
 use App\Domain\Growth\GrowthAccess;
+use App\Domain\Growth\Services\Acquisition;
 use App\Domain\Growth\Services\EvidenceRecorder;
 use App\Domain\Growth\Website\WebsiteMatcher;
+use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\TenantContext;
 use App\Support\Queue\QueueName;
@@ -53,6 +56,15 @@ final class RecordMessageEvidence implements ShouldQueue
         // Website codes: tracked websites are part of Growth Hub (not the Starter chip).
         if (GrowthAccess::full($tenant)) {
             $changed = $website->redeem($message, $tenant) === 'matched' || $changed;
+        }
+
+        // A paid-ad lead waiting for a reply goes to the top of the Needs reply queue (Engagement Plan §III.2).
+        if ($changed) {
+            $latest = Contact::query()->whereKey($message->contact_id)->value('acquisition_latest');
+            $touch = is_string($latest) ? json_decode($latest, true) : $latest;
+            if (is_array($touch) && Acquisition::paid($touch)) {
+                Conversation::query()->whereKey($message->conversation_id)->where('reply_state', 'needs_reply')->update(['ad_lead' => true]);
+            }
         }
 
         if ($changed && GrowthAccess::full($tenant)) {

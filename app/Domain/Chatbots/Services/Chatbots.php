@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Chatbots\Services;
 
 use App\Application\Messaging\ManageContacts;
+use App\Domain\Automation\Scheduler;
 use App\Domain\Chatbots\Engine\BotInput;
 use App\Domain\Chatbots\Engine\FlowEngine;
 use App\Domain\Chatbots\Engine\FlowGraph;
@@ -19,8 +20,10 @@ use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Messaging\Services\ConversationTracker;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Database\QueryException;
@@ -139,13 +142,17 @@ final class Chatbots
 
         // Back soon after leaving: continue where they left off (their message may be the answer),
         // unless the message itself starts another flow with a specific trigger.
-        if (($picked[2] ?? 'default') !== 'specific' && $this->resumeAbandoned($conversation, $contact, $input, $at)) {
+        if (! in_array($picked[2] ?? 'default', ['specific', 'after_hours'], true) && $this->resumeAbandoned($conversation, $contact, $input, $at)) {
             return;
         }
         if ($picked === null) {
             return;
         }
         [$flow, $version, $via] = $picked;
+        // The after-hours reply goes out once per closed period (the scheduler's ledger keeps the count).
+        if ($via === 'after_hours' && ! app(Scheduler::class)->recordDone('after_hours_reply', self::afterHoursKey($conversation, Carbon::instance($at)), $conversation, 'flow_started', 10, true)) {
+            return;
+        }
         $session = $this->claim($conversation, fn () => ChatbotSession::query()->create([
             'flow_id' => $flow->id, 'flow_version' => $flow->published_version, 'conversation_id' => $conversation->id,
             'contact_id' => $contact->id, 'phone_number_id' => $conversation->phone_number_id, 'status' => 'active',
@@ -183,6 +190,22 @@ final class Chatbots
         $text = mb_strtolower(trim((string) $input->text));
         $firstTime = null;
 
+        // Outside business hours, an after-hours flow answers first — once per closed period; after
+        // that the night's other messages wait for the team (no other flow, no auto-reply).
+        $at = Carbon::instance($message !== null ? ($message->meta_timestamp ?? $message->created_at ?? now()) : now());
+        $tenant = app(TenantContext::class)->tenantOrNull();
+        $afterHours = array_values(array_filter($candidates, fn (array $x) => (bool) ($x[2]['after_hours'] ?? false)));
+        if ($afterHours !== [] && BusinessHours::enabled($tenant) && ! BusinessHours::isOpen($tenant, $conversation->phone_number_id, $at)) {
+            if (app(Scheduler::class)->exists(self::afterHoursKey($conversation, $at))) {
+                return null;
+            }
+            foreach ($afterHours as [$flow, $version, $config]) {
+                if ($this->mayEnter($flow, $config, $contact)) {
+                    return [$flow, $version, 'after_hours'];
+                }
+            }
+        }
+
         $levels = [
             'campaign' => fn (array $c) => $c['campaign_buttons'] !== [] && in_array($input->type, ['button', 'interactive'], true)
                 && ($words !== '' && in_array($words, array_map(fn ($b) => (new BotInput($b))->normalized(), $c['campaign_buttons']), true)),
@@ -209,6 +232,14 @@ final class Chatbots
         }
 
         return null;
+    }
+
+    /** One after-hours reply per conversation per closed period: the period is named by the next opening time. */
+    public static function afterHoursKey(Conversation $conversation, Carbon $at): string
+    {
+        $next = BusinessHours::nextOpen(app(TenantContext::class)->tenantOrNull(), $conversation->phone_number_id, $at);
+
+        return "after_hours:{$conversation->id}:".($next?->getTimestamp() ?? 'none');
     }
 
     /** @param array<string, mixed> $c the Start block's settings */

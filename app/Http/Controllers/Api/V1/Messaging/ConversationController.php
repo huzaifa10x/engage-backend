@@ -15,6 +15,7 @@ use App\Domain\Messaging\Jobs\SendReadReceipt;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\InboxTools;
+use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
@@ -40,6 +41,9 @@ final class ConversationController extends Controller
             'view' => ['nullable', Rule::in(['bot', 'waiting', 'abandoned', 'completed', 'handed_off'])],
             'unread' => ['nullable', 'boolean'],
             'snoozed' => ['nullable', 'boolean'],
+            // Who it is waiting on (Engagement Plan §II); after_hours = "Arrived after hours".
+            'state' => ['nullable', Rule::in(['needs_reply', 'waiting'])],
+            'after_hours' => ['nullable', 'boolean'],
             'q' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
@@ -58,6 +62,9 @@ final class ConversationController extends Controller
             ->when(($data['view'] ?? null) === 'waiting', fn ($q) => $q->where('last_message_direction', 'outbound')->where(fn ($w) => $w->whereNull('handler')->orWhere('handler', '!=', 'bot')))
             ->when(in_array($data['view'] ?? null, ['abandoned', 'completed', 'handed_off'], true), fn ($q) => $q->where('bot_state', $data['view']))
             ->when($request->boolean('unread'), fn ($q) => $q->where('unread_count', '>', 0))
+            ->when(($data['state'] ?? null) === 'needs_reply', fn ($q) => $q->where('status', ConversationStatus::Open->value)->where('reply_state', ReplyState::NEEDS_REPLY))
+            ->when(($data['state'] ?? null) === 'waiting', fn ($q) => $q->where('status', ConversationStatus::Open->value)->where(fn ($w) => $w->whereNull('reply_state')->orWhere('reply_state', ReplyState::WAITING)))
+            ->when($request->boolean('after_hours'), fn ($q) => $q->where('reply_state', ReplyState::NEEDS_REPLY)->where('after_hours', true))
             // Snoozed conversations stay out of the way until their time (or until the customer writes).
             ->when($request->boolean('snoozed'), fn ($q) => $q->where('snoozed_until', '>', now()), fn ($q) => $q->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now())))
             ->when($data['q'] ?? null, function ($q, string $term) {
@@ -67,10 +74,35 @@ final class ConversationController extends Controller
                     ->orWhere('profile_name', 'ilike', "%{$term}%")
                     ->when($digits !== '', fn ($w) => $w->orWhere('wa_id', 'like', "%{$digits}%"))));
             })
-            ->orderByDesc('last_message_at')
-            ->orderByDesc('id');
+            // Needs reply: ad leads first (they cost money), then the longest waiting.
+            ->when(($data['state'] ?? null) === 'needs_reply' || $request->boolean('after_hours'), fn ($q) => $q->orderByDesc('ad_lead')->orderBy('needs_reply_since')->orderBy('id'),
+                fn ($q) => $q->orderByDesc('last_message_at')->orderByDesc('id'));
 
         return ConversationResource::collection($query->cursorPaginate((int) ($data['per_page'] ?? 30)));
+    }
+
+    /**
+     * Counts for the inbox tabs (Needs reply, Arrived after hours, Unassigned, Mine), with the same
+     * visibility rules as the list (agents: their own chats).
+     */
+    public function counts(Request $request): JsonResponse
+    {
+        $data = $request->validate(['phone_number_id' => ['nullable', 'uuid']]);
+        $membership = $this->membership();
+        $base = function () use ($membership, $data) {
+            $q = Conversation::query()->whereNotNull('last_message_at')->where('status', ConversationStatus::Open->value)
+                ->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now()))
+                ->when($data['phone_number_id'] ?? null, fn ($q, $id) => $q->where('phone_number_id', $id));
+
+            return $this->access->scopeChats($q, $membership);
+        };
+
+        return response()->json(['data' => [
+            'needs_reply' => $base()->where('reply_state', ReplyState::NEEDS_REPLY)->count(),
+            'needs_reply_mine' => $base()->where('reply_state', ReplyState::NEEDS_REPLY)->where('assigned_membership_id', $membership->id)->count(),
+            'after_hours' => $base()->where('reply_state', ReplyState::NEEDS_REPLY)->where('after_hours', true)->count(),
+            'unassigned' => $base()->whereNull('assigned_membership_id')->count(),
+        ]]);
     }
 
     /**
@@ -133,8 +165,16 @@ final class ConversationController extends Controller
             $conversation->setAttribute('auto_reply_enabled', (bool) $data['auto_reply_enabled']);
         }
         if (isset($data['status'])) {
+            $closing = $data['status'] === ConversationStatus::Closed->value && $before['status'] !== 'closed';
+            $reopening = $data['status'] === ConversationStatus::Open->value && $before['status'] === 'closed';
             $conversation->status = ConversationStatus::from($data['status']);
             $conversation->closed_at = $data['status'] === ConversationStatus::Closed->value ? now() : null;
+            // Resolved by an agent: the wait ends and the resolution time is recorded.
+            if ($closing) {
+                $conversation->forceFill(ReplyState::closed($conversation, $this->membership()->id));
+            } elseif ($reopening) {
+                $conversation->forceFill(ReplyState::reopened());
+            }
         }
         if (array_key_exists('assigned_membership_id', $data)) {
             $conversation->assigned_membership_id = $data['assigned_membership_id'];

@@ -314,6 +314,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
     Route::get('analytics/overview', [AnalyticsController::class, 'overview'])
         ->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.overview');
+    Route::get('analytics/response-times', [AnalyticsController::class, 'responseTimes'])
+        ->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.response-times');
 
     // Analytics → Marketing (Growth Hub, CN-01): Owner and Admin; agents have no access.
     Route::middleware('can:'.Permission::GrowthView->value)->prefix('analytics/marketing')->name('analytics.marketing.')->group(function () {
@@ -416,6 +418,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
 
     Route::middleware('can:'.Permission::InboxView->value)->group(function () {
         Route::get('conversations', [ConversationController::class, 'index'])->name('conversations.index');
+        Route::get('conversations/counts', [ConversationController::class, 'counts'])->name('conversations.counts');
         Route::get('conversations/{conversation}', [ConversationController::class, 'show'])->name('conversations.show');
         Route::get('conversations/{conversation}/notes', [InboxToolsController::class, 'notes'])->name('conversations.notes');
         Route::get('canned-responses', [InboxToolsController::class, 'cannedResponses'])->name('canned-responses.index');

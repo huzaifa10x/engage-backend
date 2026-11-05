@@ -38,7 +38,7 @@ final class FlowChecks
         $start = $starts[0];
         $sc = $start['config'];
         $hasTrigger = $sc['any_message'] || $sc['greeting'] || $sc['keywords'] !== [] || $sc['regex'] !== null || $sc['ad_referral'] || $sc['qr_code'] !== null
-            || $sc['campaign_buttons'] !== [] || $sc['tags_added'] !== [] || $sc['fields_changed'] !== [] || $sc['webhook'];
+            || $sc['campaign_buttons'] !== [] || $sc['tags_added'] !== [] || $sc['fields_changed'] !== [] || $sc['webhook'] || ($sc['after_hours'] ?? false);
         if (! $hasTrigger && ! $subflow) {
             $add('error', 'no_trigger', $start['id'], 'Nothing starts this flow.', 'Open the Start block and turn on “Any message”, add keywords, or pick another trigger.');
         }

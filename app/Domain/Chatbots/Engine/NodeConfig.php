@@ -49,6 +49,9 @@ final class NodeConfig
                 'keyword_match' => in_array($c['keyword_match'] ?? null, ['exact', 'starts', 'contains'], true) ? $c['keyword_match'] : 'starts',
                 'regex' => self::regex($c['regex'] ?? null),
                 'ad_referral' => (bool) ($c['ad_referral'] ?? true),
+                // Outside business hours (Engagement Plan §III): this flow answers the first message of
+                // each closed period, before any other flow (ad leads included).
+                'after_hours' => (bool) ($c['after_hours'] ?? false),
                 'qr_code' => self::str($c['qr_code'] ?? null, 40),
                 'campaign_buttons' => self::words($c['campaign_buttons'] ?? [], 20, 40),
                 'tags_added' => self::words($c['tags_added'] ?? [], 10, 40, false),

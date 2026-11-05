@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Services;
 
+use App\Domain\Automation\Scheduler;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Enums\MessageOrigin;
@@ -53,6 +54,8 @@ final class ConversationTracker
         $updates = [];
 
         $isNewest = $conversation->last_message_at === null || $at->gte($conversation->last_message_at);
+        // Who the chat is waiting on (Needs reply / Waiting on customer), worked out before anything else changes.
+        $updates += ReplyState::forMessage($conversation, $message, Carbon::instance($at), $isNewest);
         if ($isNewest && $message->type !== 'reaction') {
             $updates += [
                 'last_message_at' => $at,
@@ -67,6 +70,8 @@ final class ConversationTracker
                 $updates['window_expires_at'] = Carbon::instance($at)->addHours((int) config('engage.messaging.window_hours', 24));
             }
             $updates['unread_count'] = $conversation->unread_count + 1;
+            // The customer wrote: pending automations that stop on a reply (nudges, reminders) are cancelled.
+            app(Scheduler::class)->cancelForConversation((string) $conversation->id, 'customer_replied');
             if ($conversation->status === ConversationStatus::Closed) {
                 $updates += ['status' => ConversationStatus::Open, 'closed_at' => null];
             }

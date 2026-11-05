@@ -21,8 +21,10 @@ use App\Domain\Messaging\Exceptions\MessagingException;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\ConversationNote;
+use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Messaging\Services\InboxTools;
+use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Infrastructure\Secrets\SecretStore;
@@ -169,9 +171,11 @@ final class LiveRuntime extends BotRuntime
 
     public function closeConversation(): void
     {
+        // A flow end step that resolves the chat (self-service done): Closed, with its resolution time.
+        $current = Conversation::query()->find($this->conversation->id) ?? $this->conversation;
         Conversation::query()->whereKey($this->conversation->id)->update([
             'status' => ConversationStatus::Closed->value, 'closed_at' => now(), 'handler' => null, 'handler_changed_at' => now(),
-        ]);
+        ] + ReplyState::closed($current));
     }
 
     public function inSegment(string $segment): bool
@@ -187,7 +191,7 @@ final class LiveRuntime extends BotRuntime
 
     public function businessOpen(): bool
     {
-        return InboxTools::isOpen(app(TenantContext::class)->tenantOrNull());
+        return InboxTools::isOpen(app(TenantContext::class)->tenantOrNull(), null, $this->conversation->phone_number_id);
     }
 
     public function openDays(): array
@@ -254,7 +258,10 @@ final class LiveRuntime extends BotRuntime
 
     public function business(): array
     {
-        return ChatbotWorkspace::variables(app(TenantContext::class)->tenantOrNull());
+        $tenant = app(TenantContext::class)->tenantOrNull();
+
+        // {{business.next_open}}: when the team is back ("tomorrow at 9:00"), from the hours and holidays.
+        return ChatbotWorkspace::variables($tenant) + ['next_open' => BusinessHours::nextOpenLabel($tenant, $this->conversation->phone_number_id)];
     }
 
     public function secret(string $name): ?string

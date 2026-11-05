@@ -57,6 +57,7 @@ class Conversation extends Model
     protected $fillable = [
         'tenant_id', 'phone_number_id', 'contact_id', 'status', 'assigned_membership_id', 'unread_count', 'last_message_at',
         'last_message_preview', 'last_message_direction', 'last_inbound_at', 'window_expires_at', 'closed_at',
+        'reply_state', 'needs_reply_since', 'after_hours', 'ad_lead', 'opened_at',
     ];
 
     protected function casts(): array
@@ -69,6 +70,10 @@ class Conversation extends Model
             'window_expires_at' => 'datetime',
             'last_auto_reply_at' => 'datetime',
             'snoozed_until' => 'datetime',
+            'needs_reply_since' => 'datetime',
+            'opened_at' => 'datetime',
+            'after_hours' => 'boolean',
+            'ad_lead' => 'boolean',
             'auto_reply_enabled' => 'boolean',
             'closed_at' => 'datetime',
             'handler_changed_at' => 'datetime',

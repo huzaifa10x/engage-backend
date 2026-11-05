@@ -10,6 +10,9 @@ use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Services\InboxTools;
+use App\Domain\Messaging\Services\ReplyState;
+use App\Domain\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -35,6 +38,13 @@ final class ConversationResource extends JsonResource
             // customer's next message from this time on (null = only "Hand back to bot" or closing does).
             'bot_resumes_at' => $this->getAttribute('handler') === 'human' && $this->botAvailable($request)
                 ? app(Chatbots::class)->autoResumeAt($this->resource)?->toIso8601String() : null,
+            // Who the chat is waiting on (Engagement Plan §II): needs_reply | waiting | snoozed | closed.
+            'state' => ReplyState::shown($this->resource),
+            // Needs reply: since when the customer has been waiting (the timer), whether it arrived after
+            // hours, whether it came from an ad (top of the morning queue).
+            'needs_reply_since' => $this->getAttribute('reply_state') === ReplyState::NEEDS_REPLY ? $this->getAttribute('needs_reply_since')?->toIso8601String() : null,
+            'after_hours' => (bool) $this->getAttribute('after_hours'),
+            'ad_lead' => (bool) $this->getAttribute('ad_lead'),
             'unread_count' => $this->unread_count,
             'last_message_at' => $this->last_message_at?->toIso8601String(),
             'last_message_preview' => $this->getAttribute('last_message_preview'),
@@ -42,6 +52,9 @@ final class ConversationResource extends JsonResource
             'window' => [
                 'open' => $this->isWindowOpen(),
                 'expires_at' => $this->window_expires_at?->toIso8601String(),
+                // "Reply before window closes": needs a reply and the 24 h window ends soon.
+                'closing_soon' => $this->getAttribute('reply_state') === ReplyState::NEEDS_REPLY && $this->isWindowOpen()
+                    && $this->window_expires_at !== null && $this->window_expires_at->lte(now()->addMinutes(self::warningMinutes($request))),
                 // Whether a normal message can be sent now (window open, and for an opted-out contact: they wrote after opting out).
                 'replies_allowed' => $this->relationLoaded('contact') && $this->contact !== null ? $this->acceptsFreeFormFrom($this->contact) : $this->isWindowOpen(),
             ],
@@ -55,6 +68,15 @@ final class ConversationResource extends JsonResource
             ]),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
+    }
+
+    private static function warningMinutes(Request $request): int
+    {
+        if (! $request->attributes->has('inbox.window_warning')) {
+            $request->attributes->set('inbox.window_warning', InboxTools::settings(app(TenantContext::class)->tenantOrNull())['window_warning_minutes']);
+        }
+
+        return (int) $request->attributes->get('inbox.window_warning');
     }
 
     /** Looked up once per number per request (an inbox list shows many conversations on few numbers). */

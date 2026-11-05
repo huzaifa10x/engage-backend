@@ -13,6 +13,7 @@ use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
@@ -155,7 +156,9 @@ final class TestRuntime extends BotRuntime
 
     public function business(): array
     {
-        return ChatbotWorkspace::variables(app(TenantContext::class)->tenantOrNull());
+        $tenant = app(TenantContext::class)->tenantOrNull();
+
+        return ChatbotWorkspace::variables($tenant) + ['next_open' => BusinessHours::nextOpenLabel($tenant)];
     }
 
     public function secret(string $name): ?string

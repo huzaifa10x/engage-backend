@@ -16,7 +16,7 @@ use App\Domain\Chatbots\Engine\FlowGraph;
  */
 final class FlowTemplates
 {
-    public const KEYS = ['appointment', 'bakery', 'real_estate', 'clinic', 'cleaning', 'car_rental', 'menu', 'lead', 'blank'];
+    public const KEYS = ['appointment', 'bakery', 'real_estate', 'clinic', 'cleaning', 'car_rental', 'menu', 'lead', 'after_hours', 'blank'];
 
     private const SLOTS = ['09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '02:00 PM', '03:00 PM', '04:00 PM', '05:00 PM'];
 
@@ -131,6 +131,12 @@ final class FlowTemplates
                 'fields' => [$business[0]],
             ],
             [
+                'key' => 'after_hours', 'name' => 'After hours', 'industry' => 'Any business', 'icon' => 'moon',
+                'description' => 'Answers messages that arrive while you are closed: says when you are back, asks what it is about and the details, and leaves the chat for the team’s morning queue.',
+                'steps' => ['Starts only outside business hours, once per closed period', 'We’re closed — back {{business.next_open}}', 'New enquiry · Existing order · Call me back', 'Details', 'Tag “After hours”, note for the team', 'Hand over: the chat stays Needs reply for the morning'],
+                'fields' => [$business[0]],
+            ],
+            [
                 'key' => 'blank', 'name' => 'Start from scratch', 'industry' => 'Any business', 'icon' => 'plus',
                 'description' => 'Only a Start block and a handover to the team — build the rest yourself.',
                 'steps' => ['Start', 'Talk to a person'],
@@ -196,6 +202,7 @@ final class FlowTemplates
             'cleaning' => $t->cleaning($c),
             'car_rental' => $t->carRental($c),
             'lead' => $t->lead(),
+            'after_hours' => $t->afterHours(),
             'blank' => $t->blank(),
             default => $t->menu(),
         };
@@ -444,6 +451,26 @@ final class FlowTemplates
             'That does not look like an email address. Please type it again, e.g. name@example.com', 'tag');
         $this->tag('tag', 'Tag as lead', ['Lead'], 'handoff');
         $this->add('handoff', 'handoff', 'Talk to a person', ['text' => 'Thank you! A member of our team will contact you shortly.', 'assign' => 'auto'], []);
+    }
+
+    /**
+     * After hours (Engagement Plan §III.2): starts only outside business hours, once per closed
+     * period, says when the team is back and collects the enquiry. It never closes the chat: it stays
+     * Needs reply and "Arrived after hours" for the team.
+     */
+    private function afterHours(): void
+    {
+        $this->add('start', 'start', 'Outside business hours', ['any_message' => false, 'after_hours' => true, 'ad_referral' => false, 'keywords' => []], ['next' => 'welcome']);
+        $this->buttons('welcome', 'We’re closed', "Thanks for your message 🌙 {{business.name}} is closed right now — we’re back {{business.next_open}}.\n\nWhat is it about?",
+            ['new' => 'New enquiry', 'order' => 'Existing order', 'call' => 'Call me back'], ['new' => 'set_new', 'order' => 'set_order', 'call' => 'set_call']);
+        $this->set('set_new', 'Topic = New enquiry', 'var:topic', 'New enquiry', 'details');
+        $this->set('set_order', 'Topic = Existing order', 'var:topic', 'Existing order', 'details');
+        $this->set('set_call', 'Topic = Call back', 'var:topic', 'Call back', 'details');
+        $this->question('details', 'Details', 'Tell us a little more, and the team will pick it up first thing when we open.', 'var:details', 'text', 'Please type a short message.', 'tag');
+        $this->tag('tag', 'Tag “After hours”', ['After hours'], 'note');
+        $this->add('note', 'note', 'Note for the team', ['text' => 'After hours · {{var.topic}}: {{var.details}}'], ['next' => 'handoff']);
+        // Handed to the team: the chat stays Needs reply and "Arrived after hours" for the morning queue.
+        $this->handoff('handoff', 'Thank you! We’ve passed this to the team — you’ll hear from us {{business.next_open}}.', 'Thank you! We’ve passed this to the team — you’ll hear from us {{business.next_open}}.');
     }
 
     private function blank(): void

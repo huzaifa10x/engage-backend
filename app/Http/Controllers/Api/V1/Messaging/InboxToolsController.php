@@ -6,21 +6,25 @@ namespace App\Http\Controllers\Api\V1\Messaging;
 
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Automation\Scheduler;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Models\CannedResponse;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\ConversationNote;
 use App\Domain\Messaging\Models\MemberNotification;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\ConversationResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -122,6 +126,11 @@ final class InboxToolsController extends Controller
         $data = $request->validate(['until' => ['required', 'date', 'after:now', 'before:+90 days']]);
 
         $conversation->forceFill(['snoozed_until' => $data['until']])->save();
+        $until = Carbon::parse($data['until']);
+        // The scheduler brings it back as Needs reply at that time (any earlier snooze return is replaced).
+        $scheduler = app(Scheduler::class);
+        $scheduler->cancelForConversation($conversation->id, 'resnoozed', 'snooze_return');
+        $scheduler->schedule('snooze_return', $until, "snooze:{$conversation->id}:{$until->getTimestamp()}", $conversation, payload: ['until' => $until->toIso8601String(), 'cancel_on_reply' => true]);
         $this->audit->record('conversation.snoozed', $conversation, after: ['until' => $data['until']]);
 
         return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
@@ -131,6 +140,7 @@ final class InboxToolsController extends Controller
     {
         $this->authorizeThread($conversation);
         $conversation->forceFill(['snoozed_until' => null])->save();
+        app(Scheduler::class)->cancelForConversation($conversation->id, 'unsnoozed', 'snooze_return');
 
         return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }
@@ -144,6 +154,8 @@ final class InboxToolsController extends Controller
 
         return response()->json(['data' => InboxTools::settings($tenant) + [
             'open_now' => InboxTools::isOpen($tenant),
+            // "We're back tomorrow at 9:00": what the after-hours reply says right now ({{business.next_open}}).
+            'next_open' => BusinessHours::enabled($tenant) ? BusinessHours::nextOpenLabel($tenant) : null,
             'can' => ['business_hours' => $set->allows(FeatureKey::BusinessHours), 'auto_routing' => $set->allows(FeatureKey::AutoRouting)],
         ]]);
     }
@@ -158,7 +170,31 @@ final class InboxToolsController extends Controller
             'business_hours.days.*.from' => ['required', 'date_format:H:i'],
             'business_hours.days.*.to' => ['required', 'date_format:H:i'],
             'routing' => ['sometimes', 'in:manual,round_robin'],
+            // Different hours for some numbers (phone number id → week); holidays; reply targets.
+            'number_hours' => ['sometimes', 'array', 'max:50'],
+            'number_hours.*' => ['array:'.implode(',', InboxTools::DAYS)],
+            'number_hours.*.*.open' => ['required', 'boolean'],
+            'number_hours.*.*.from' => ['required', 'date_format:H:i'],
+            'number_hours.*.*.to' => ['required', 'date_format:H:i'],
+            'holidays' => ['sometimes', 'array', 'max:100'],
+            'holidays.*.date' => ['required', 'date_format:Y-m-d'],
+            'holidays.*.name' => ['nullable', 'string', 'max:60'],
+            'reply_target_minutes' => ['sometimes', 'integer', 'min:1', 'max:1440'],
+            'window_warning_minutes' => ['sometimes', 'integer', 'min:15', 'max:720'],
         ]);
+        foreach ((array) ($data['number_hours'] ?? []) as $numberId => $week) {
+            if (! is_string($numberId) || ! PhoneNumber::query()->whereKey($numberId)->exists()) { // RLS: this workspace's numbers
+                throw ValidationException::withMessages(['number_hours' => 'Choose WhatsApp numbers connected to this workspace.']);
+            }
+            foreach ($week as $day => $hours) {
+                if ($hours['open'] && $hours['from'] >= $hours['to']) {
+                    throw ValidationException::withMessages(["number_hours.{$numberId}.{$day}.to" => 'Closing time must be after opening time.']);
+                }
+            }
+        }
+        if (isset($data['number_hours']) || isset($data['holidays'])) {
+            $this->entitlements->ensureEnabled($this->context->tenant(), FeatureKey::BusinessHours);
+        }
         $tenant = $this->context->tenant();
         if (($data['business_hours']['enabled'] ?? false) === true) {
             $this->entitlements->ensureEnabled($tenant, FeatureKey::BusinessHours);
@@ -174,6 +210,7 @@ final class InboxToolsController extends Controller
 
         $settings = $tenant->settings ?? [];
         $before = (array) ($settings['inbox'] ?? []);
+        // Lists are replaced as a whole (a removed holiday or number override disappears).
         $settings['inbox'] = array_merge($before, $data);
         $tenant->forceFill(['settings' => $settings])->save();
         $this->audit->record('tenant.inbox_settings_updated', $tenant, before: $before, after: $data);

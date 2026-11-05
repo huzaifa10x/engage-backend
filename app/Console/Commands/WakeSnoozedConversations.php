@@ -4,22 +4,29 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Domain\Automation\Scheduler;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\InboxTools;
+use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Console\Command;
 
-/** Every minute: snoozed conversations whose time has come return to the inbox, and the assignee is told. */
+/**
+ * Every minute: runs the scheduler's due actions (snooze returns, the after-hours ledger, later
+ * nudges), then returns any snoozed conversation whose time has come and has no scheduled return
+ * (snoozed before the scheduler existed) as Needs reply, telling the assignee.
+ */
 final class WakeSnoozedConversations extends Command
 {
     protected $signature = 'engage:inbox:wake-snoozed';
 
     protected $description = 'Return snoozed conversations to the inbox when their snooze time has passed.';
 
-    public function handle(TenantContext $context, InboxTools $tools): int
+    public function handle(TenantContext $context, InboxTools $tools, Scheduler $scheduler): int
     {
+        $scheduler->runDue();
         $due = $context->bypass(fn () => Conversation::query()->whereNotNull('snoozed_until')->where('snoozed_until', '<=', now())->limit(500)->get());
 
         foreach ($due->groupBy('tenant_id') as $tenantId => $conversations) {
@@ -29,7 +36,8 @@ final class WakeSnoozedConversations extends Command
             }
             $context->run($tenant, function () use ($conversations, $tools): void {
                 foreach ($conversations as $conversation) {
-                    if (Conversation::query()->whereKey($conversation->id)->whereNotNull('snoozed_until')->update(['snoozed_until' => null]) !== 1) {
+                    $back = ReplyState::snoozeEnded($conversation);
+                    if (Conversation::query()->whereKey($conversation->id)->whereNotNull('snoozed_until')->where('snoozed_until', '<=', now())->update($back) !== 1) {
                         continue;
                     }
                     $member = $conversation->assigned_membership_id !== null ? TenantMembership::query()->find($conversation->assigned_membership_id) : null;

@@ -36,14 +36,53 @@ final class InboxTools
     ) {}
 
     /**
-     * @return array{business_hours: array{enabled: bool, days: array<string, array{open: bool, from: string, to: string}>}, routing: string, timezone: string}
+     * The inbox settings (tenants.settings.inbox), with defaults:
+     *  business_hours  the workspace's week; weekend = days switched off
+     *  number_hours    optional: a different week for some WhatsApp numbers (phone number id → week)
+     *  holidays        closed dates (Eid, National Day…), added in advance
+     *  reply_target_minutes  first-response target for "answered within target" (business hours)
+     *  window_warning_minutes  "Reply before window closes" this long before the 24 h window ends
+     *
+     * @return array{business_hours: array{enabled: bool, days: array<string, array{open: bool, from: string, to: string}>}, number_hours: array<string, array<string, array{open: bool, from: string, to: string}>>, holidays: list<array{date: string, name: string}>, routing: string, timezone: string, reply_target_minutes: int, window_warning_minutes: int}
      */
     public static function settings(?Tenant $tenant): array
     {
         $stored = (array) (($tenant->settings ?? [])['inbox'] ?? []);
+        $numberHours = [];
+        foreach ((array) ($stored['number_hours'] ?? []) as $numberId => $week) {
+            if (is_string($numberId) && is_array($week)) {
+                $numberHours[$numberId] = self::week(['days' => $week]);
+            }
+        }
+        $holidays = [];
+        foreach ((array) ($stored['holidays'] ?? []) as $h) {
+            $date = is_array($h) ? ($h['date'] ?? null) : null;
+            if (is_string($date) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) === 1) {
+                $holidays[] = ['date' => $date, 'name' => mb_substr((string) ($h['name'] ?? ''), 0, 60)];
+            }
+        }
+        usort($holidays, fn (array $a, array $b) => strcmp($a['date'], $b['date']));
+
+        return [
+            'business_hours' => ['enabled' => (bool) ($stored['business_hours']['enabled'] ?? false), 'days' => self::week((array) ($stored['business_hours'] ?? []))],
+            'number_hours' => $numberHours,
+            'holidays' => $holidays,
+            'routing' => ($stored['routing'] ?? 'manual') === 'round_robin' ? 'round_robin' : 'manual',
+            'timezone' => BusinessHours::timezone($tenant),
+            'reply_target_minutes' => max(1, min(1440, (int) ($stored['reply_target_minutes'] ?? 10))),
+            'window_warning_minutes' => max(15, min(720, (int) ($stored['window_warning_minutes'] ?? 120))),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $stored  ['days' => [...]]
+     * @return array<string, array{open: bool, from: string, to: string}>
+     */
+    private static function week(array $stored): array
+    {
         $days = [];
         foreach (self::DAYS as $day) {
-            $d = (array) ($stored['business_hours']['days'][$day] ?? []);
+            $d = (array) ($stored['days'][$day] ?? []);
             $days[$day] = [
                 'open' => (bool) ($d['open'] ?? ! in_array($day, ['sat', 'sun'], true)),
                 'from' => self::clock($d['from'] ?? null, '09:00'),
@@ -51,11 +90,7 @@ final class InboxTools
             ];
         }
 
-        return [
-            'business_hours' => ['enabled' => (bool) ($stored['business_hours']['enabled'] ?? false), 'days' => $days],
-            'routing' => ($stored['routing'] ?? 'manual') === 'round_robin' ? 'round_robin' : 'manual',
-            'timezone' => $tenant->timezone ?? 'UTC',
-        ];
+        return $days;
     }
 
     private static function clock(mixed $value, string $default): string
@@ -63,18 +98,10 @@ final class InboxTools
         return is_string($value) && preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $value) === 1 ? $value : $default;
     }
 
-    /** True when business hours are not in use, or it is currently inside them (workspace time zone). */
-    public static function isOpen(?Tenant $tenant, ?Carbon $at = null): bool
+    /** True when business hours are not in use, or it is inside them (holidays and per-number hours included). */
+    public static function isOpen(?Tenant $tenant, ?Carbon $at = null, ?string $numberId = null): bool
     {
-        $settings = self::settings($tenant);
-        if (! $settings['business_hours']['enabled']) {
-            return true;
-        }
-        $local = ($at ?? now())->copy()->setTimezone($settings['timezone']);
-        $day = $settings['business_hours']['days'][self::DAYS[$local->dayOfWeekIso - 1]];
-        $time = $local->format('H:i');
-
-        return $day['open'] && $time >= $day['from'] && $time < $day['to'];
+        return BusinessHours::isOpen($tenant, $numberId, $at);
     }
 
     /**
