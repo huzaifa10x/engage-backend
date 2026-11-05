@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\AccountEmailController;
 use App\Http\Controllers\Api\V1\ActiveTenantController;
 use App\Http\Controllers\Api\V1\Analytics\AnalyticsController;
 use App\Http\Controllers\Api\V1\Analytics\MarketingController;
+use App\Http\Controllers\Api\V1\Analytics\SalesAnalyticsController;
 use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\Billing\BillingController;
@@ -20,6 +21,7 @@ use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\Growth\LeadController;
 use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
 use App\Http\Controllers\Api\V1\Growth\MetaAdController;
+use App\Http\Controllers\Api\V1\Growth\SalesController;
 use App\Http\Controllers\Api\V1\Growth\SiteController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
 use App\Http\Controllers\Api\V1\IntegrationController;
@@ -131,6 +133,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::middleware('can:'.Permission::IntegrationsManage->value)->prefix('integrations')->name('integrations.')->group(function () {
         Route::post('shopify/install', [IntegrationController::class, 'shopifyInstall'])->middleware('throttle:20,1')->name('shopify.install');
         Route::post('woocommerce', [IntegrationController::class, 'connectWooCommerce'])->middleware('throttle:20,1')->name('woocommerce.connect');
+        Route::post('woocommerce/plugin-key', [IntegrationController::class, 'pluginKey'])->middleware('throttle:20,1')->name('woocommerce.plugin-key');
         Route::patch('{integration}', [IntegrationController::class, 'update'])->whereUuid('integration')->name('update');
         Route::delete('{integration}', [IntegrationController::class, 'destroy'])->whereUuid('integration')->name('destroy');
         Route::put('{integration}/rules/{event}', [IntegrationController::class, 'saveRule'])->whereUuid('integration')->name('rules.save');
@@ -362,6 +365,18 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::post('growth/sites/{site}/verification-session', [SiteController::class, 'verification'])->whereUuid('site')->middleware('throttle:30,1')->name('growth.sites.verification');
         Route::post('growth/sites/{site}/test-session', [SiteController::class, 'startTest'])->whereUuid('site')->middleware('throttle:30,1')->name('growth.sites.test-session');
     });
+    // Growth Hub › Sales and Analytics › Sales & Revenue (Engagement Plan step D): store orders matched to chats.
+    Route::middleware('can:'.Permission::GrowthView->value)->group(function () {
+        Route::get('growth/sales', [SalesController::class, 'index'])->name('growth.sales.index');
+        Route::get('growth/sales/{order}', [SalesController::class, 'show'])->whereUuid('order')->name('growth.sales.show');
+    });
+    Route::post('growth/sales/{order}/review', [SalesController::class, 'review'])
+        ->middleware('can:'.Permission::GrowthManage->value)->whereUuid('order')->name('growth.sales.review');
+    Route::get('contacts/{contact}/orders', [SalesController::class, 'forContact'])
+        ->middleware('can:'.Permission::InboxView->value)->whereUuid('contact')->name('contacts.orders');
+    Route::get('analytics/sales', SalesAnalyticsController::class)
+        ->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.sales');
+
     Route::get('growth/leads/{contact}/evidence', LeadEvidenceController::class)
         ->middleware('can:'.Permission::GrowthView->value)->whereUuid('contact')->name('growth.leads.evidence');
 

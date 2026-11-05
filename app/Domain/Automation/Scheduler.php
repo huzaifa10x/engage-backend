@@ -106,6 +106,24 @@ final class Scheduler
             ->update(['status' => 'cancelled', 'result' => $reason, 'decided_at' => now(), 'updated_at' => now()]);
     }
 
+    /**
+     * A contact placed an order (or another stop condition that is about the person, not one chat):
+     * their pending actions of these kinds are cancelled in every conversation.
+     *
+     * @param  list<string>  $kinds
+     */
+    public function cancelForContact(string $contactId, string $reason, array $kinds): int
+    {
+        $tenant = $this->context->tenantOrNull();
+        if ($tenant === null || $kinds === []) {
+            return 0;
+        }
+
+        return DB::table('scheduled_actions')->where('tenant_id', $tenant->id)->where('contact_id', $contactId)->where('status', 'pending')
+            ->whereIn('kind', $kinds)
+            ->update(['status' => 'cancelled', 'result' => $reason, 'decided_at' => now(), 'updated_at' => now()]);
+    }
+
     /** Automated messages sent to a contact in the last 7 days. */
     public function sentThisWeek(string $contactId): int
     {

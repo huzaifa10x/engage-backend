@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\Messaging;
 
+use App\Domain\Commerce\Services\ChatLinks;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Events\MessageStored;
@@ -33,7 +34,7 @@ final class SendMessage
 
     private const MEDIA_TYPES = ['image', 'video', 'audio', 'document', 'sticker'];
 
-    public function __construct(private readonly ConversationTracker $conversations, private readonly TemplateMessage $templates, private readonly MessagingLimits $limits) {}
+    public function __construct(private readonly ConversationTracker $conversations, private readonly TemplateMessage $templates, private readonly MessagingLimits $limits, private readonly ChatLinks $links) {}
 
     /**
      * @param  array{type: string, body?: ?string, media_id?: ?string, template?: ?array<string, mixed>, reply_to?: ?string, content?: ?array<string, mixed>}  $data
@@ -99,6 +100,8 @@ final class SendMessage
         }
 
         $message = DB::transaction(function () use ($conversation, $number, $contact, $data, $origin, $sender, $idempotencyKey, $media) {
+            // Links to a connected store get the chat-to-order token (Engagement Plan step D).
+            [$data, $linkTokens] = $this->links->tag($conversation, $contact, $data, $origin, $sender);
             $content = (array) ($data['content'] ?? []);
             if ($data['type'] === 'reaction' && ! empty($data['reply_to'])) {
                 $content['message_id'] = $data['reply_to'];
@@ -127,6 +130,8 @@ final class SendMessage
                 'sent_by_membership_id' => $sender?->id,
                 'idempotency_key' => $idempotencyKey,
             ]);
+
+            $this->links->attach($linkTokens, $message->id);
 
             // Before the conversation is touched: refusing here rolls the whole message back.
             $this->limits->reserve($message, $conversation, $contact, $number);

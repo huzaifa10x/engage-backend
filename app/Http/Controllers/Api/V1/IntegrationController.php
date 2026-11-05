@@ -5,11 +5,15 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Commerce\CommerceAccess;
+use App\Domain\Commerce\Models\CommerceOrder;
+use App\Domain\Commerce\Services\ChatLinks;
 use App\Domain\Integrations\Models\Integration;
 use App\Domain\Integrations\Models\IntegrationEvent;
 use App\Domain\Integrations\Models\IntegrationRule;
 use App\Domain\Integrations\Providers\ShopifyConnector;
 use App\Domain\Integrations\Providers\WooCommerceConnector;
+use App\Domain\Integrations\Providers\WooCommercePlugin;
 use App\Domain\Integrations\Services\CommerceEvents;
 use App\Domain\Integrations\Services\Skip;
 use App\Domain\Integrations\Services\StorePhone;
@@ -46,7 +50,7 @@ final class IntegrationController extends Controller
         $set = $this->entitlements->for($this->context->tenant());
 
         return response()->json(['data' => [
-            'can' => ['stores' => $set->allows(FeatureKey::Integrations), 'api' => $set->allows(FeatureKey::ApiAccess), 'webhooks' => $set->allows(FeatureKey::Webhooks)],
+            'can' => ['stores' => $set->allows(FeatureKey::Integrations), 'sales' => CommerceAccess::allows($this->context->tenant()), 'api' => $set->allows(FeatureKey::ApiAccess), 'webhooks' => $set->allows(FeatureKey::Webhooks)],
             'providers' => ['shopify' => ['available' => $shopify->configured()], 'woocommerce' => ['available' => true]],
             'api_base_url' => rtrim((string) config('app.url'), '/').'/api/public/v1',
             'events' => collect(Integration::EVENTS)->map(fn (array $e, string $key) => ['key' => $key] + $e)->values(),
@@ -92,15 +96,44 @@ final class IntegrationController extends Controller
         return response()->json(['data' => $this->present($integration, withRules: true)], 201);
     }
 
+    /**
+     * Integrations › WooCommerce: the workspace key the plugin is connected with (shown once). For a
+     * store connected with REST keys, the key upgrades it to the plugin.
+     */
+    public function pluginKey(Request $request, WooCommercePlugin $plugin): JsonResponse
+    {
+        $data = $request->validate(['integration_id' => ['nullable', 'uuid']]);
+        $existing = null;
+        if (! empty($data['integration_id'])) {
+            $existing = Integration::query()->where('provider', Integration::WOOCOMMERCE)->findOrFail($data['integration_id']);
+        } else {
+            $this->ensureRoom(pendingAllowed: true);
+        }
+        CommerceAccess::ensure($this->context->tenant());
+        ['integration' => $integration, 'key' => $key] = $plugin->issueKey($existing, $this->context->membership()?->id);
+        $this->audit->record('integration.plugin_key_created', null, meta: ['integration_id' => $integration->id]);
+
+        return response()->json(['data' => ['key' => $key, 'expires_in_days' => WooCommercePlugin::KEY_DAYS, 'integration' => $this->present($integration, withRules: true)]], 201);
+    }
+
     public function update(Request $request, Integration $integration): JsonResponse
     {
         $data = $request->validate([
             'status' => ['sometimes', 'in:active,paused'],
+            'link_days' => ['sometimes', 'integer', 'min:1', 'max:90'],
+            'paid_stage_id' => ['sometimes', 'nullable', 'uuid', 'exists:crm_stages,id'],
+            'tracker_auto' => ['sometimes', 'boolean'],
             'default_country_code' => ['sometimes', 'nullable', 'string', 'regex:/^\+?\d{1,4}$/'],
             'tag' => ['sometimes', 'nullable', 'string', 'max:40'],
             'trust_store_consent' => ['sometimes', 'boolean'],
         ]);
         $settings = (array) $integration->settings;
+        foreach (['link_days', 'paid_stage_id', 'tracker_auto'] as $key) {
+            if (array_key_exists($key, $data)) {
+                $settings[$key] = $data[$key];
+            }
+        }
+        ChatLinks::forgetStores($integration->tenant_id);
         foreach (['default_country_code', 'tag', 'trust_store_consent'] as $key) {
             if (array_key_exists($key, $data)) {
                 $settings[$key] = is_string($data[$key]) ? ltrim(trim($data[$key]), '+') : $data[$key];
@@ -228,10 +261,11 @@ final class IntegrationController extends Controller
         ];
     }
 
-    private function ensureRoom(): void
+    private function ensureRoom(bool $pendingAllowed = false): void
     {
         $this->entitlements->ensureEnabled($this->context->tenant(), FeatureKey::Integrations);
-        if (Integration::query()->count() >= self::MAX_STORES) {
+        $q = Integration::query()->when($pendingAllowed, fn ($q) => $q->where('external_id', 'not like', 'pending:%'));
+        if ($q->count() >= self::MAX_STORES) {
             throw ValidationException::withMessages(['store_url' => 'You have reached the limit of '.self::MAX_STORES.' connected stores.']);
         }
     }
@@ -245,6 +279,17 @@ final class IntegrationController extends Controller
             'events' => $i->events(), 'last_event_at' => $i->last_event_at?->toIso8601String(), 'created_at' => $i->created_at?->toIso8601String(),
             'active_rules' => IntegrationRule::query()->where('integration_id', $i->id)->where('enabled', true)->count(),
         ];
+        if ($i->provider === Integration::WOOCOMMERCE) {
+            $out += [
+                'via' => $i->viaPlugin() ? 'plugin' : ($i->pending() ? 'waiting' : 'rest'),
+                'pending' => $i->pending(),
+                'link_days' => (int) $i->setting('link_days', ChatLinks::DEFAULT_DAYS),
+                'paid_stage_id' => $i->setting('paid_stage_id'),
+                'tracker_auto' => (bool) $i->setting('tracker_auto', true),
+                'health' => WooCommercePlugin::health($i),
+                'orders_30d' => CommerceOrder::query()->where('integration_id', $i->id)->where('placed_at', '>=', now()->subDays(30))->count(),
+            ];
+        }
         if ($withRules) {
             $rules = IntegrationRule::query()->where('integration_id', $i->id)->get()->keyBy('event');
             $out['rules'] = collect($i->events())->map(fn (string $event) => [

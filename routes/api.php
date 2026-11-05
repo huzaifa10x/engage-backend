@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Http\Controllers\Api\V1\Billing\StripeWebhookController;
 use App\Http\Controllers\Chatbots\ChatbotHookController;
 use App\Http\Controllers\Integrations\StoreWebhookController;
+use App\Http\Controllers\Integrations\WooCommercePluginController;
 use App\Http\Controllers\Meta\DataDeletionController;
 use App\Http\Controllers\Meta\WebhookController;
 use Illuminate\Support\Facades\Route;
@@ -52,4 +53,12 @@ Route::prefix('integrations')->name('integrations.')->group(function () {
     Route::get('shopify/callback', [StoreWebhookController::class, 'shopifyCallback'])->middleware('throttle:60,1')->name('shopify.callback');
     Route::post('shopify/webhook', [StoreWebhookController::class, 'shopify'])->name('shopify.webhook');
     Route::post('woocommerce/{publicId}/webhook', [StoreWebhookController::class, 'woocommerce'])->where('publicId', '[a-z0-9]{32}')->name('woocommerce.webhook');
+    // The "10X Engage for WooCommerce" plugin: connect with the workspace key, then signed calls.
+    Route::get('woocommerce/plugin.zip', [WooCommercePluginController::class, 'download'])->middleware('throttle:30,1')->name('woocommerce.plugin.download');
+    Route::post('woocommerce/plugin/connect', [WooCommercePluginController::class, 'connect'])->middleware('throttle:20,1')->name('woocommerce.plugin.connect');
+    Route::prefix('woocommerce/{publicId}/plugin')->where(['publicId' => '[a-z0-9]{32}'])->middleware('throttle:240,1')->name('woocommerce.plugin.')->group(function () {
+        Route::post('events', [WooCommercePluginController::class, 'events'])->name('events');
+        Route::post('heartbeat', [WooCommercePluginController::class, 'heartbeat'])->name('heartbeat');
+        Route::post('reconcile', [WooCommercePluginController::class, 'reconcile'])->name('reconcile');
+    });
 });

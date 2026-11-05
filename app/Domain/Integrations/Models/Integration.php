@@ -22,6 +22,7 @@ use Illuminate\Support\Carbon;
  * @property string $status
  * @property ?string $secret_id
  * @property ?string $webhook_secret
+ * @property ?string $plugin_secret
  * @property ?array<string, mixed> $settings
  * @property ?Carbon $last_event_at
  * @property ?string $last_error
@@ -61,13 +62,13 @@ class Integration extends Model
         'checkout_path' => 'Checkout link without the domain (for a button)',
     ];
 
-    protected $fillable = ['tenant_id', 'provider', 'public_id', 'name', 'external_id', 'status', 'secret_id', 'webhook_secret', 'settings', 'last_event_at', 'last_error', 'connected_by_membership_id'];
+    protected $fillable = ['tenant_id', 'provider', 'public_id', 'name', 'external_id', 'status', 'secret_id', 'webhook_secret', 'plugin_secret', 'settings', 'last_event_at', 'last_error', 'connected_by_membership_id'];
 
-    protected $hidden = ['webhook_secret', 'secret_id'];
+    protected $hidden = ['webhook_secret', 'plugin_secret', 'secret_id'];
 
     protected function casts(): array
     {
-        return ['webhook_secret' => 'encrypted', 'settings' => 'array', 'last_event_at' => 'datetime'];
+        return ['webhook_secret' => 'encrypted', 'plugin_secret' => 'encrypted', 'settings' => 'array', 'last_event_at' => 'datetime'];
     }
 
     /** @return HasMany<IntegrationRule, $this> */
@@ -79,6 +80,29 @@ class Integration extends Model
     public function setting(string $key, mixed $default = null): mixed
     {
         return $this->settings[$key] ?? $default;
+    }
+
+    /** The "10X Engage for WooCommerce" plugin is installed and connected (orders, chat links, tracker). */
+    public function viaPlugin(): bool
+    {
+        return $this->provider === self::WOOCOMMERCE && $this->plugin_secret !== null && $this->plugin_secret !== '';
+    }
+
+    /** Waiting for the plugin to connect with the workspace key (no store address yet). */
+    public function pending(): bool
+    {
+        return str_starts_with($this->external_id, 'pending:');
+    }
+
+    /** The store's host, without www (links to it get the chat-to-order token). */
+    public function host(): ?string
+    {
+        if ($this->pending()) {
+            return null;
+        }
+        $host = strtolower((string) preg_replace('~[/?#:].*$~', '', $this->external_id));
+
+        return $host !== '' ? (string) preg_replace('/^www\./', '', $host) : null;
     }
 
     /** @return list<string> the events this kind of store reports */
