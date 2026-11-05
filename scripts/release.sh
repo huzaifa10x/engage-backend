@@ -2,10 +2,11 @@
 # Release tooling for 10X Engage, run on a developer's computer from the engage-backend folder.
 # It never deploys local files: the server deploys what is on GitHub, so push first.
 #
-#   npm run deploy:staging        deploy branch `staging` of all three repos to staging
-#   npm run deploy:production     deploy branch `main` to production (only what staging has run; asks to confirm)
+#   npm run release               all three steps below in one go: staging → promote → production
+#   npm run deploy:staging        bring everything pushed to `main` into `staging`, then deploy `staging`
 #   npm run release:promote       move what is on staging to main (fast-forward), ready for production
-#   npm run release:sync          bring main back into staging (after a hotfix)
+#   npm run deploy:production     deploy branch `main` to production (only what staging has run; asks to confirm)
+#   npm run release:sync          bring main into staging without deploying (deploy:staging does this itself)
 #   npm run release:status        what each environment runs, and its last releases
 #   npm run rollback:staging      back to the previous successful staging release
 #   npm run rollback:production   back to the previous successful production release (asks to confirm)
@@ -99,6 +100,12 @@ deploy() {
     if [[ "$env" == production ]]; then need_ssh production staging; else need_ssh staging; fi
     say "Checking what will be deployed to $env (branch $branch)"
     fetch_all
+    if [[ "$env" == staging ]]; then
+        # Everything pushed to main goes to staging first: main is brought in before every staging deploy.
+        check_pushed main
+        say "Bringing everything on main into staging"
+        sync_staging
+    fi
     check_pushed "$branch"
 
     if [[ "$env" == production ]]; then
@@ -163,15 +170,17 @@ promote() {
         name="${entry%%:*}" dir="${entry#*:}"
         has_branch "$dir" staging || die "$name has no staging branch. Run: npm run release:init"
         if ! git -C "$dir" merge-base --is-ancestor origin/main origin/staging; then
-            die "$name: main has commits that staging does not (a hotfix?). Run npm run release:sync first, test on staging, then promote."
+            die "$name: main has commits that have not been on staging yet (pushed after the last staging deploy).
+   Run npm run deploy:staging first: it brings them into staging and deploys them for testing."
         fi
     done
     for entry in "${repos[@]}"; do
         name="${entry%%:*}" dir="${entry#*:}"
         printf '  %s:\n' "$name"
         git -C "$dir" log --oneline --no-decorate --max-count=40 origin/main..origin/staging | sed 's/^/      /'
+        [[ -n "$(git -C "$dir" log --oneline origin/main..origin/staging)" ]] || echo "      (main already matches staging)"
     done
-    confirm promote "main will be moved to what is on staging now (nothing is deployed yet)."
+    # No question here: this deploys nothing, and main only moves to what staging has already run.
     local failed=()
     for entry in "${repos[@]}"; do
         name="${entry%%:*}" dir="${entry#*:}"
@@ -187,30 +196,49 @@ promote() {
     echo "Next: npm run deploy:production"
 }
 
-# main → staging (merge), so a hotfix made on main is never lost when staging is promoted later.
-sync() {
-    say "Bringing main into staging"
-    fetch_all
+# main → staging, so nothing pushed to main is ever missed: work pushed straight to main (patches,
+# hotfixes) reaches staging first and is then promoted with it. Fast-forward when staging is simply
+# behind; a merge commit when both moved; stops only on a real conflict. Never deploys anything.
+sync_staging() {
     local entry name dir tmp
     for entry in "${repos[@]}"; do
         name="${entry%%:*}" dir="${entry#*:}"
-        if git -C "$dir" merge-base --is-ancestor origin/main origin/staging; then
-            ok "$name: staging already contains main"
+        if ! has_branch "$dir" staging; then
+            retry git -C "$dir" push --quiet origin origin/main:refs/heads/staging || die "$name: could not create the staging branch on GitHub."
+            ok "$name: staging created from main"
             continue
         fi
-        tmp="$(mktemp -d)"
-        git -C "$dir" worktree add --quiet --detach "$tmp" origin/staging
-        if git -C "$tmp" merge --no-edit --quiet -m "Merge main into staging (hotfix sync)" origin/main; then
-            retry git -C "$tmp" push --quiet origin HEAD:refs/heads/staging && ok "$name: main merged into staging"
+        if git -C "$dir" merge-base --is-ancestor origin/main origin/staging; then
+            ok "$name: staging already has everything on main"
+        elif git -C "$dir" merge-base --is-ancestor origin/staging origin/main; then
+            retry git -C "$dir" push --quiet origin origin/main:refs/heads/staging \
+                || die "$name: GitHub refused to update staging. Run the command again."
+            ok "$name: staging moved up to main ($(git -C "$dir" rev-parse --short origin/main))"
         else
-            git -C "$tmp" merge --abort || true
+            tmp="$(mktemp -d)"
+            git -C "$dir" worktree add --quiet --detach "$tmp" origin/staging
+            if git -C "$tmp" -c user.name="${DEPLOY_NAME:-$(git config user.name || echo release)}" -c user.email="${DEPLOY_EMAIL:-$(git config user.email || echo release@localhost)}" \
+                merge --no-edit --quiet -m "Merge main into staging" origin/main; then
+                retry git -C "$tmp" push --quiet origin HEAD:refs/heads/staging || { git -C "$dir" worktree remove --force "$tmp"; die "$name: GitHub refused to update staging. Run the command again."; }
+                ok "$name: main merged into staging"
+            else
+                git -C "$tmp" merge --abort || true
+                git -C "$dir" worktree remove --force "$tmp"
+                die "$name: main and staging change the same lines and cannot be merged automatically.
+   Merge them by hand once: git checkout staging && git pull && git merge origin/main && git push"
+            fi
             git -C "$dir" worktree remove --force "$tmp"
-            die "$name: main and staging conflict. Merge them by hand: git checkout staging && git merge origin/main"
         fi
-        git -C "$dir" worktree remove --force "$tmp"
+        retry git -C "$dir" fetch --quiet origin staging || true
     done
+}
+
+sync() {
+    say "Bringing main into staging"
+    fetch_all
+    sync_staging
     echo
-    echo "Next: npm run deploy:staging (and test the hotfix there too)"
+    echo "Next: npm run deploy:staging"
 }
 
 init() {
@@ -250,6 +278,7 @@ rollback() {
 
 case "${1:-}" in
     deploy) deploy "${2:-}" "${3:-}" ;;
+    release) deploy staging && promote && deploy production ;;
     promote) promote ;;
     sync) sync ;;
     init) init ;;

@@ -5,6 +5,7 @@
         "dev": "vite",
         "build": "tsc --noEmit && vite build",
         "typecheck": "tsc --noEmit",
+        "release": "bash scripts/release.sh release",
         "deploy:staging": "bash scripts/release.sh deploy staging",
         "deploy:production": "bash scripts/release.sh deploy production",
         "release:promote": "bash scripts/release.sh promote",

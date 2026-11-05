@@ -95,6 +95,18 @@ The branch decides the environment in three independent places, so one mistake c
 the GitHub workflow (branch → folder), the server folder (`/opt/engage-staging` can only check out
 `staging`) and `deploy.sh --env` (refuses if it does not match the folder).
 
+### The normal release (work pushed to `main`)
+```bash
+npm run release          # = the three commands below, in order
+npm run deploy:staging   # brings everything pushed to main into staging, deploys staging, health checks
+npm run release:promote  # main = exactly what staging now runs (no question: nothing is deployed)
+npm run deploy:production  # shows the changes, asks you to type "production", deploys, tags
+```
+`deploy:staging` always brings `main` into `staging` first (fast-forward, or a merge commit when
+both moved), so a patch pushed straight to `main` is never left behind and never blocks the release.
+It stops only if `main` and `staging` change the same lines (then merge once by hand), or if your
+own local `main` has commits you haven't pushed.
+
 ### A feature, start to finish
 ```bash
 git checkout staging && git pull
@@ -123,8 +135,8 @@ npm run deploy:production -- --hotfix         # asks for "production" and then "
 npm run release:sync                          # merges main back into staging: the fix is never lost
 npm run deploy:staging
 ```
-`release:promote` refuses to run while main has a commit that staging lacks, so a hotfix cannot be
-overwritten by the next release.
+`deploy:staging` brings the hotfix into staging as well, and `release:promote` refuses to run while
+main has a commit that staging hasn't run, so a hotfix can never be overwritten by the next release.
 
 ### Rollback
 ```bash
@@ -141,10 +153,11 @@ it (Backups and restore).
 ### All commands (run in the engage-backend folder on your computer)
 | Command | What it does |
 |---|---|
-| `npm run deploy:staging` | Deploys `staging` of backend, web and site to staging; waits for the health checks. |
+| `npm run release` | `deploy:staging`, then `release:promote`, then `deploy:production`, stopping at the first failure. |
+| `npm run deploy:staging` | Brings everything on `main` into `staging`, then deploys `staging` of backend, web and site; waits for the health checks. |
 | `npm run deploy:production` | Deploys `main` to production after checking staging ran it; lists the changes; asks to type `production`; tags the release `prod-YYYYMMDD-HHMMSS` in all repos. |
 | `npm run release:promote` | Moves `main` to what is on `staging` (fast-forward only). Deploys nothing. |
-| `npm run release:sync` | Merges `main` into `staging` (after a hotfix). |
+| `npm run release:sync` | Brings `main` into `staging` without deploying (`deploy:staging` does it by itself). |
 | `npm run release:status` | What each environment runs, and its last 10 releases. |
 | `npm run rollback:staging` / `rollback:production` | Previous successful release. |
 | `npm run release:init` | One time: creates the `staging` branch from `main` in all three repos. |
