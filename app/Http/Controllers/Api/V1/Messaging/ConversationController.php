@@ -7,6 +7,8 @@ namespace App\Http\Controllers\Api\V1\Messaging;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\Permission;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Automation\FollowUps;
+use App\Domain\Automation\Scheduler;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Developer\Services\WebhookDispatcher;
@@ -215,6 +217,10 @@ final class ConversationController extends Controller
     {
         $this->authorizeThread($conversation);
         $chatbots->takeOver($conversation);
+        // A person took over: customer nudges stop.
+        foreach (FollowUps::NUDGE_KINDS as $kind) {
+            app(Scheduler::class)->cancelForConversation($conversation->id, 'taken_over', $kind);
+        }
         if ($conversation->assigned_membership_id === null) {
             $conversation->forceFill(['assigned_membership_id' => $this->membership()->id])->save();
         }

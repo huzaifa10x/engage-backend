@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Services;
 
+use App\Domain\Automation\FollowUps;
 use App\Domain\Automation\Scheduler;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Enums\MessageOrigin;
@@ -48,6 +49,8 @@ final class ReplyState
         if ($message->direction === Message::INBOUND && $message->origin === MessageOrigin::Customer) {
             if ($conversation->status === ConversationStatus::Closed || $state !== self::NEEDS_REPLY) {
                 $content = (array) ($message->content ?? []);
+                // The team-side follow-up rules for this wait (reply alert, escalation, window alert…).
+                FollowUps::waitStarted($conversation, $at, $at->copy()->addHours((int) config('engage.messaging.window_hours', 24)));
 
                 return [
                     'reply_state' => self::NEEDS_REPLY,
@@ -69,6 +72,9 @@ final class ReplyState
             if ($state === self::NEEDS_REPLY && $conversation->getAttribute('needs_reply_since') !== null) {
                 self::record($conversation, 'first_response', Carbon::parse($conversation->getAttribute('needs_reply_since')), $at, $message->getAttribute('sent_by_membership_id'));
             }
+            FollowUps::answered($conversation);
+            // Now waiting on the customer: the nudge for when they go quiet.
+            FollowUps::waitingOnCustomer($conversation, $at, (string) $message->id);
 
             return ['reply_state' => self::WAITING, 'needs_reply_since' => null, 'after_hours' => false, 'ad_lead' => false];
         }

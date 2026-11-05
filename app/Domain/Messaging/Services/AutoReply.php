@@ -24,12 +24,26 @@ final class AutoReply
 {
     public function __construct(private readonly TenantContext $context, private readonly ConsentService $consent) {}
 
-    /** @return array{enabled: bool, message: string, cooldown_hours: int, when: string} */
+    /**
+     * reply_with: "message" (the text below) or "chatbot" (a chatbot flow per WhatsApp number answers
+     * instead, started by the chatbot engine at the same moments and with the same once-per-period
+     * limit).
+     *
+     * @return array{enabled: bool, message: string, cooldown_hours: int, when: string, reply_with: string, flows: array<string, string>}
+     */
     public static function settings(?Tenant $tenant): array
     {
         $stored = (array) (($tenant->settings ?? [])['auto_reply'] ?? []);
+        $flows = [];
+        foreach ((array) ($stored['flows'] ?? []) as $numberId => $flowId) {
+            if (is_string($numberId) && is_string($flowId) && $flowId !== '') {
+                $flows[$numberId] = $flowId;
+            }
+        }
 
         return [
+            'reply_with' => ($stored['reply_with'] ?? 'message') === 'chatbot' ? 'chatbot' : 'message',
+            'flows' => $flows,
             'enabled' => (bool) ($stored['enabled'] ?? false),
             'message' => (string) ($stored['message'] ?? 'Thanks for your message! Our team has received it and will reply as soon as possible.'),
             'cooldown_hours' => max(1, min(168, (int) ($stored['cooldown_hours'] ?? 24))),
@@ -42,10 +56,11 @@ final class AutoReply
     {
         $tenant = $this->context->tenantOrNull();
         $settings = self::settings($tenant);
-        if (! $settings['enabled'] || trim($settings['message']) === '' || $contact->isOptedOut()) {
+        // A chatbot answers instead: the chatbot engine starts it (Chatbots::pick).
+        if (! $settings['enabled'] || $settings['reply_with'] === 'chatbot' || trim($settings['message']) === '' || $contact->isOptedOut()) {
             return;
         }
-        if ($settings['when'] === 'outside_hours' && InboxTools::isOpen($tenant)) {
+        if ($settings['when'] === 'outside_hours' && InboxTools::isOpen($tenant, null, $inbound->getAttribute('phone_number_id'))) {
             return; // the team is at work: a person will answer
         }
         // "STOP" / "START" already get their own confirmation.

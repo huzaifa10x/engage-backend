@@ -43,7 +43,7 @@ final class InboxTools
      *  reply_target_minutes  first-response target for "answered within target" (business hours)
      *  window_warning_minutes  "Reply before window closes" this long before the 24 h window ends
      *
-     * @return array{business_hours: array{enabled: bool, days: array<string, array{open: bool, from: string, to: string}>}, number_hours: array<string, array<string, array{open: bool, from: string, to: string}>>, holidays: list<array{date: string, name: string}>, routing: string, timezone: string, reply_target_minutes: int, window_warning_minutes: int}
+     * @return array{business_hours: array{enabled: bool, days: array<string, array{open: bool, from: string, to: string}>}, number_hours: array<string, array<string, array{open: bool, from: string, to: string}>>, holidays: list<array{date: string, name: string}>, routing: string, timezone: string, reply_target_minutes: int, reply_warn_minutes: int, window_warning_minutes: int}
      */
     public static function settings(?Tenant $tenant): array
     {
@@ -70,6 +70,8 @@ final class InboxTools
             'routing' => ($stored['routing'] ?? 'manual') === 'round_robin' ? 'round_robin' : 'manual',
             'timezone' => BusinessHours::timezone($tenant),
             'reply_target_minutes' => max(1, min(1440, (int) ($stored['reply_target_minutes'] ?? 10))),
+            // The Needs reply timer: grey until this, amber until the target, red after it.
+            'reply_warn_minutes' => max(0, min(1440, (int) ($stored['reply_warn_minutes'] ?? 5))),
             'window_warning_minutes' => max(15, min(720, (int) ($stored['window_warning_minutes'] ?? 120))),
         ];
     }

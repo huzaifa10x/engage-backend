@@ -20,6 +20,7 @@ use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Messaging\Services\AutoReply;
 use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Messaging\Services\ConversationTracker;
@@ -142,7 +143,7 @@ final class Chatbots
 
         // Back soon after leaving: continue where they left off (their message may be the answer),
         // unless the message itself starts another flow with a specific trigger.
-        if (! in_array($picked[2] ?? 'default', ['specific', 'after_hours'], true) && $this->resumeAbandoned($conversation, $contact, $input, $at)) {
+        if (! in_array($picked[2] ?? 'default', ['specific', 'after_hours', 'auto_reply'], true) && $this->resumeAbandoned($conversation, $contact, $input, $at)) {
             return;
         }
         if ($picked === null) {
@@ -152,6 +153,21 @@ final class Chatbots
         // The after-hours reply goes out once per closed period (the scheduler's ledger keeps the count).
         if ($via === 'after_hours' && ! app(Scheduler::class)->recordDone('after_hours_reply', self::afterHoursKey($conversation, Carbon::instance($at)), $conversation, 'flow_started', 10, true)) {
             return;
+        }
+        if ($via === 'auto_reply') {
+            // Claimed first, so two messages arriving together can't both start it; outside business
+            // hours it also counts as this period's after-hours reply.
+            $cooldown = AutoReply::settings(app(TenantContext::class)->tenantOrNull())['cooldown_hours'];
+            $claimed = Conversation::query()->whereKey($conversation->id)
+                ->where(fn ($q) => $q->whereNull('last_auto_reply_at')->orWhere('last_auto_reply_at', '<=', now()->subHours($cooldown)))
+                ->update(['last_auto_reply_at' => now()]);
+            if ($claimed !== 1) {
+                return;
+            }
+            $tenant = app(TenantContext::class)->tenantOrNull();
+            $closed = BusinessHours::enabled($tenant) && ! BusinessHours::isOpen($tenant, $conversation->phone_number_id, Carbon::instance($at));
+            app(Scheduler::class)->recordDone($closed ? 'after_hours_reply' : 'auto_reply', $closed ? self::afterHoursKey($conversation, Carbon::instance($at)) : "auto_reply:{$conversation->id}:".now()->getTimestamp(),
+                $conversation, 'flow_started', 10, true);
         }
         $session = $this->claim($conversation, fn () => ChatbotSession::query()->create([
             'flow_id' => $flow->id, 'flow_version' => $flow->published_version, 'conversation_id' => $conversation->id,
@@ -194,6 +210,22 @@ final class Chatbots
         // that the night's other messages wait for the team (no other flow, no auto-reply).
         $at = Carbon::instance($message !== null ? ($message->meta_timestamp ?? $message->created_at ?? now()) : now());
         $tenant = app(TenantContext::class)->tenantOrNull();
+        // Settings › Auto reply set to "a chatbot": that number's chosen flow answers when the auto reply
+        // would (always, or only outside business hours), at most once per conversation per period.
+        $ar = AutoReply::settings($tenant);
+        $arFlow = $ar['enabled'] && $ar['reply_with'] === 'chatbot' ? ($ar['flows'][$conversation->phone_number_id] ?? null) : null;
+        if ($arFlow !== null && (bool) ($conversation->getAttribute('auto_reply_enabled') ?? true)
+            && ($ar['when'] === 'always' || ! BusinessHours::isOpen($tenant, $conversation->phone_number_id, $at))) {
+            $last = $conversation->getAttribute('last_auto_reply_at');
+            if ($last === null || Carbon::parse($last)->lte(now()->subHours($ar['cooldown_hours']))) {
+                foreach ($candidates as [$flow, $version, $config]) {
+                    if ($flow->id === $arFlow) {
+                        return [$flow, $version, 'auto_reply'];
+                    }
+                }
+            }
+        }
+
         $afterHours = array_values(array_filter($candidates, fn (array $x) => (bool) ($x[2]['after_hours'] ?? false)));
         if ($afterHours !== [] && BusinessHours::enabled($tenant) && ! BusinessHours::isOpen($tenant, $conversation->phone_number_id, $at)) {
             if (app(Scheduler::class)->exists(self::afterHoursKey($conversation, $at))) {

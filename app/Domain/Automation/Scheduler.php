@@ -6,6 +6,7 @@ namespace App\Domain\Automation;
 
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
@@ -39,7 +40,16 @@ final class Scheduler
     /** @var array<string, class-string<ActionHandler>> */
     public const HANDLERS = [
         'snooze_return' => SnoozeReturn::class,
+        'reply_alert' => ReplyAlert::class,
+        'reply_escalation' => ReplyEscalation::class,
+        'window_alert' => WindowAlert::class,
+        'unassigned_assign' => UnassignedAssign::class,
+        'nudge' => Nudge::class,
+        'nudge_template' => TemplateNudge::class,
     ];
+
+    /** A person wrote this recently: automations stay out of their way. */
+    public const PERSON_RECENT_MINUTES = 60;
 
     public function __construct(private readonly TenantContext $context) {}
 
@@ -56,7 +66,7 @@ final class Scheduler
         $inserted = DB::table('scheduled_actions')->insertOrIgnore([
             'id' => $id, 'tenant_id' => $tenant->id, 'kind' => $kind,
             'conversation_id' => $conversation?->id, 'contact_id' => $contact !== null ? $contact->id : $conversation?->contact_id,
-            'due_at' => $dueAt, 'priority' => $priority, 'dedupe_key' => mb_substr($dedupeKey, 0, 191), 'status' => 'pending',
+            'due_at' => $dueAt->copy()->utc(), 'priority' => $priority, 'dedupe_key' => mb_substr($dedupeKey, 0, 191), 'status' => 'pending',
             'payload' => json_encode($payload, JSON_THROW_ON_ERROR), 'sends_message' => $sendsMessage,
             'created_at' => now(), 'updated_at' => now(),
         ]);
@@ -92,7 +102,7 @@ final class Scheduler
 
         return DB::table('scheduled_actions')->where('tenant_id', $tenant->id)->where('conversation_id', $conversationId)->where('status', 'pending')
             ->when($kind !== null, fn ($q) => $q->where('kind', $kind))
-            ->when($kind === null && $reason === 'customer_replied', fn ($q) => $q->whereRaw("coalesce((payload->>'cancel_on_reply')::boolean, true)"))
+            ->when($kind === null && $reason === 'customer_replied', fn ($q) => $q->whereRaw("coalesce((payload->>'cancel_on_reply')::boolean, false)"))
             ->update(['status' => 'cancelled', 'result' => $reason, 'decided_at' => now(), 'updated_at' => now()]);
     }
 
@@ -157,7 +167,7 @@ final class Scheduler
             }
 
             if (str_starts_with($verdict, 'hold:')) {
-                DB::table('scheduled_actions')->where('id', $a->id)->update(['due_at' => Carbon::parse(substr($verdict, 5)), 'result' => 'held_quiet_hours', 'updated_at' => now()]);
+                DB::table('scheduled_actions')->where('id', $a->id)->update(['due_at' => Carbon::parse(substr($verdict, 5))->utc(), 'result' => 'held_quiet_hours', 'updated_at' => now()]);
 
                 return true;
             }
@@ -181,7 +191,7 @@ final class Scheduler
         if ($handler->needsConsent() && ($contact === null || $contact->isOptedOut())) {
             return 'skipped:opted_out';
         }
-        if ($handler->staysOutOfPersonsWay() && $conversation !== null && $conversation->getAttribute('handler') === 'human') {
+        if ($handler->staysOutOfPersonsWay() && $conversation !== null && $this->personOwns($conversation)) {
             return 'skipped:person_owns_chat';
         }
         if ($handler->cancelsOnReply() && $conversation !== null && $conversation->last_inbound_at !== null
@@ -200,13 +210,21 @@ final class Scheduler
             }
         }
         if ((bool) $a->sends_message && $contact !== null) {
-            $cap = (int) (($this->context->tenant()->settings ?? [])['automation']['weekly_cap'] ?? self::DEFAULT_WEEKLY_CAP);
+            $cap = (int) FollowUps::settings($this->context->tenant())['weekly_cap'];
             if ($this->sentThisWeek($contact->id) >= $cap) {
                 return 'skipped:frequency_cap';
             }
         }
 
         return null;
+    }
+
+    /** An agent took the chat over (the bot's handler is a person) and wrote within the last hour. */
+    private function personOwns(Conversation $conversation): bool
+    {
+        return $conversation->getAttribute('handler') === 'human' && Message::query()->where('conversation_id', $conversation->id)
+            ->where('direction', Message::OUTBOUND)->whereIn('origin', ['agent', 'api', 'app_echo'])
+            ->where('created_at', '>=', now()->subMinutes(self::PERSON_RECENT_MINUTES))->exists();
     }
 
     private function decide(string $id, string $status, ?string $result): void

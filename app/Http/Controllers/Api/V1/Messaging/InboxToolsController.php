@@ -180,6 +180,7 @@ final class InboxToolsController extends Controller
             'holidays.*.date' => ['required', 'date_format:Y-m-d'],
             'holidays.*.name' => ['nullable', 'string', 'max:60'],
             'reply_target_minutes' => ['sometimes', 'integer', 'min:1', 'max:1440'],
+            'reply_warn_minutes' => ['sometimes', 'integer', 'min:0', 'max:1440'],
             'window_warning_minutes' => ['sometimes', 'integer', 'min:15', 'max:720'],
         ]);
         foreach ((array) ($data['number_hours'] ?? []) as $numberId => $week) {

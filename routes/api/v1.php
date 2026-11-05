@@ -27,6 +27,7 @@ use App\Http\Controllers\Api\V1\InvitationController;
 use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\Messaging\ContactController;
 use App\Http\Controllers\Api\V1\Messaging\ConversationController;
+use App\Http\Controllers\Api\V1\Messaging\FollowUpController;
 use App\Http\Controllers\Api\V1\Messaging\InboxToolsController;
 use App\Http\Controllers\Api\V1\Messaging\MediaController;
 use App\Http\Controllers\Api\V1\Messaging\MessageController;
@@ -179,6 +180,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
 
     Route::get('tenant/inbox-settings', [InboxToolsController::class, 'inboxSettings'])->name('tenant.inbox-settings');
+    Route::get('tenant/followups', [FollowUpController::class, 'show'])->middleware('can:'.Permission::SettingsView->value)->name('tenant.followups');
+    Route::put('tenant/followups', [FollowUpController::class, 'update'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.followups.update');
     Route::put('tenant/inbox-settings', [InboxToolsController::class, 'updateInboxSettings'])
         ->middleware('can:'.Permission::SettingsManage->value)->name('tenant.inbox-settings.update');
     Route::put('tenant/auto-reply', [TenantController::class, 'updateAutoReply'])

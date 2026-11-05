@@ -141,6 +141,34 @@ final class BusinessHours
     }
 
     /**
+     * The moment $seconds of opening time have passed after $from (e.g. "10 minutes in business
+     * hours"). Plain time when business hours are off.
+     */
+    public static function addSeconds(?Tenant $tenant, ?string $numberId, Carbon $from, int $seconds): Carbon
+    {
+        if (! self::enabled($tenant)) {
+            return $from->copy()->addSeconds($seconds);
+        }
+        $tz = self::timezone($tenant);
+        $cursor = $from->copy()->setTimezone($tz);
+        $left = $seconds;
+        for ($i = 0; $i < 400; $i++) {
+            $span = self::interval($tenant, $numberId, $cursor->copy()->startOfDay());
+            if ($span !== null && $cursor->lt($span[1])) {
+                $start = $cursor->max($span[0]);
+                $room = (int) $start->diffInSeconds($span[1], true);
+                if ($room >= $left) {
+                    return $start->copy()->addSeconds($left)->utc();
+                }
+                $left -= $room;
+            }
+            $cursor = $cursor->copy()->startOfDay()->addDay();
+        }
+
+        return $from->copy()->addSeconds($seconds);
+    }
+
+    /**
      * That day's opening interval in local time, or null when closed all day (day off, holiday).
      *
      * @return array{0: Carbon, 1: Carbon}|null
