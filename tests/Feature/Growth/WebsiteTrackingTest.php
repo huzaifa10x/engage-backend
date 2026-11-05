@@ -414,9 +414,13 @@ final class WebsiteTrackingTest extends TestCase
         $r = $this->getJson('/api/v1/growth/leads')->assertOk();
         $this->assertCount(1, $r->json('data'), 'one row per person, not per conversation');
         $this->assertSame(['all' => 1, 'new' => 0, 'returning' => 1], $r->json('meta.counts'));
-        $this->assertSame('Before tracking', $r->json('data.0.contact.acquisition.source.name'));
-        $this->assertNull($r->json('data.0.contact.acquisition.source.campaign'));
-        $this->assertSame('Latest: winter_sale (Google Ads)', $r->json('data.0.contact.acquisition.source.latest.line'));
+        // Shown with the paid touch that brought the existing contact back, never "Before tracking".
+        $this->assertSame('Google Ads', $r->json('data.0.contact.acquisition.source.name'));
+        $this->assertSame('winter_sale', $r->json('data.0.contact.acquisition.source.campaign'));
+        $this->assertTrue($r->json('data.0.contact.acquisition.returning'));
+        $this->assertNull($r->json('data.0.contact.acquisition.source.latest'));
+        $this->assertSame(1, count($this->getJson('/api/v1/growth/leads?source=google_ads')->json('data')), 'filtered by the touch it is shown with');
+        $this->assertSame(0, count($this->getJson('/api/v1/growth/leads?status=before')->json('data')));
         $kpi = $this->getJson('/api/v1/growth/leads/summary')->json('data');
         $this->assertSame([1, 0, 1], [$kpi['leads'], $kpi['new_customers'], $kpi['returning']]);
 

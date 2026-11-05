@@ -259,7 +259,7 @@ final class Orders
     {
         $tenant = app(TenantContext::class)->tenantOrNull();
         if ($tenant !== null && Acquisition::beforeTracking($contact, GrowthSettings::for($tenant))) {
-            return ['source' => 'before', 'label' => 'Before tracking'];
+            return ['source' => 'existing', 'label' => 'Existing contact'];
         }
         $touch = $contact->getAttribute('acquisition_original');
 

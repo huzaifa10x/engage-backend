@@ -116,7 +116,8 @@ final class LeadQuery
 
         if (! empty($f['ad'])) {
             $sourceId = DB::table('growth_meta_ads')->where('id', $f['ad'])->value('source_id'); // RLS: own workspace only
-            $query->whereHas('contact', fn ($c) => $sourceId === null ? $c->whereRaw('false') : $c->whereRaw("acquisition_original->>'ad_id' = ?", [$sourceId]));
+            $shown = self::shown($settings->startedAt);
+            $query->whereHas('contact', fn ($c) => $sourceId === null ? $c->whereRaw('false') : $c->whereRaw("({$shown})->>'ad_id' = ?", [$sourceId]));
         }
 
         if ($withTab) {
@@ -205,16 +206,29 @@ final class LeadQuery
         self::tracked($c, $startedAt)->whereRaw("coalesce(acquisition_original->>'source', '') IN ({$paid})");
     }
 
+    /**
+     * The touch a lead is shown (and filtered) by: its original source when that was paid; otherwise
+     * — a returning contact, created before tracking started or first written without an ad — the
+     * paid touch that brought it back (Acquisition::present). Never "Before tracking".
+     */
+    public static function shown(?Carbon $startedAt): string
+    {
+        $paid = "'".implode("','", Acquisition::PAID_SOURCES)."'";
+        $before = $startedAt === null ? 'false' : "contacts.created_at < '".$startedAt->copy()->utc()->format('Y-m-d H:i:sP')."'::timestamptz";
+
+        return "(CASE WHEN {$before} OR coalesce(acquisition_original->>'source', '') NOT IN ({$paid}) THEN acquisition_latest ELSE acquisition_original END)";
+    }
+
     /** @param Builder<Contact> $c */
     public static function status(Builder $c, string $status, ?Carbon $startedAt): void
     {
+        $t = self::shown($startedAt);
         match ($status) {
-            'before' => $startedAt === null ? $c->whereRaw('false') : $c->where('contacts.created_at', '<', $startedAt),
-            'meta' => self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' = 'meta_ad' AND coalesce(acquisition_original->>'type', 'meta_ctwa') = 'meta_ctwa' AND coalesce((acquisition_original->>'conflict')::boolean, false) = false"),
-            'multi' => self::tracked($c, $startedAt)->whereRaw("coalesce((acquisition_original->>'conflict')::boolean, false) = true"),
-            'ref' => self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'type' = 'website_reference'"),
-            'web' => self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'type' = 'website_unregistered'"),
-            'unattributed' => self::tracked($c, $startedAt)->whereNull('acquisition_original'),
+            'meta' => $c->whereRaw("{$t}->>'source' = 'meta_ad' AND coalesce({$t}->>'type', 'meta_ctwa') = 'meta_ctwa' AND coalesce(({$t}->>'conflict')::boolean, false) = false"),
+            'multi' => $c->whereRaw("coalesce(({$t}->>'conflict')::boolean, false) = true"),
+            'ref' => $c->whereRaw("{$t}->>'type' = 'website_reference'"),
+            'web' => $c->whereRaw("{$t}->>'type' = 'website_unregistered'"),
+            // Every lead is shown by a paid touch: there are no "Before tracking" or unattributed leads.
             default => $c->whereRaw('false'),
         };
     }
@@ -222,34 +236,33 @@ final class LeadQuery
     /** @param Builder<Contact> $c */
     public static function source(Builder $c, string $source, ?Carbon $startedAt): void
     {
+        $t = self::shown($startedAt);
         if ($source === 'before' || $source === 'unknown') {
-            self::status($c, $source === 'before' ? 'before' : 'unattributed', $startedAt);
+            $c->whereRaw('false');
 
             return;
         }
         if ($source === 'website') {
-            // Any lead whose first message came from a tracked website tap.
-            self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'type' IN ('website_reference', 'website_unregistered')");
+            $c->whereRaw("{$t}->>'type' IN ('website_reference', 'website_unregistered')");
 
             return;
         }
         if (in_array($source, ['meta', 'meta_paid', 'meta_post', 'meta_instagram', 'meta_facebook'], true)) {
             // Meta: a Click-to-WhatsApp ad, or a website tap from a Meta ad (utm_source=ig / fb).
-            self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' = 'meta_ad'");
+            $c->whereRaw("{$t}->>'source' = 'meta_ad'");
             // Paid ads vs boosted posts (referral source_type; older touches without it count as ads).
             if ($source === 'meta_paid' || $source === 'meta_post') {
-                $c->whereRaw("coalesce(acquisition_original->>'source_type', 'ad') ".($source === 'meta_post' ? '=' : '<>')." 'post'");
+                $c->whereRaw("coalesce({$t}->>'source_type', 'ad') ".($source === 'meta_post' ? '=' : '<>')." 'post'");
             }
             // "Meta ad · Instagram / Facebook" only with stored proof (Blueprint v1.4).
             if ($source === 'meta_instagram' || $source === 'meta_facebook') {
-                $c->whereRaw("acquisition_original->>'platform' = ?", [$source === 'meta_instagram' ? 'instagram' : 'facebook']);
+                $c->whereRaw("{$t}->>'platform' = ?", [$source === 'meta_instagram' ? 'instagram' : 'facebook']);
             }
 
             return;
         }
-
         // Google Ads, other paid campaigns, Organic, Direct: website sources.
-        self::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' = ?", [$source]);
+        $c->whereRaw("{$t}->>'source' = ?", [$source]);
     }
 
     /**

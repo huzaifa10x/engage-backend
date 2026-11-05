@@ -349,9 +349,12 @@ final class MetaAdLeadsTest extends TestCase
         $owner = $this->addMember($this->tenant, SystemRole::Owner);
         $contactId = $this->inTenant(fn () => Contact::query()->sole()->id);
         $this->actingAsMember($owner)->getJson("/api/v1/contacts/{$contactId}")->assertOk()
-            ->assertJsonPath('data.acquisition.status', 'before')
-            ->assertJsonPath('data.acquisition.label', 'Before tracking · Latest: Meta ad')
-            ->assertJsonPath('data.acquisition.original.label', 'Before tracking');
+            // Shown with the ad that brought the existing contact back — never "Before tracking".
+            ->assertJsonPath('data.acquisition.status', 'meta')
+            ->assertJsonPath('data.acquisition.label', 'Meta ad')
+            ->assertJsonPath('data.acquisition.returning', true)
+            ->assertJsonPath('data.acquisition.source.name', 'Meta ad')
+            ->assertJsonPath('data.acquisition.original.label', 'Existing contact (from before tracking started)');
     }
 
     public function test_a_contact_whose_first_message_had_no_ad_is_unattributed_even_after_a_later_ad(): void
@@ -393,7 +396,7 @@ final class MetaAdLeadsTest extends TestCase
         $acquisition = $this->getJson("/api/v1/contacts/{$contactId}")->assertOk()->json('data.acquisition');
         // Agents get the chip and the Source panel line (name, ad headline): never codes or click IDs.
         $this->assertSame([
-            'status' => 'meta', 'label' => 'Meta ad',
+            'status' => 'meta', 'label' => 'Meta ad', 'returning' => false,
             'source' => ['name' => 'Meta ad', 'campaign' => 'Ad: "Free consultation this week"', 'landing_page' => null, 'latest' => null],
         ], $acquisition);
         $this->getJson("/api/v1/growth/leads/{$contactId}/evidence")->assertForbidden();
@@ -431,7 +434,7 @@ final class MetaAdLeadsTest extends TestCase
             Contact::query()->where('wa_id', '971500000999')->sole()->id,
         ]);
 
-        $this->assertSame(['status' => 'meta', 'label' => 'Meta ad'], $this->getJson("/api/v1/contacts/{$fromAd}")->assertOk()->json('data.acquisition'));
+        $this->assertSame(['status' => 'meta', 'label' => 'Meta ad', 'returning' => false], $this->getJson("/api/v1/contacts/{$fromAd}")->assertOk()->json('data.acquisition'));
         $this->getJson("/api/v1/contacts/{$plain}")->assertOk()->assertJsonPath('data.acquisition', null);
         $this->getJson("/api/v1/growth/leads/{$fromAd}/evidence")->assertNotFound();
         $this->getJson('/api/v1/me')->assertOk()->assertJsonPath('data.growth.tier', 'chip');

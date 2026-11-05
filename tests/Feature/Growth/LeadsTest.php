@@ -100,7 +100,9 @@ final class LeadsTest extends TestCase
         $kpi = $this->getJson('/api/v1/growth/leads/summary')->json('data');
         $this->assertSame([2, 1, 1], [$kpi['leads'], $kpi['new_customers'], $kpi['returning']]);
         $mariam = collect($this->getJson('/api/v1/contacts')->json('data'))->firstWhere('display_name', 'Mariam');
-        $this->assertSame('Unattributed · Latest: Meta ad', $mariam['acquisition']['label']);
+        // Shown with the ad that brought her back, flagged returning (never "Unattributed").
+        $this->assertSame('Meta ad', $mariam['acquisition']['label']);
+        $this->assertTrue($mariam['acquisition']['returning']);
     }
 
     public function test_agents_see_only_their_own_leads_and_no_clicks_or_export(): void

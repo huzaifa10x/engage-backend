@@ -11,7 +11,8 @@ use Illuminate\Support\Carbon;
 /**
  * How a contact's acquisition is shown (Blueprint v1.4 statuses). Agents get the chip only;
  * people allowed to see evidence get the details. Status keys:
- *   before        Before tracking — the contact existed before Growth Hub started for the workspace
+ *   (a returning contact — created before tracking started, or first message not from a paid source —
+ *    is shown with the paid touch that brought it back, flagged `returning`)
  *   meta          Meta ad — the first message came from a click-to-WhatsApp ad
  *   ref           Reference matched — a website tap (registered click) matched to the first message
  *   multi         Multiple sources — a Meta ad and a website code on the same message (Meta is the origin)
@@ -61,23 +62,26 @@ final class Acquisition
         }
         $before = self::beforeTracking($contact, $settings);
 
-        $status = $before ? 'before' : ($original !== null ? self::statusOf($original) : 'unattributed');
-        // The chip names the platform-aware source ("Meta ad · Instagram", "Google Ads") when there is one.
+        // A returning contact (it existed before tracking started, or its first message was not from a
+        // paid source) is shown with the paid touch that brought it back — never as "Before tracking".
+        // Marketing still credits only the original source; this is how the lead is shown.
+        $returning = $before || ! self::paid($original);
+        $shown = $returning ? $latest : $original;
+        if ($shown === null) {
+            return null;
+        }
+        $status = self::statusOf($shown);
+        // The chip names the platform-aware source ("Meta ad · Instagram", "Google Ads").
         $chip = match ($status) {
-            'meta' => (string) $original['label'],
-            'ref' => 'Reference matched · '.$original['label'],
-            'multi' => 'Multiple sources · '.$original['label'],
+            'meta' => (string) $shown['label'],
+            'ref' => 'Reference matched · '.$shown['label'],
+            'multi' => 'Multiple sources · '.$shown['label'],
             default => self::LABELS[$status],
         };
-        if ($before && $latest !== null) {
-            $chip = 'Before tracking · Latest: '.$latest['label']; // the campaign is shown on its own line
-        } elseif ($status === 'unattributed' && $latest !== null) {
-            $chip = 'Unattributed · Latest: '.$latest['label']; // first message had no ad, a later one did
-        }
 
-        $out = ['status' => $status, 'label' => $chip];
+        $out = ['status' => $status, 'label' => $chip, 'returning' => $returning];
         if ($summary || $details) {
-            $out['source'] = self::summary($status, $original, $latest);
+            $out['source'] = self::summary($shown, $returning ? null : $latest);
         }
         if (! $details) {
             return $out;
@@ -86,37 +90,32 @@ final class Acquisition
         $first = $contact->getAttribute('first_tracked_enquiry_at');
 
         return $out + [
-            // "Unknown" for contacts created after tracking started with no trustworthy source.
-            'original' => $before ? ['label' => 'Before tracking'] : ($original ?? ['label' => 'Unknown source']),
+            // Returning contacts: what they were before this paid touch.
+            'original' => $returning
+                ? ['label' => $before ? 'Existing contact (from before tracking started)' : ($original !== null ? (string) $original['label'] : 'Existing contact, no paid source')] + ($before ? [] : (array) $original)
+                : $original,
             'latest' => $latest,
             'first_tracked_enquiry_at' => $first !== null ? Carbon::parse($first)->toIso8601String() : null,
-            'landing_page' => $original['landing_path'] ?? $latest['landing_path'] ?? null,
-            'confidence' => $original !== null || $latest !== null ? 'confirmed' : null,
+            'landing_page' => $shown['landing_path'] ?? null,
+            'confidence' => 'confirmed',
         ];
     }
 
     /**
      * Source panel (Technical Specification v1.2 §6, prototype): the source name, the campaign only
      * from permitted evidence (UTM campaign, or the Meta ad headline Meta sent), the landing path.
+     * A later paid touch of a contact whose original source was paid is shown apart as `latest`
+     * ("Latest: winter_sale (Google Ads)") and never replaces the original.
      *
-     * @param  array<string, mixed>|null  $original
+     * @param  array<string, mixed>  $shown
      * @param  array<string, mixed>|null  $latest
-     *                                             The original source and its campaign never change; a later touch is shown apart as `latest`
-     *                                             ("Latest: winter_sale (Google Ads)") and never replaces them — a returning contact keeps the
-     *                                             source it first came from.
      * @return array{name: string, campaign: ?string, landing_page: ?string, latest: ?array{name: string, campaign: ?string, line: string, at: ?string}}
      */
-    private static function summary(string $status, ?array $original, ?array $latest): array
+    private static function summary(array $shown, ?array $latest): array
     {
-        $later = $latest !== null && ($original === null || ($latest['evidence_id'] ?? null) !== ($original['evidence_id'] ?? null)) ? self::touchLine($latest) : null;
-        if ($status === 'before') {
-            return ['name' => 'Before tracking', 'campaign' => null, 'landing_page' => null, 'latest' => $later];
-        }
-        if ($original === null) {
-            return ['name' => 'Unattributed', 'campaign' => null, 'landing_page' => null, 'latest' => $later];
-        }
+        $later = $latest !== null && self::paid($latest) && ($latest['evidence_id'] ?? null) !== ($shown['evidence_id'] ?? null) ? self::touchLine($latest) : null;
 
-        return ['name' => (string) $original['label'], 'campaign' => self::campaignOf($original), 'landing_page' => $original['landing_path'] ?? null, 'latest' => $later];
+        return ['name' => (string) $shown['label'], 'campaign' => self::campaignOf($shown), 'landing_page' => $shown['landing_path'] ?? null, 'latest' => $later];
     }
 
     /** @param array<string, mixed> $touch */
