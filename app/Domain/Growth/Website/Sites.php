@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Domain\Growth\Website;
 
+use App\Domain\Chatbots\Engine\FlowGraph;
+use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Growth\Models\GrowthSite;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -25,6 +28,47 @@ final class Sites
         'en' => "Hi, I'd like to know more about your services. (Ref: {reference})",
         'ar' => 'مرحبًا، أود معرفة المزيد عن خدماتكم. (المرجع: {reference})',
     ];
+
+    public const DEFAULT_GREETING = "Hi, I'd like to know more about your services.";
+
+    public const GREETING_MAX = 200;
+
+    /** The reference the tracker always adds, per page language. It is not part of any editable text. */
+    public const SUFFIX = ['en' => '(Ref: {reference})', 'ar' => '(المرجع: {reference})'];
+
+    /**
+     * A greeting as stored: plain text, one line, no links, no reference of its own. Null = empty.
+     *
+     * @throws WebsiteException
+     */
+    public static function cleanGreeting(?string $text): ?string
+    {
+        $t = trim((string) preg_replace('/\s+/u', ' ', strip_tags((string) $text)));
+        if ($t === '') {
+            return null;
+        }
+        if (mb_strlen($t) > self::GREETING_MAX) {
+            throw new WebsiteException('Keep the message to '.self::GREETING_MAX.' characters.');
+        }
+        if (preg_match('~https?://|www\.|wa\.me|[a-z0-9-]+\.(com|ae|net|org|io|co)\b~i', $t) === 1) {
+            throw new WebsiteException('The message can’t contain links.');
+        }
+        if (preg_match('/XG-/i', $t) === 1 || preg_match('/\((?:Ref|المرجع)\s*:/u', $t) === 1) {
+            throw new WebsiteException('Leave the reference out: it is added automatically.');
+        }
+
+        return $t;
+    }
+
+    /**
+     * The greetings the tracker uses (Arabic falls back to the English greeting).
+     *
+     * @return array{en: string, ar: ?string}
+     */
+    public static function greetings(GrowthSite $site): array
+    {
+        return ['en' => $site->greeting ?? self::DEFAULT_GREETING, 'ar' => $site->greeting_ar];
+    }
 
     public const SDK_VERSION = '1.0.0';
 
@@ -53,8 +97,10 @@ final class Sites
     /**
      * @param  list<string>  $phoneIds
      */
-    public function create(Tenant $tenant, string $domain, ?string $name, array $phoneIds): GrowthSite
+    public function create(Tenant $tenant, string $domain, ?string $name, array $phoneIds, ?string $greeting = null, ?string $greetingAr = null): GrowthSite
     {
+        $greeting = self::cleanGreeting($greeting);
+        $greetingAr = self::cleanGreeting($greetingAr);
         $host = self::normalizeDomain($domain);
         if ($host === null) {
             throw new WebsiteException('Enter the website address, for example www.example.ae.');
@@ -70,7 +116,7 @@ final class Sites
 
         $key = 'pk_site_'.Str::lower(Str::random(24));
 
-        return DB::transaction(function () use ($tenant, $host, $name, $key, $phoneIds) {
+        return DB::transaction(function () use ($tenant, $host, $name, $key, $phoneIds, $greeting, $greetingAr) {
             /** @var GrowthSite $site */
             $site = GrowthSite::query()->create([
                 'domain' => $host,
@@ -82,7 +128,10 @@ final class Sites
                 'session_landing_mode' => true,
                 'enabled' => true,
                 'config_version' => 1,
+                'greeting' => $greeting,
+                'greeting_ar' => $greetingAr,
             ]);
+            Cache::forget("growth:greetings:{$site->tenant_id}");
             DB::table('growth_site_health')->insert(['site_id' => $site->id, 'tenant_id' => $site->tenant_id, 'config_version' => 1]);
             $this->setNumbers($site, $phoneIds);
 
@@ -91,7 +140,7 @@ final class Sites
     }
 
     /**
-     * @param  array{display_name?: ?string, connected_phone_ids?: list<string>, consent_mode?: string, session_landing_mode?: bool, enabled?: bool}  $changes
+     * @param  array{display_name?: ?string, connected_phone_ids?: list<string>, consent_mode?: string, session_landing_mode?: bool, enabled?: bool, greeting?: ?string, greeting_ar?: ?string}  $changes
      */
     public function update(GrowthSite $site, array $changes): GrowthSite
     {
@@ -99,8 +148,14 @@ final class Sites
             if (array_key_exists('connected_phone_ids', $changes)) {
                 $this->setNumbers($site, $changes['connected_phone_ids']);
             }
-            $site->fill(array_intersect_key($changes, array_flip(['display_name', 'consent_mode', 'session_landing_mode', 'enabled'])));
+            foreach (['greeting', 'greeting_ar'] as $key) {
+                if (array_key_exists($key, $changes)) {
+                    $changes[$key] = self::cleanGreeting($changes[$key]);
+                }
+            }
+            $site->fill(array_intersect_key($changes, array_flip(['display_name', 'consent_mode', 'session_landing_mode', 'enabled', 'greeting', 'greeting_ar'])));
             $site->config_version++; // the tracker re-reads its configuration (ETag)
+            Cache::forget("growth:greetings:{$site->tenant_id}");
             $site->save();
             DB::table('growth_site_health')->where('site_id', $site->id)->update(['config_version' => $site->config_version]);
 
@@ -171,7 +226,13 @@ final class Sites
                 'public_number' => $n['public_number'],
                 'url_types' => ['wa.me', 'api.whatsapp.com', 'whatsapp'],
             ], array_filter($this->numbers($site), fn (array $n) => $n['public_number'] !== '' && $n['status'] === 'connected'))),
-            'templates' => self::TEMPLATES,
+            // greeting + the fixed reference suffix. Text already on a link, or a button's own
+            // data-xg-message, replaces the greeting; the reference is always appended.
+            'templates' => [
+                'en' => self::greetings($site)['en'].' '.self::SUFFIX['en'],
+                'ar' => self::greetings($site)['ar'] !== null ? self::greetings($site)['ar'].' '.self::SUFFIX['ar'] : self::greetings($site)['en'].' '.self::SUFFIX['en'],
+            ],
+            'suffix' => self::SUFFIX,
             'endpoint' => self::collectorUrl().'/v1/c',
         ];
     }
@@ -242,13 +303,49 @@ final class Sites
             ->where('created_at', '>=', $start)->whereIn('phone_number_id', $numbers);
         $matched = (clone $evidence)->where('evidence_type', 'website_reference')->where('confidence', 'confirmed')->exists();
 
+        // The exact message that arrived, so the admin sees the reference (or that it was deleted).
+        $received = null;
+        foreach (DB::table('messages')->whereIn('phone_number_id', $numbers)->where('direction', 'inbound')->where('created_at', '>=', $start)
+            ->orderByDesc('created_at')->limit(20)->get(['body']) as $m) {
+            $found = Reference::extract($m->body);
+            if ($found !== null || WebsiteMatcher::isGreeting($site, (string) $m->body)) {
+                $received = ['text' => mb_substr((string) $m->body, 0, 600), 'reference' => $found['token'] ?? null];
+                break;
+            }
+        }
+
         return [
             'started_at' => $start->toIso8601String(),
             'tracker_seen' => $h?->sdk_last_seen_at !== null && Carbon::parse((string) $h->sdk_last_seen_at)->gte($start),
             'tap_received' => (clone $clicks)->exists(),
-            'message_received' => $pending || (clone $evidence)->exists(),
+            'message_received' => $pending || (clone $evidence)->exists() || $received !== null,
             'matched' => $matched,
+            'message' => $received,
         ];
+    }
+
+    /**
+     * Live chatbot flows on the site's numbers that start on keywords: a greeting that begins with
+     * one of them would start that flow (shown as a warning when the greeting changes).
+     *
+     * @return list<array{name: string, keywords: list<string>}>
+     */
+    public function keywordFlows(GrowthSite $site): array
+    {
+        $numbers = DB::table('growth_site_numbers')->where('site_id', $site->id)->pluck('phone_number_id')->all();
+        $out = [];
+        foreach ($numbers as $numberId) {
+            foreach (ChatbotFlow::liveOn((string) $numberId) as $flow) {
+                $graph = DB::table('chatbot_flow_versions')->where('flow_id', $flow->id)->where('version', $flow->published_version)->value('graph');
+                $start = $graph !== null ? FlowGraph::from((array) json_decode((string) $graph, true))->start() : null;
+                $keywords = (array) ($start['config']['keywords'] ?? []);
+                if ($keywords !== []) {
+                    $out[] = ['name' => (string) $flow->name, 'keywords' => array_values(array_slice(array_map('strval', $keywords), 0, 10))];
+                }
+            }
+        }
+
+        return $out;
     }
 
     /** The snippet to paste before </head>. */

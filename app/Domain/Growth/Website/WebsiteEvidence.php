@@ -42,6 +42,7 @@ final class WebsiteEvidence
                 'reference' => $f['reference_masked'] ?? null,
                 // Which click IDs came with the tap — never their values.
                 'click_ids_sent' => array_keys(array_filter((array) ($f['click_ids'] ?? []))) ?: null,
+                'note' => $f['note'] ?? null,
                 'reused_other_sender' => $e->confidence === 'reused_other_sender' ? true : null,
             ], fn ($v) => $v !== null),
         ];

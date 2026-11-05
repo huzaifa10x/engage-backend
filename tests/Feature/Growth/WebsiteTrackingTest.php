@@ -13,7 +13,10 @@ use App\Domain\Growth\Website\WebsiteSource;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\Models\Tenant;
+use App\Domain\WhatsApp\Enums\OnboardingType;
+use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -335,6 +338,92 @@ final class WebsiteTrackingTest extends TestCase
         $this->assertSame('Meta ad · Facebook', WebsiteSource::classify(['utm_source' => 'fb'], null)['label']);
         $this->assertSame('paid_other', WebsiteSource::classify(['utm_source' => 'tiktok', 'utm_medium' => 'paid_social'], null)['source']);
         $this->assertNull(WebsiteSource::classify(['gclid' => 'x'], null)['campaign'], 'never a campaign name from gclid');
+    }
+
+    public function test_the_greeting_is_editable_and_the_reference_is_always_added(): void
+    {
+        $this->assertSame("Hi, I'd like to know more about your services.", $this->site['greeting']);
+        $this->patchJson("/api/v1/growth/sites/{$this->site['id']}", ['greeting' => 'Hello Glow Clinic, I want to book a visit.', 'greeting_ar' => 'مرحبا، أريد حجز موعد.'])
+            ->assertOk()->assertJsonPath('data.greeting', 'Hello Glow Clinic, I want to book a visit.');
+        $config = $this->get('/v1/config?site_key='.$this->site['site_key'], ['Origin' => self::ORIGIN])->assertOk();
+        $this->assertSame('Hello Glow Clinic, I want to book a visit. (Ref: {reference})', $config->json('templates.en'));
+        $this->assertSame('مرحبا، أريد حجز موعد. (المرجع: {reference})', $config->json('templates.ar'));
+        $this->assertSame('(Ref: {reference})', $config->json('suffix.en'));
+
+        // Plain text only, no links, no reference of its own, max 200 characters.
+        $this->patchJson("/api/v1/growth/sites/{$this->site['id']}", ['greeting' => 'See https://example.com'])->assertStatus(422);
+        $this->patchJson("/api/v1/growth/sites/{$this->site['id']}", ['greeting' => 'Hi (Ref: XG-AAAAAAAAAA)'])->assertStatus(422);
+        $this->patchJson("/api/v1/growth/sites/{$this->site['id']}", ['greeting' => str_repeat('a', 201)])->assertStatus(422);
+
+        // Matching never depends on the greeting: a custom greeting with its code still matches.
+        $this->beacon()->assertCreated();
+        $this->message('Hello Glow Clinic, I want to book a visit. (Ref: XG-7PK9M2Q8TD)');
+        $this->assertSame('website_reference', $this->contact('971500000001')->acquisition_original['type']);
+    }
+
+    public function test_a_visitor_who_deletes_the_reference_is_website_details_unavailable_with_no_guessing(): void
+    {
+        $this->beacon()->assertCreated(); // a tap did register, but nothing ties the message to it
+        $this->message("Hi, I'd like to know more about your services.");
+        $contact = $this->contact('971500000001');
+        $this->assertSame('website_unregistered', $contact->acquisition_original['type']);
+        $this->assertSame('Website · details unavailable', $contact->acquisition_original['label']);
+        $this->assertNull($contact->acquisition_original['campaign']);
+        $this->tenantContext()->run($this->tenant, fn () => $this->assertSame('registered', DB::table('growth_click_events')->value('status'), 'the tap is not consumed by a guess'));
+
+        // An ordinary message isn't mistaken for the website greeting.
+        $this->message('Hi', '971500000002');
+        $this->assertNull($this->contact('971500000002')->acquisition_original);
+
+        $test = $this->postJson("/api/v1/growth/sites/{$this->site['id']}/test-session")->assertOk();
+        $this->travel(1)->minutes();
+        $this->message("Hi, I'd like to know more about your services. (Ref: XG-QQQQQQQQQQ)", '971500000003');
+        $status = $this->getJson("/api/v1/growth/sites/{$this->site['id']}/test")->json('data');
+        $this->assertSame('XG-QQQQQQQQQQ', $status['message']['reference']);
+        $this->assertStringContainsString("I'd like to know more", $status['message']['text']);
+    }
+
+    public function test_a_returning_contact_keeps_its_original_source_and_campaign_and_is_one_row(): void
+    {
+        // Created before tracking started, on two numbers.
+        $second = $this->tenantContext()->run($this->tenant, function () {
+            $waba = WabaAccount::query()->firstOrFail();
+
+            return PhoneNumber::query()->create([
+                'waba_account_id' => $waba->id, 'phone_number_id' => '106540352242999', 'display_phone_number' => '+971 58 549 6399',
+                'status' => PhoneNumberStatus::Connected, 'onboarding_type' => OnboardingType::NewNumber,
+                'quality_rating' => 'GREEN', 'messaging_limit_tier' => 'TIER_1K', 'capabilities' => PhoneNumber::capabilitiesFor(OnboardingType::NewNumber),
+            ]);
+        });
+        $this->patchJson("/api/v1/growth/sites/{$this->site['id']}", ['connected_phone_ids' => [$this->number->id, $second->id]])->assertOk();
+        $this->message('Old customer');
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->update(['created_at' => now()->subMonth()]));
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => 'Hi on the other number'], 'timestamp' => (string) now()->timestamp], '971500000001', 'AE.971500000001', 'Visitor', '106540352242999')))->assertOk();
+
+        // Two taps from two campaigns: each touch keeps its own campaign and click ID.
+        $this->beacon(['campaign' => ['utm_source' => 'google', 'utm_medium' => 'cpc', 'utm_campaign' => 'autumn', 'gclid' => 'G-ONE']])->assertCreated();
+        $this->message('Hi (Ref: XG-7PK9M2Q8TD)');
+        $this->travel(18)->minutes();
+        $this->beacon(['reference' => 'XG-RRRRRRRRRR', 'campaign' => ['utm_source' => 'google', 'utm_medium' => 'cpc', 'utm_campaign' => 'winter_sale', 'gclid' => 'G-TWO']])->assertCreated();
+        $this->message('Again (Ref: XG-RRRRRRRRRR)');
+
+        $contact = $this->contact('971500000001');
+        $evidence = $this->getJson("/api/v1/growth/leads/{$contact->id}/evidence")->assertOk()->json('data');
+        $this->assertSame(['autumn', 'winter_sale'], array_map(fn ($e) => $e['details']['campaign']['utm_campaign'], $evidence), 'no touch overwrites another');
+
+        $r = $this->getJson('/api/v1/growth/leads')->assertOk();
+        $this->assertCount(1, $r->json('data'), 'one row per person, not per conversation');
+        $this->assertSame(['all' => 1, 'new' => 0, 'returning' => 1], $r->json('meta.counts'));
+        $this->assertSame('Before tracking', $r->json('data.0.contact.acquisition.source.name'));
+        $this->assertNull($r->json('data.0.contact.acquisition.source.campaign'));
+        $this->assertSame('Latest: winter_sale (Google Ads)', $r->json('data.0.contact.acquisition.source.latest.line'));
+        $kpi = $this->getJson('/api/v1/growth/leads/summary')->json('data');
+        $this->assertSame([1, 0, 1], [$kpi['leads'], $kpi['new_customers'], $kpi['returning']]);
+
+        // Marketing: a returning contact never adds a lead to winter_sale.
+        Artisan::call('engage:growth:marketing-refresh', ['--days' => 31]);
+        $campaigns = $this->getJson('/api/v1/analytics/marketing/campaigns?from='.now()->subDays(29)->toDateString().'&to='.now()->toDateString())->assertOk()->json('data.rows');
+        $this->assertNotContains('winter_sale', array_column($campaigns, 'label'));
     }
 }
 

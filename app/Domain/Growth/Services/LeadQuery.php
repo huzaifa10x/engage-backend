@@ -6,7 +6,6 @@ namespace App\Domain\Growth\Services;
 
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\Permission;
-use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Marketing\MarketingCohort;
 use App\Domain\Messaging\Models\Contact;
@@ -36,7 +35,9 @@ final class LeadQuery
         'assigned' => ['nullable', 'string', 'max:36'], // a membership id, "me" or "unassigned"
         'stage_id' => ['nullable', 'string', 'max:36'], // a stage id or "none"
         'days' => ['nullable', 'integer', 'in:7,30,90,365'],
-        'tab' => ['nullable', 'in:all,new,unattributed'],
+        // new: their first-ever message came from a paid tracked source; returning: they existed before
+        // (or first wrote without a source) and came back through an ad or the website.
+        'tab' => ['nullable', 'in:all,new,returning'],
         'ad' => ['nullable', 'uuid'], // a growth_meta_ads id: leads whose original source is that ad
         // Drill-down from Analytics → Marketing: the new-lead cohort of a period (local dates), with
         // its source bucket, campaign and funnel step, counted exactly as the report counts it.
@@ -122,7 +123,24 @@ final class LeadQuery
             $this->tab($query, (string) ($f['tab'] ?? 'all'));
         }
 
-        return $query;
+        return self::perContact($query);
+    }
+
+    /**
+     * One row per person: a contact with several conversations (two numbers, or a chat on each) is
+     * listed once, on its most recently active conversation among those that match. Repeat taps and
+     * other conversations belong in that contact's Journey, and every count counts people.
+     *
+     * @param  Builder<Conversation>  $query
+     * @return Builder<Conversation>
+     */
+    public static function perContact(Builder $query): Builder
+    {
+        $latest = (clone $query)->reorder()->select([])
+            ->selectRaw('DISTINCT ON (conversations.contact_id) conversations.id')
+            ->orderBy('conversations.contact_id')->orderByDesc('conversations.last_message_at')->orderByDesc('conversations.id');
+
+        return Conversation::query()->whereIn('conversations.id', $latest->toBase());
     }
 
     /**
@@ -168,13 +186,23 @@ final class LeadQuery
     {
         $startedAt = GrowthSettings::for($this->context->tenant())->startedAt;
         if ($tab === 'new') {
-            // New = still in the first stage of the pipeline (or not staged yet).
-            $first = CrmStage::query()->active()->orderBy('position')->value('id');
-            $query->whereHas('contact', fn ($c) => $c->where(fn ($w) => $w->whereNull('stage_id')->when($first, fn ($w) => $w->orWhere('stage_id', $first))));
+            $query->whereHas('contact', fn ($c) => self::newLead($c, $startedAt));
         }
-        if ($tab === 'unattributed') {
-            $query->whereHas('contact', fn ($c) => self::status($c, 'unattributed', $startedAt));
+        if ($tab === 'returning') {
+            $query->whereHas('contact', fn ($c) => $c->whereNot(fn ($w) => self::newLead($w, $startedAt)));
         }
+    }
+
+    /**
+     * A new lead: created after tracking started and its first-ever message came from a paid
+     * tracked source (the original source never changes).
+     *
+     * @param  Builder<Contact>  $c
+     */
+    public static function newLead(Builder $c, ?Carbon $startedAt): void
+    {
+        $paid = "'".implode("','", Acquisition::PAID_SOURCES)."'";
+        self::tracked($c, $startedAt)->whereRaw("coalesce(acquisition_original->>'source', '') IN ({$paid})");
     }
 
     /** @param Builder<Contact> $c */

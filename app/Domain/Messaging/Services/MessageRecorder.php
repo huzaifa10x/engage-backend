@@ -9,6 +9,7 @@ use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Jobs\RecordMessageEvidence;
 use App\Domain\Growth\Website\Reference;
+use App\Domain\Growth\Website\WebsiteMatcher;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Events\MessageStored;
@@ -46,7 +47,9 @@ final class MessageRecorder
     {
         try {
             $tenant = app(TenantContext::class)->tenantOrNull();
-            $proof = isset(((array) ($message->content ?? []))['referral']) || Reference::extract($message->body) !== null; // a Meta ad referral or a website code
+            // A Meta ad referral, a website code, or a tracked website's greeting without its code.
+            $proof = isset(((array) ($message->content ?? []))['referral']) || Reference::extract($message->body) !== null
+                || ($tenant !== null && WebsiteMatcher::greetingSite($tenant->id, (string) $message->getAttribute('phone_number_id'), $message->body) !== null);
             if ($tenant !== null && $proof && GrowthSettings::for($tenant)->enabled) {
                 RecordMessageEvidence::dispatch($message->id)->afterCommit();
             }

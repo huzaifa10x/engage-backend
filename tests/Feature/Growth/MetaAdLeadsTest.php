@@ -394,7 +394,7 @@ final class MetaAdLeadsTest extends TestCase
         // Agents get the chip and the Source panel line (name, ad headline): never codes or click IDs.
         $this->assertSame([
             'status' => 'meta', 'label' => 'Meta ad',
-            'source' => ['name' => 'Meta ad', 'campaign' => 'Ad: "Free consultation this week"', 'landing_page' => null],
+            'source' => ['name' => 'Meta ad', 'campaign' => 'Ad: "Free consultation this week"', 'landing_page' => null, 'latest' => null],
         ], $acquisition);
         $this->getJson("/api/v1/growth/leads/{$contactId}/evidence")->assertForbidden();
     }

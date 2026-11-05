@@ -99,9 +99,14 @@
         var dest = destination(link, el);
         if (!dest) return null;
         var ref = token(), language = lang();
+        // The reference is always added by the tracker and can't be configured away: the site's
+        // greeting, a button's own data-xg-message, or text already on the link, then "(Ref: XG-…)".
+        var suffix = ((cfg.suffix && cfg.suffix[language]) || (language === 'ar' ? '(المرجع: {reference})' : '(Ref: {reference})')).replace('{reference}', ref);
         var tpl = (cfg.templates && cfg.templates[language]) || "Hi, I'd like to know more about your services. (Ref: {reference})";
+        var own = el && el.getAttribute && el.getAttribute('data-xg-message');
         var existing = link.url.searchParams.get('text');
-        var text = existing ? existing.replace(/\s+$/, '') + (language === 'ar' ? ' (المرجع: ' : ' (Ref: ') + ref + ')' : tpl.replace('{reference}', ref);
+        var base = (own || existing || '').replace(/<[^>]*>/g, '').replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+        var text = base ? base + ' ' + suffix : tpl.indexOf('{reference}') >= 0 ? tpl.replace('{reference}', ref) : tpl + ' ' + suffix;
         link.url.searchParams.delete('text');
         if (link.kind !== 'wa.me' && !link.url.searchParams.get('phone')) link.url.searchParams.set('phone', dest.public_number);
         // encodeURIComponent (spaces as %20, UTF-8 kept): WhatsApp shows a "+" from form encoding literally on some phones.
@@ -148,7 +153,8 @@
     d.addEventListener('auxclick', onTap, true);
 
     // For chat widgets that open WhatsApp from code: XG.link(url) returns the tracked link (or the
-    // original) — call it synchronously in the click handler, then open the result.
+    // original) — call it synchronously in the click handler, then open the result. A button can
+    // carry its own message: <a href="https://wa.me/…" data-xg-message="I'd like a quote">.
     // Consent mode: the site's cookie banner calls XG.consent(true) when the visitor accepts, and
     // XG.consent(false) to withdraw (the tab's campaign memory is cleared).
     w.XG = {

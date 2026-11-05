@@ -67,7 +67,7 @@ final class LeadsTest extends TestCase
         $r = $this->getJson('/api/v1/growth/leads')->assertOk();
         $this->assertCount(1, $r->json('data'));
         $this->assertSame('Khalid', $r->json('data.0.contact.display_name'));
-        $this->assertSame(['all' => 1, 'new' => 1, 'unattributed' => 0], $r->json('meta.counts'));
+        $this->assertSame(['all' => 1, 'new' => 1, 'returning' => 0], $r->json('meta.counts'));
         $this->assertSame('Meta ad', $r->json('data.0.contact.acquisition.source.name'));
         $this->assertSame('Ad: "Free consultation this week"', $r->json('data.0.contact.acquisition.source.campaign'));
         $this->assertStringNotContainsString('ARAsecretclickid0001', (string) $r->getContent());

@@ -29,6 +29,8 @@ use Illuminate\Support\Carbon;
  * @property ?string $challenge_hash
  * @property ?Carbon $challenge_expires_at
  * @property ?Carbon $test_started_at
+ * @property ?string $greeting
+ * @property ?string $greeting_ar
  * @property ?Carbon $created_at
  */
 class GrowthSite extends Model
@@ -37,7 +39,7 @@ class GrowthSite extends Model
 
     protected $table = 'growth_sites';
 
-    protected $fillable = ['tenant_id', 'domain', 'display_name', 'timezone', 'site_key', 'site_key_hash', 'verified_at', 'verification_method', 'consent_mode', 'session_landing_mode', 'enabled', 'config_version', 'challenge_hash', 'challenge_expires_at', 'test_started_at'];
+    protected $fillable = ['tenant_id', 'domain', 'display_name', 'timezone', 'site_key', 'site_key_hash', 'verified_at', 'verification_method', 'consent_mode', 'session_landing_mode', 'enabled', 'config_version', 'challenge_hash', 'challenge_expires_at', 'test_started_at', 'greeting', 'greeting_ar'];
 
     protected $hidden = ['site_key_hash', 'challenge_hash'];
 

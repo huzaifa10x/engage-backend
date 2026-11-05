@@ -38,8 +38,10 @@ final class SiteController extends Controller
             'display_name' => ['nullable', 'string', 'max:120'],
             'connected_phone_ids' => ['required', 'array', 'min:1', 'max:20'],
             'connected_phone_ids.*' => ['uuid'],
+            'greeting' => ['nullable', 'string', 'max:250'],
+            'greeting_ar' => ['nullable', 'string', 'max:250'],
         ]);
-        $site = $this->sites->create($this->context->tenant(), $data['domain'], $data['display_name'] ?? null, $data['connected_phone_ids']);
+        $site = $this->sites->create($this->context->tenant(), $data['domain'], $data['display_name'] ?? null, $data['connected_phone_ids'], $data['greeting'] ?? null, $data['greeting_ar'] ?? null);
         $audit->record('growth.site.created', $site, meta: ['domain' => $site->domain]);
 
         return response()->json(['data' => $this->present($site)], 201);
@@ -62,6 +64,8 @@ final class SiteController extends Controller
             'consent_mode' => ['sometimes', 'in:click_only,consent'],
             'session_landing_mode' => ['sometimes', 'boolean'],
             'enabled' => ['sometimes', 'boolean'],
+            'greeting' => ['sometimes', 'nullable', 'string', 'max:250'],
+            'greeting_ar' => ['sometimes', 'nullable', 'string', 'max:250'],
         ]);
         $site = $this->sites->update($site, $data);
         $audit->record('growth.site.updated', $site, meta: ['changed' => array_keys($data)]);
@@ -124,6 +128,12 @@ final class SiteController extends Controller
             'snippet' => $this->sites->snippet($site),
             'gtm_snippet' => $this->sites->gtmSnippet($site),
             'privacy_line' => Sites::PRIVACY_LINE,
+            // The message visitors send: the editable greeting; the reference is always added after it.
+            'greeting' => $site->greeting ?? Sites::DEFAULT_GREETING,
+            'greeting_ar' => $site->greeting_ar,
+            'default_greeting' => Sites::DEFAULT_GREETING,
+            'greeting_max' => Sites::GREETING_MAX,
+            'keyword_flows' => $this->sites->keywordFlows($site),
             'numbers' => $this->sites->numbers($site),
             'health' => $this->sites->health($site),
             'created_at' => $site->created_at?->toIso8601String(),

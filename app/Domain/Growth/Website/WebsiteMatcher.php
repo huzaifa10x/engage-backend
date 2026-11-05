@@ -10,6 +10,7 @@ use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\Models\Tenant;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -95,6 +96,86 @@ final class WebsiteMatcher
             $this->evidence($message, $tenant, $ref, 'confirmed', $found['token']);
 
             return 'matched';
+        });
+    }
+
+    /** Lower-case letters and digits only, for comparing a message with a site's greeting. */
+    private static function plain(string $text): string
+    {
+        return (string) preg_replace('/[^\p{L}\p{N}]+/u', '', mb_strtolower($text));
+    }
+
+    /** Does the message begin with one of the site's greetings (the reference deleted, or never added)? */
+    public static function isGreeting(object $site, string $body): bool
+    {
+        $text = self::plain($body);
+        foreach (array_filter([$site->greeting ?? null ?: Sites::DEFAULT_GREETING, $site->greeting_ar ?? null]) as $greeting) {
+            $g = self::plain((string) $greeting);
+            if (mb_strlen($g) >= 12 && str_starts_with($text, $g)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The tracked site whose greeting this message starts with, on a number the site uses (cached a
+     * few minutes per workspace). Null when it isn't a website greeting.
+     */
+    public static function greetingSite(string $tenantId, string $numberId, ?string $body): ?string
+    {
+        if ($body === null || mb_strlen($body) < 12) {
+            return null;
+        }
+        $sites = Cache::remember("growth:greetings:{$tenantId}", 300, fn () => DB::table('growth_sites as s')
+            ->join('growth_site_numbers as n', 'n.site_id', '=', 's.id')->where('s.tenant_id', $tenantId)->where('s.enabled', true)
+            ->get(['s.id', 'n.phone_number_id', 's.greeting', 's.greeting_ar'])->map(fn ($r) => (array) $r)->all());
+        foreach ($sites as $site) {
+            if ((string) $site['phone_number_id'] === $numberId && self::isGreeting((object) $site, $body)) {
+                return (string) $site['id'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The website's greeting arrived without a reference (the visitor deleted it before sending):
+     * the chat came from the website, but no tap can be tied to it — "Website · details unavailable",
+     * never a guessed campaign. Matching itself stays on the XG- code only.
+     */
+    public function greetingWithoutCode(Message $message, Tenant $tenant): bool
+    {
+        if ($message->direction !== Message::INBOUND || $message->wamid === null || $message->type !== 'text' || Reference::extract($message->body) !== null) {
+            return false;
+        }
+        $siteId = self::greetingSite($tenant->id, (string) $message->getAttribute('phone_number_id'), $message->body);
+        if ($siteId === null) {
+            return false;
+        }
+
+        return (bool) DB::transaction(function () use ($message, $tenant, $siteId) {
+            $id = (string) Str::uuid7();
+            $inserted = DB::table('growth_evidence')->insertOrIgnore([
+                'id' => $id, 'tenant_id' => $tenant->id, 'crm_contact_id' => $message->contact_id,
+                'conversation_id' => $message->conversation_id, 'phone_number_id' => $message->getAttribute('phone_number_id'),
+                'message_id' => $message->id, 'wa_message_id' => $message->wamid, 'click_id' => null,
+                'evidence_type' => GrowthEvidence::TYPE_WEBSITE_UNREGISTERED, 'confidence' => 'unconfirmed', 'source' => 'website',
+                'provider_fields' => json_encode(['note' => 'The website message arrived without its reference (removed before sending)', 'site' => DB::table('growth_sites')->where('id', $siteId)->value('domain')], JSON_THROW_ON_ERROR),
+                'conflict' => false, 'occurred_at' => Carbon::parse($message->getAttribute('meta_timestamp') ?? $message->created_at ?? now()), 'created_at' => now(),
+            ]);
+            if ($inserted === 0) {
+                return false;
+            }
+            /** @var GrowthEvidence $evidence */
+            $evidence = GrowthEvidence::query()->findOrFail($id);
+            $this->recorder->project($evidence, $tenant, [
+                'source' => 'website', 'label' => 'Website · details unavailable', 'platform' => null, 'source_type' => null,
+                'headline' => null, 'campaign' => null, 'landing_path' => null,
+            ]);
+
+            return true;
         });
     }
 

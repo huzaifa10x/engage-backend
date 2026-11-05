@@ -45,7 +45,7 @@ final class LeadController extends Controller
 
         // Tab counts for the same filters.
         $counts = [];
-        foreach (['all', 'new', 'unattributed'] as $tab) {
+        foreach (['all', 'new', 'returning'] as $tab) {
             $q = $this->leads->filtered($f, withTab: false);
             $this->leads->tab($q, $tab);
             $counts[$tab] = $q->count();
@@ -80,7 +80,8 @@ final class LeadController extends Controller
         };
 
         $leads = $count();
-        $new = $count(fn ($c) => LeadQuery::tracked($c, $startedAt)->whereRaw("acquisition_original->>'source' IN ({$paid})"));
+        // People, not chats or taps: the same rule as the New tab.
+        $new = $count(fn ($c) => LeadQuery::newLead($c, $startedAt));
         $posts = $count(fn ($c) => $c->whereRaw("{$touch}->>'source_type' = 'post'"));
         $instagram = $count(fn ($c) => $c->whereRaw("{$touch}->>'platform' = 'instagram'"));
         // Website taps whose details were lost (valid code, tap never registered): not leads (no

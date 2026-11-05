@@ -70,7 +70,7 @@ final class Acquisition
             default => self::LABELS[$status],
         };
         if ($before && $latest !== null) {
-            $chip = 'Before tracking · Latest: '.$latest['label'];
+            $chip = 'Before tracking · Latest: '.$latest['label']; // the campaign is shown on its own line
         } elseif ($status === 'unattributed' && $latest !== null) {
             $chip = 'Unattributed · Latest: '.$latest['label']; // first message had no ad, a later one did
         }
@@ -101,27 +101,47 @@ final class Acquisition
      *
      * @param  array<string, mixed>|null  $original
      * @param  array<string, mixed>|null  $latest
-     * @return array{name: string, campaign: ?string, landing_page: ?string}
+     *                                             The original source and its campaign never change; a later touch is shown apart as `latest`
+     *                                             ("Latest: winter_sale (Google Ads)") and never replaces them — a returning contact keeps the
+     *                                             source it first came from.
+     * @return array{name: string, campaign: ?string, landing_page: ?string, latest: ?array{name: string, campaign: ?string, line: string, at: ?string}}
      */
     private static function summary(string $status, ?array $original, ?array $latest): array
     {
+        $later = $latest !== null && ($original === null || ($latest['evidence_id'] ?? null) !== ($original['evidence_id'] ?? null)) ? self::touchLine($latest) : null;
         if ($status === 'before') {
-            return [
-                'name' => 'Before tracking',
-                'campaign' => $latest !== null ? 'Latest: '.$latest['label'] : null,
-                'landing_page' => $latest['landing_path'] ?? null,
-            ];
+            return ['name' => 'Before tracking', 'campaign' => null, 'landing_page' => null, 'latest' => $later];
         }
         if ($original === null) {
-            return ['name' => 'Unknown', 'campaign' => null, 'landing_page' => null];
+            return ['name' => 'Unattributed', 'campaign' => null, 'landing_page' => null, 'latest' => $later];
         }
 
-        $campaign = $original['campaign'] ?? null;
-        if (($campaign === null || $campaign === '') && ! empty($original['headline'])) {
-            $campaign = 'Ad: "'.$original['headline'].'"';
+        return ['name' => (string) $original['label'], 'campaign' => self::campaignOf($original), 'landing_page' => $original['landing_path'] ?? null, 'latest' => $later];
+    }
+
+    /** @param array<string, mixed> $touch */
+    private static function campaignOf(array $touch): ?string
+    {
+        $campaign = $touch['campaign'] ?? null;
+        if (($campaign === null || $campaign === '') && ! empty($touch['headline'])) {
+            $campaign = 'Ad: "'.$touch['headline'].'"';
         }
 
-        return ['name' => (string) $original['label'], 'campaign' => $campaign ?: null, 'landing_page' => $original['landing_path'] ?? null];
+        return $campaign ?: null;
+    }
+
+    /**
+     * "Latest: winter_sale (Google Ads)", or "Latest: Google Ads" when the touch had no campaign.
+     *
+     * @param  array<string, mixed>  $touch
+     * @return array{name: string, campaign: ?string, line: string, at: ?string}
+     */
+    private static function touchLine(array $touch): array
+    {
+        $campaign = self::campaignOf($touch);
+        $name = (string) $touch['label'];
+
+        return ['name' => $name, 'campaign' => $campaign, 'line' => 'Latest: '.($campaign !== null ? "{$campaign} ({$name})" : $name), 'at' => $touch['occurred_at'] ?? null];
     }
 
     /**

@@ -55,7 +55,12 @@ final class RecordMessageEvidence implements ShouldQueue
         $changed = $recorder->recordMetaReferral($message, $tenant) !== null;
         // Website codes: tracked websites are part of Growth Hub (not the Starter chip).
         if (GrowthAccess::full($tenant)) {
-            $changed = $website->redeem($message, $tenant) === 'matched' || $changed;
+            $result = $website->redeem($message, $tenant);
+            $changed = $result === 'matched' || $changed;
+            // No code at all, but the website's own greeting: it came from the site, details unavailable.
+            if ($result === null && ! $changed) {
+                $changed = $website->greetingWithoutCode($message, $tenant);
+            }
         }
 
         // A paid-ad lead waiting for a reply goes to the top of the Needs reply queue (Engagement Plan §III.2).
