@@ -162,7 +162,10 @@ final class XEWC_Client
             self::status('error', sprintf('HTTP %d', $code));
         }
 
-        return ['code' => $code, 'data' => is_array($data) && array_key_exists('data', $data) ? $data['data'] : null];
+        // 429 / 503: 10X Engage says when to come back.
+        $retry = (int) wp_remote_retrieve_header($response, 'retry-after');
+
+        return ['code' => $code, 'data' => is_array($data) && array_key_exists('data', $data) ? $data['data'] : null, 'retry_after' => max(0, min(3600, $retry))];
     }
 
     /** The tracker and link settings come back with heartbeats, so changes in 10X Engage reach the store. */

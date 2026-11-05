@@ -192,6 +192,11 @@ return [
         'api_version' => env('SHOPIFY_API_VERSION', '2026-10'),
     ],
 
+    'auth' => [
+        // Workspace Owners must sign in with an authenticator app as a second factor.
+        'owner_two_factor_required' => (bool) env('OWNER_TWO_FACTOR_REQUIRED', true),
+    ],
+
     'growth' => [
         // Change Notice CN-01: internal alert threshold (accepted taps per workspace per calendar month). Never shown to clients, never blocks.
         'accepted_taps_alert_threshold' => (int) env('GROWTH_TAPS_ALERT_THRESHOLD', 100000),
@@ -201,6 +206,17 @@ return [
         'collector_url' => env('GROWTH_COLLECTOR_URL', 'https://e.10xdigital.ae'),
         'collector_host' => env('GROWTH_COLLECTOR_HOST'),
         'tracker_enabled' => (bool) env('GROWTH_TRACKER_ENABLED', true),
+        // Collector abuse limits (Collector::limits). A refused tap loses its attribution silently, so
+        // these protect against abuse only: per site, per visitor (IP + the tracker's tab key) and a
+        // generous per-IP backstop for carrier-grade NAT, offices and malls.
+        'collector' => [
+            'site_per_5s' => (int) env('GROWTH_SITE_TAPS_PER_5S', 30),
+            'site_per_minute' => (int) env('GROWTH_SITE_TAPS_PER_MINUTE', 600),
+            'visitor_per_4s' => 12,
+            'visitor_per_hour' => 300,
+            'ip_per_4s' => (int) env('GROWTH_IP_TAPS_PER_4S', 60),
+            'ip_per_hour' => (int) env('GROWTH_IP_TAPS_PER_HOUR', 3000),
+        ],
     ],
 
     'alerts' => [

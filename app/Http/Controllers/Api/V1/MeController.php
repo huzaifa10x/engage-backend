@@ -60,6 +60,8 @@ final class MeController extends Controller
 
         return response()->json(['data' => [
             'user' => UserResource::make($user),
+            // Two-factor sign-in: an Owner without it sees the setup screen (RequireOwnerTwoFactor).
+            'two_factor' => TwoFactorController::status($user),
             'memberships' => MembershipResource::collection($memberships),
             'active_tenant_id' => $active?->tenant_id,
             'permissions' => $active->role->permissions ?? [],

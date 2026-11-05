@@ -7,7 +7,7 @@ use Automattic\WooCommerce\Utilities\FeaturesUtil;
  * Plugin Name:       10X Engage for WooCommerce
  * Plugin URI:        https://10xdigital.ae
  * Description:       Connects your store to 10X Engage: installs the website tracker, keeps the chat link on the order through checkout, and sends signed order updates so you can see which WhatsApp chats became orders.
- * Version:           1.0.0
+ * Version:           1.0.1
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            10X Digital
@@ -18,7 +18,7 @@ use Automattic\WooCommerce\Utilities\FeaturesUtil;
  */
 defined('ABSPATH') || exit;
 
-define('XEWC_VERSION', '1.0.0');
+define('XEWC_VERSION', '1.0.1');
 define('XEWC_FILE', __FILE__);
 define('XEWC_DIR', plugin_dir_path(__FILE__));
 

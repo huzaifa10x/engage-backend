@@ -6,6 +6,7 @@ namespace App\Domain\Identity\Models;
 
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\Scopes\TenantScope;
+use App\Domain\Tenancy\TenantContext;
 use App\Notifications\ResetPasswordNotification;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -34,12 +35,16 @@ class User extends Authenticatable
 
     protected $fillable = ['name', 'email', 'password', 'locale', 'timezone', 'last_active_tenant_id', 'last_login_at', 'disabled_at'];
 
-    protected $hidden = ['password', 'remember_token'];
+    protected $hidden = ['password', 'remember_token', 'two_factor_secret', 'two_factor_recovery_codes'];
 
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
+            'two_factor_secret' => 'encrypted',
+            'two_factor_recovery_codes' => 'encrypted:array',
+            'two_factor_confirmed_at' => 'datetime',
+            'two_factor_last_used_step' => 'integer',
             'last_login_at' => 'datetime',
             'disabled_at' => 'datetime',
             'password' => 'hashed',
@@ -78,5 +83,23 @@ class User extends Authenticatable
     protected static function newFactory(): UserFactory
     {
         return UserFactory::new();
+    }
+
+    /** Two-factor sign-in with an authenticator app is set up and confirmed. */
+    public function hasTwoFactor(): bool
+    {
+        return $this->getAttribute('two_factor_confirmed_at') !== null && $this->getAttribute('two_factor_secret') !== null;
+    }
+
+    /** Owner of at least one active workspace: two-factor sign-in is required (engage.auth.owner_two_factor_required). */
+    public function ownsAWorkspace(): bool
+    {
+        return app(TenantContext::class)->bypass(fn () => $this->memberships()->where('status', 'active')
+            ->whereHas('role', fn ($q) => $q->where('key', 'owner'))->exists());
+    }
+
+    public function twoFactorRequired(): bool
+    {
+        return (bool) config('engage.auth.owner_two_factor_required', true) && $this->ownsAWorkspace();
     }
 }

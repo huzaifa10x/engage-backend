@@ -9,6 +9,7 @@ use App\Domain\Tenancy\TenantContext;
 use App\Domain\Webhooks\Jobs\RefreshPhoneNumber;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Infrastructure\Meta\MetaUsage;
 use Illuminate\Console\Command;
 
 /**
@@ -26,8 +27,14 @@ final class RefreshMessagingLimits extends Command
     public function handle(TenantContext $context): int
     {
         $ids = $context->bypass(fn () => PhoneNumber::query()->where('status', PhoneNumberStatus::Connected)->pluck('id'));
-        foreach ($ids as $id) {
-            RefreshPhoneNumber::dispatch((string) $id);
+        if (MetaUsage::shouldDefer()) {
+            $this->components->warn('Meta API usage is high; limit refresh skipped this hour.');
+
+            return self::SUCCESS;
+        }
+        // Spread over ~15 minutes instead of one burst against our shared Meta call budget.
+        foreach ($ids->values() as $i => $id) {
+            RefreshPhoneNumber::dispatch((string) $id)->delay(now()->addSeconds(min(900, $i * 3)));
         }
         $pruned = $context->bypass(fn () => MessagingLimits::prune());
 

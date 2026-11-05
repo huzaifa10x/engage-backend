@@ -14,6 +14,7 @@ use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
+use App\Http\Middleware\PlanRateLimit;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -41,6 +42,8 @@ final class DeveloperController extends Controller
             'base_url' => rtrim((string) config('app.url'), '/').'/api/public/v1',
             'can' => ['api' => $set->allows(FeatureKey::ApiAccess), 'webhooks' => $set->allows(FeatureKey::Webhooks)],
             'rate_limit_per_minute' => $set->get(FeatureKey::ApiRateLimitPerMinute)->limit,
+            // Public API requests of this workspace: this minute and today (UTC). The portal is counted apart.
+            'api_usage' => PlanRateLimit::usage($this->context->id()),
             'scopes' => collect(ApiKey::SCOPES)->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])->values(),
             'events' => collect(WebhookEndpoint::EVENTS)->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])->values(),
         ]]);

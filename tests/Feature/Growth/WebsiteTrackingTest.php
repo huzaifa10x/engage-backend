@@ -128,6 +128,24 @@ final class WebsiteTrackingTest extends TestCase
         $this->assertNotNull($this->getJson("/api/v1/growth/sites/{$this->site['id']}")->json('data.verified_at'));
     }
 
+    public function test_visitors_behind_one_shared_ip_are_limited_one_by_one(): void
+    {
+        // Tiny limits for the test: 2 taps per visitor (IP + tab key), 4 per IP alone (refused taps do not count).
+        config(['engage.growth.collector.visitor_per_4s' => 2, 'engage.growth.collector.ip_per_4s' => 4]);
+        $ref = fn (int $n) => 'XG-'.str_pad(strtr((string) $n, '0123456789', 'ABCDEFGHJK'), 10, 'M', STR_PAD_LEFT);
+
+        $this->beacon(['reference' => $ref(1), 'tab_key' => 'aaaaaaaaaaaa'])->assertCreated();
+        $this->beacon(['reference' => $ref(2), 'tab_key' => 'aaaaaaaaaaaa'])->assertCreated();
+        $this->beacon(['reference' => $ref(3), 'tab_key' => 'aaaaaaaaaaaa'])->assertStatus(429)->assertHeader('Retry-After');
+        // Someone else on the same carrier IP (another phone, another tab) is not blocked by the first.
+        $this->beacon(['reference' => $ref(4), 'tab_key' => 'bbbbbbbbbbbb'])->assertCreated();
+        $this->beacon(['reference' => $ref(5), 'tab_key' => 'cccccccccccc'])->assertCreated();
+        // The per-IP backstop still holds against one source flooding.
+        $this->beacon(['reference' => $ref(6), 'tab_key' => 'dddddddddddd'])->assertStatus(429);
+        // The tab key is only a limiter key: it is never stored.
+        $this->assertFalse($this->tenantContext()->run($this->tenant, fn () => str_contains((string) json_encode(DB::table('growth_click_events')->get()), 'aaaaaaaaaaaa')));
+    }
+
     public function test_click_registration_is_idempotent_and_rejects_bad_input(): void
     {
         $event = (string) Str::uuid();

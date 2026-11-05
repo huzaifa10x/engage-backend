@@ -9,11 +9,12 @@ use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\WabaStatus;
 use App\Domain\WhatsApp\Models\WabaAccount;
+use App\Infrastructure\Meta\MetaUsage;
 use Illuminate\Console\Command;
 use Throwable;
 
 /**
- * Every two minutes: asks Meta, for every connected WhatsApp account, whether it and its numbers are still ours,
+ * Every 15 minutes (it uses our shared Meta call budget for every client): asks Meta, for every connected WhatsApp account, whether it and its numbers are still ours,
  * and brings back numbers that were marked offboarded once Meta answers normally for them again.
  * Catches the quiet cases: a customer removes 10X Engage in Meta Business Settings and no webhook
  * tells us, and the workspace happens not to send anything that would hit an error.
@@ -26,12 +27,19 @@ final class VerifyWhatsappAccess extends Command
 
     public function handle(TenantContext $context, AccessRevocation $revocation): int
     {
-        $accounts = $context->bypass(fn () => WabaAccount::query()->where('status', WabaStatus::Connected->value)->get(['id', 'tenant_id']));
+        $accounts = $context->bypass(fn () => WabaAccount::query()->where('status', WabaStatus::Connected->value)->get(['id', 'tenant_id', 'waba_id']));
         $disconnected = 0;
 
+        $deferred = 0;
         foreach ($accounts as $account) {
             $tenant = $context->bypass(fn () => Tenant::query()->find($account->tenant_id));
             if ($tenant === null) {
+                continue;
+            }
+            // Our Meta budget for this account (or the app) is at 75 % or Meta asked us to wait: next run.
+            if (MetaUsage::shouldDefer((string) $account->waba_id)) {
+                $deferred++;
+
                 continue;
             }
             try {
@@ -60,7 +68,7 @@ final class VerifyWhatsappAccess extends Command
             }
         }
 
-        $this->components->info("Checked {$accounts->count()} connected account(s); {$disconnected} had lost access and were marked disconnected; {$recovered} number(s) reconnected.");
+        $this->components->info("Checked {$accounts->count()} connected account(s) ({$deferred} deferred for Meta's rate limit); {$disconnected} had lost access and were marked disconnected; {$recovered} number(s) reconnected.");
 
         return self::SUCCESS;
     }

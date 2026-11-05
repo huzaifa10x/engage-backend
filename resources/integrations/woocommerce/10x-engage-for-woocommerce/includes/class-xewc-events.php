@@ -154,8 +154,14 @@ final class XEWC_Events
         if ($code === 410 || $code === 422) {
             return; // disconnected, or an event 10X Engage can never accept
         }
-        if ($attempt < count(self::BACKOFF) && function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time() + self::BACKOFF[$attempt], self::SEND, [(int) $order_id, (string) $event, $when, $attempt + 1], self::GROUP);
+        // Too busy (429) or briefly down (503): wait as long as 10X Engage asks, never less than the
+        // backoff; a rate-limit answer does not use up a retry, so a flash sale never loses an order.
+        $retryAfter = is_wp_error($result) ? 0 : (int) ($result['retry_after'] ?? 0);
+        $limited = $code === 429;
+        $next = $limited ? $attempt : $attempt + 1;
+        if (($limited || $attempt < count(self::BACKOFF)) && function_exists('as_schedule_single_action')) {
+            $delay = max($retryAfter, self::BACKOFF[min($attempt, count(self::BACKOFF) - 1)]);
+            as_schedule_single_action(time() + $delay + wp_rand(0, 15), self::SEND, [(int) $order_id, (string) $event, $when, $next], self::GROUP);
         }
         // After the last retry the nightly catch-up still fills the gap.
     }

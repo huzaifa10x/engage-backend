@@ -9,6 +9,7 @@ use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\WabaStatus;
 use App\Domain\WhatsApp\Jobs\SyncMarketingMessages;
 use App\Domain\WhatsApp\Models\WabaAccount;
+use App\Infrastructure\Meta\MetaUsage;
 use Illuminate\Console\Command;
 
 /**
@@ -31,8 +32,14 @@ final class SyncMarketingMessagesStatus extends Command
         }
 
         $ids = $context->bypass(fn () => WabaAccount::query()->where('status', WabaStatus::Connected)->pluck('id'));
-        foreach ($ids as $id) {
-            SyncMarketingMessages::dispatch((string) $id, ! $this->option('no-enroll'), 'backfill_batch');
+        if (MetaUsage::shouldDefer()) {
+            $this->components->warn('Meta API usage is high; Marketing Messages check skipped this hour.');
+
+            return self::SUCCESS;
+        }
+        // Spread over ~15 minutes instead of one burst against our shared Meta call budget.
+        foreach ($ids->values() as $i => $id) {
+            SyncMarketingMessages::dispatch((string) $id, ! $this->option('no-enroll'), 'backfill_batch')->delay(now()->addSeconds(min(900, $i * 5)));
         }
         $this->components->info("Queued a Marketing Messages check for {$ids->count()} account(s).");
 

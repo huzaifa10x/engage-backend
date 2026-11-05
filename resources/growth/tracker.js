@@ -58,6 +58,16 @@
         while (out.length < 10) { w.crypto.getRandomValues(b); if (b[0] < max) out += ALPHA[b[0] % ALPHA.length]; }
         return 'XG-' + out;
     }
+    // Rate limiting only: a random ID for this browser tab (sessionStorage, gone when the tab closes),
+    // so visitors behind one mobile-carrier or office IP are limited one by one. Never a visitor ID:
+    // it is not stored by the collector, only used inside a short-lived hashed limiter key.
+    function tabKey() {
+        try {
+            var k = w.sessionStorage.getItem('xg_tab');
+            if (!k) { k = uuid().replace(/-/g, '').slice(0, 20); w.sessionStorage.setItem('xg_tab', k); }
+            return k;
+        } catch (e) { return null; }
+    }
     function uuid() {
         if (w.crypto.randomUUID) return w.crypto.randomUUID();
         var b = new Uint8Array(16); w.crypto.getRandomValues(b); b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
@@ -122,7 +132,8 @@
             campaign: current || (landing && landing.c) || {},
             collection_mode: cfg.mode === 'consent' ? 'consent' : 'click_only',
             source_of_campaign_params: current ? 'current_page' : landing && landing.c && Object.keys(landing.c).length ? 'session_landing' : 'current_page',
-            referrer_host: (landing && landing.r) || refHost(), occurred_at: new Date().toISOString(), sdk_version: X.v
+            referrer_host: (landing && landing.r) || refHost(), occurred_at: new Date().toISOString(), sdk_version: X.v,
+            tab_key: tabKey()
         };
         var body = JSON.stringify(event), url = cfg.endpoint || BASE + '/v1/c';
         // Queued in the background (sendBeacon / keepalive fetch): nothing waits for the network, and

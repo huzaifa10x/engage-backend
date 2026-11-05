@@ -29,7 +29,7 @@ final class Collector
 {
     public const MAX_BYTES = 4096;
 
-    private const KEYS = ['site_key', 'config_version', 'event_id', 'reference', 'mapping_id', 'page_path', 'landing_path', 'language', 'campaign', 'collection_mode', 'source_of_campaign_params', 'occurred_at', 'referrer_host', 'sdk_version'];
+    private const KEYS = ['site_key', 'config_version', 'event_id', 'reference', 'mapping_id', 'page_path', 'landing_path', 'language', 'campaign', 'collection_mode', 'source_of_campaign_params', 'occurred_at', 'referrer_host', 'sdk_version', 'tab_key'];
 
     private const BOT_UA = '/bot\b|crawl|spider|slurp|headless|phantomjs|puppeteer|playwright|selenium|lighthouse|pagespeed|gtmetrix|facebookexternalhit|whatsapp\/|preview|prefetch|curl\/|wget\/|python-requests|httpclient|okhttp|java\//i';
 
@@ -107,6 +107,28 @@ final class Collector
     }
 
     /**
+     * @return list<array{0: string, 1: int, 2: int}> limiter key, max hits, window in seconds
+     */
+    public static function limits(string $siteId, string $ip, mixed $tabKey): array
+    {
+        $ipKey = hash('sha256', $ip.'|'.config('app.key'));
+        $c = (array) config('engage.growth.collector', []);
+        $out = [
+            ["s5:{$siteId}", (int) ($c['site_per_5s'] ?? 30), 5],
+            ["s60:{$siteId}", (int) ($c['site_per_minute'] ?? 600), 60],
+            ["ip4:{$ipKey}", (int) ($c['ip_per_4s'] ?? 60), 4],
+            ["ip3600:{$ipKey}", (int) ($c['ip_per_hour'] ?? 3000), 3600],
+        ];
+        if (is_string($tabKey) && preg_match('/^[a-f0-9]{8,40}$/', $tabKey) === 1) {
+            $visitor = hash('sha256', $ip.'|'.$tabKey.'|'.config('app.key'));
+            $out[] = ["v4:{$visitor}", (int) ($c['visitor_per_4s'] ?? 12), 4];
+            $out[] = ["v3600:{$visitor}", (int) ($c['visitor_per_hour'] ?? 300), 3600];
+        }
+
+        return $out;
+    }
+
+    /**
      * One beacon. Returns [HTTP status, body].
      *
      * @return array{0: int, 1: array<string, mixed>, 2?: int}
@@ -137,15 +159,16 @@ final class Collector
             return [403, ['error' => 'site_disabled']];
         }
 
-        // Abuse limits (beta): per site 10/s steady with bursts of 30 per 5 s; per visitor IP 3/s,
-        // bursts of 12, 300 an hour. The IP is only ever a short-lived hashed limiter key.
-        $ipKey = hash('sha256', $ip.'|'.config('app.key'));
-        foreach ([["s5:{$site->id}", 30, 5], ["s60:{$site->id}", 600, 60], ["i4:{$ipKey}", 12, 4], ["i3600:{$ipKey}", 300, 3600]] as [$key, $max, $decay]) {
+        // Abuse limits: per site 10/s steady with bursts of 30 per 5 s. Per visitor — the IP together
+        // with the tracker's per-tab key, because UAE mobile carriers (Etisalat, du), offices and malls
+        // put many people behind one IP — 3/s, bursts of 12, 300 an hour. Per IP alone only a generous
+        // backstop (60 per 4 s, 3,000 an hour). The IP is only ever part of a short-lived hashed key.
+        foreach (self::limits($site->id, $ip, $data['tab_key'] ?? null) as [$key, $max, $decay]) {
             if (RateLimiter::tooManyAttempts('growth-c:'.$key, $max)) {
                 return [429, ['error' => 'rate_limited'], max(1, RateLimiter::availableIn('growth-c:'.$key))];
             }
         }
-        foreach ([["s5:{$site->id}", 5], ["s60:{$site->id}", 60], ["i4:{$ipKey}", 4], ["i3600:{$ipKey}", 3600]] as [$key, $decay]) {
+        foreach (self::limits($site->id, $ip, $data['tab_key'] ?? null) as [$key, , $decay]) {
             RateLimiter::hit('growth-c:'.$key, $decay);
         }
 

@@ -5,11 +5,15 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Application\Templates\TemplateSync;
+use App\Domain\Templates\Enums\TemplateStatus;
+use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\WabaStatus;
 use App\Domain\WhatsApp\Models\WabaAccount;
+use App\Infrastructure\Meta\MetaUsage;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -35,9 +39,18 @@ final class SyncTemplates extends Command
             if ($tenant === null) {
                 continue;
             }
+            // Template status changes arrive by webhook; this sync is the safety net. Each account is
+            // synced at most hourly unless it has templates waiting for review, and never while our
+            // Meta budget for it is at 75 % or Meta asked us to wait.
+            $pending = $context->bypass(fn () => MessageTemplate::query()->where('waba_account_id', $account->id)->whereIn('status', [TemplateStatus::PENDING, TemplateStatus::IN_APPEAL])->exists());
+            $recent = Cache::get('templates:synced:'.$account->id) !== null;
+            if (($recent && ! $pending) || MetaUsage::shouldDefer((string) $account->waba_id)) {
+                continue;
+            }
 
             try {
                 $context->run($tenant, fn () => $sync->syncWaba($account));
+                Cache::put('templates:synced:'.$account->id, now()->timestamp, now()->addMinutes(60));
                 $ok++;
             } catch (Throwable $e) {
                 $failed++;

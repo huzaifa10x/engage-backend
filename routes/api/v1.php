@@ -38,12 +38,13 @@ use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
 use App\Http\Controllers\Api\V1\Templates\TemplateController;
 use App\Http\Controllers\Api\V1\TenantController;
+use App\Http\Controllers\Api\V1\TwoFactorController;
 use App\Http\Controllers\Api\V1\WhatsApp\AccountController as WhatsAppAccountController;
 use App\Http\Controllers\Api\V1\WhatsApp\PhoneNumberController;
 use App\Http\Controllers\Api\V1\WhatsApp\SignupController;
 use App\Http\Middleware\EnsureEmailVerified;
 use App\Http\Middleware\EnsureFreshLogin;
-use App\Http\Middleware\PlanRateLimit;
+use App\Http\Middleware\RequireOwnerTwoFactor;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -67,6 +68,7 @@ Route::middleware('throttle:auth')->prefix('auth')->name('auth.')->group(functio
     Route::post('register', [AuthController::class, 'register'])->name('register');
     Route::post('login', [AuthController::class, 'login'])->name('login');
     Route::post('login/verify', [AuthController::class, 'loginVerify'])->name('login.verify');
+    Route::post('login/two-factor', [AuthController::class, 'loginTwoFactor'])->name('login.two-factor');
     Route::post('login/resend', [AuthController::class, 'loginResend'])->name('login.resend');
     Route::post('forgot-password', [AccountEmailController::class, 'forgot'])->name('password.forgot');
     Route::post('reset-password', [AccountEmailController::class, 'reset'])->name('password.reset');
@@ -84,6 +86,12 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, 'tenant:optional', '
     Route::post('auth/email/resend', [AccountEmailController::class, 'resend'])->name('auth.email.resend');
     Route::delete('auth/impersonation', [ImpersonationController::class, 'destroy'])->name('auth.impersonation.stop');
     Route::get('me', [MeController::class, 'show'])->name('me');
+    // Two-factor sign-in (authenticator app): required for workspace Owners.
+    Route::get('auth/two-factor', [TwoFactorController::class, 'show'])->name('auth.two-factor');
+    Route::post('auth/two-factor/setup', [TwoFactorController::class, 'setup'])->middleware('throttle:10,1')->name('auth.two-factor.setup');
+    Route::post('auth/two-factor/confirm', [TwoFactorController::class, 'confirm'])->name('auth.two-factor.confirm');
+    Route::post('auth/two-factor/recovery-codes', [TwoFactorController::class, 'recoveryCodes'])->name('auth.two-factor.recovery-codes');
+    Route::delete('auth/two-factor', [TwoFactorController::class, 'destroy'])->name('auth.two-factor.destroy');
     Route::put('me/active-tenant', [ActiveTenantController::class, 'update'])->name('me.active-tenant');
     Route::post('invitations/{token}/accept', [InvitationController::class, 'accept'])
         ->where('token', '[A-Za-z0-9]{64}')
@@ -95,7 +103,9 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, 'tenant:optional', '
 | Authenticated + tenant resolved (Authenticate → Resolve Tenant → Authorize → Entitlement → Action)
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified::class, 'tenant', 'throttle:api', PlanRateLimit::class])->group(function () {
+// The portal is limited per user, against abuse only (throttle:api). Plan allowances apply to the
+// Public API alone (PlanRateLimit in routes/api/public.php), so a busy integration never slows agents.
+Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified::class, 'tenant', RequireOwnerTwoFactor::class, 'throttle:api'])->group(function () {
     Route::get('tenant', [TenantController::class, 'show'])->name('tenant.show');
     Route::patch('tenant', [TenantController::class, 'update'])
         ->middleware('can:'.Permission::SettingsManage->value)->name('tenant.update');

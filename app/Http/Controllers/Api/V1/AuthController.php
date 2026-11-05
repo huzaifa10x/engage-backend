@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Application\Identity\EmailVerification;
 use App\Application\Identity\LoginVerification;
 use App\Application\Tenancy\RegisterWorkspace;
+use App\Domain\Audit\AuditLogger;
 use App\Domain\Identity\Models\User;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\LoginRequest;
@@ -55,6 +56,15 @@ final class AuthController extends Controller
 
         $user = $request->authenticate();
         $remember = $request->boolean('remember');
+
+        // Two-factor sign-in (authenticator app) replaces the emailed code: always asked, on every browser.
+        if ($user->hasTwoFactor()) {
+            Auth::guard('web')->logout();
+            $request->session()->regenerate();
+            $request->session()->put(self::PENDING, ['id' => $user->id, 'remember' => $remember, 'at' => now()->timestamp, 'two_factor' => true]);
+
+            return response()->json(['data' => ['two_factor_required' => true]], 202);
+        }
         $trustedSince = LoginVerification::enabled() ? $verification->trustedSince($request, $user) : now();
 
         if ($trustedSince === null) {
@@ -105,6 +115,36 @@ final class AuthController extends Controller
         $user->forceFill(['last_login_at' => now(), 'email_verified_at' => $user->getAttribute('email_verified_at') ?? now()])->saveQuietly();
 
         return $me->payload($user, $user->last_active_tenant_id)->withCookie($verification->trust($user));
+    }
+
+    /** Step 2 with two-factor sign-in: a code from the authenticator app, or a recovery code. */
+    public function loginTwoFactor(Request $request, MeController $me): JsonResponse
+    {
+        $this->ensureStateful($request);
+        $user = $this->pendingUser($request);
+        if (! (bool) ($request->session()->get(self::PENDING)['two_factor'] ?? false) || ! $user->hasTwoFactor()) {
+            throw ValidationException::withMessages(['code' => 'Your sign-in has expired. Enter your email and password again.']);
+        }
+        $data = $request->validate(['code' => ['nullable', 'string', 'max:10'], 'recovery_code' => ['nullable', 'string', 'max:30']]);
+        foreach (['login-2fa:'.$user->id => 5, 'login-2fa-ip:'.$request->ip() => 30] as $key => $max) {
+            if (RateLimiter::tooManyAttempts($key, $max)) {
+                throw ValidationException::withMessages(['code' => 'Too many attempts. Try again in '.(int) ceil(RateLimiter::availableIn($key) / 60).' minute(s).']);
+            }
+            RateLimiter::hit($key, 300);
+        }
+        $method = TwoFactorController::check($user, $data['code'] ?? null, $data['recovery_code'] ?? null);
+        RateLimiter::clear('login-2fa:'.$user->id);
+
+        $pending = (array) $request->session()->pull(self::PENDING);
+        Auth::guard('web')->login($user, (bool) ($pending['remember'] ?? false));
+        $request->session()->regenerate();
+        $request->session()->put(LoginVerification::SESSION_STAMP, now()->timestamp);
+        $user->forceFill(['last_login_at' => now()])->saveQuietly();
+        if ($method === 'recovery') {
+            app(AuditLogger::class)->record('user.two_factor_recovery_code_used', $user, meta: ['remaining' => count((array) $user->getAttribute('two_factor_recovery_codes'))]);
+        }
+
+        return $me->payload($user, $user->last_active_tenant_id);
     }
 
     public function loginResend(Request $request, LoginVerification $verification): JsonResponse

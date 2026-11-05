@@ -140,6 +140,9 @@ final class CommerceSalesTest extends TestCase
         $this->plugin('heartbeat', ['plugin_version' => '1.0.0', 'wc_version' => '9.4.3', 'latest_order_at' => now()->subHours(30)->toIso8601String(), 'queue_pending' => 0])
             ->assertOk()->assertJsonPath('data.link_param', 'xl');
 
+        // Malformed events are refused, never queued.
+        $this->plugin('events', ['events' => [['event' => 'created', 'order' => ['number' => 'no id']]]])->assertStatus(202)->assertJsonPath('data.rejected', 1)->assertJsonPath('data.accepted', 0);
+
         $list = $this->getJson('/api/v1/integrations')->assertOk()->json('data.integrations');
         $store = collect($list)->firstWhere('id', $integration->id);
         $this->assertSame('plugin', $store['via']);
@@ -157,7 +160,7 @@ final class CommerceSalesTest extends TestCase
         // A pending nudge for this person stops when they order.
         $nudge = $this->tenantContext()->run($this->tenant, fn () => app(Scheduler::class)->schedule('nudge', now()->addHour(), 'nudge:'.$c->id, $c, $c->contact, sendsMessage: true));
 
-        $this->event('created', $this->order(['xl' => $token]))->assertOk()->assertJsonPath('data.accepted', 1)->assertJsonPath('data.orders.0.match', 'link');
+        $this->event('created', $this->order(['xl' => $token]))->assertStatus(202)->assertJsonPath('data.accepted', 1);
         $order = $this->stored('7001');
         $this->assertSame(CommerceOrder::LINK, $order->match);
         $this->assertSame($c->id, $order->conversation_id);
@@ -168,12 +171,13 @@ final class CommerceSalesTest extends TestCase
 
         // The same event again (a retry) is ignored.
         $at = now()->toIso8601String();
-        $this->event('paid', $this->order(['xl' => $token]), $at)->assertOk();
-        $this->event('paid', $this->order(['xl' => $token]), $at)->assertOk()->assertJsonPath('data.duplicates', 1);
+        $this->event('paid', $this->order(['xl' => $token]), $at)->assertStatus(202);
+        $this->event('paid', $this->order(['xl' => $token]), $at)->assertStatus(202);
+        $this->assertSame(1, $this->tenantContext()->run($this->tenant, fn () => DB::table('commerce_order_events')->where('event', 'paid')->count()), 'a retried event is recorded once');
 
         // A partial refund lowers the revenue; an older state arriving late changes nothing.
-        $this->event('refunded', $this->order(['xl' => $token, 'total_refunded' => '100.00', 'date_modified' => now()->toIso8601String()]))->assertOk();
-        $this->event('updated', $this->order(['xl' => $token, 'date_modified' => now()->subHour()->toIso8601String()]), now()->subHour()->toIso8601String())->assertOk();
+        $this->event('refunded', $this->order(['xl' => $token, 'total_refunded' => '100.00', 'date_modified' => now()->toIso8601String()]))->assertStatus(202);
+        $this->event('updated', $this->order(['xl' => $token, 'date_modified' => now()->subHour()->toIso8601String()]), now()->subHour()->toIso8601String())->assertStatus(202);
         $this->assertSame('200.00', $this->stored('7001')->net);
 
         $sales = $this->getJson('/api/v1/analytics/sales?days=30')->assertOk()->json('data');
@@ -193,7 +197,7 @@ final class CommerceSalesTest extends TestCase
         $this->getJson("/api/v1/contacts/{$c->contact_id}/orders")->assertOk()->assertJsonPath('data.total_spend.0.net', '200.00')->assertJsonPath('data.count', 1);
 
         // Cancelling removes the revenue.
-        $this->event('cancelled', $this->order(['xl' => $token, 'status' => 'cancelled', 'date_modified' => now()->addMinute()->toIso8601String()]))->assertOk();
+        $this->event('cancelled', $this->order(['xl' => $token, 'status' => 'cancelled', 'date_modified' => now()->addMinute()->toIso8601String()]))->assertStatus(202);
         $this->assertSame('0.00', $this->stored('7001')->net);
     }
 
@@ -207,32 +211,32 @@ final class CommerceSalesTest extends TestCase
         $omarToken = $this->agentSendsLink($omar);
 
         // The chat's token, but someone else's phone: kept for review, not counted.
-        $this->event('created', $this->order(['id' => '1', 'number' => '1', 'xl' => $token, 'billing' => ['phone' => '+971 55 000 0000', 'country' => 'AE']]))->assertOk();
+        $this->event('created', $this->order(['id' => '1', 'number' => '1', 'xl' => $token, 'billing' => ['phone' => '+971 55 000 0000', 'country' => 'AE']]))->assertStatus(202);
         $this->assertSame(CommerceOrder::REVIEW, $this->stored('1')->match);
         $this->assertSame('0.00', $this->getJson('/api/v1/analytics/sales')->json('data.chat_link.revenue'));
         // The token is now used by nothing yet; once attached it attaches only this order.
         $id = $this->stored('1')->id;
         $this->postJson("/api/v1/growth/sales/{$id}/review", ['action' => 'attach'])->assertOk()->assertJsonPath('data.match', 'link');
-        $this->event('created', $this->order(['id' => '2', 'number' => '2', 'xl' => $token]))->assertOk();
+        $this->event('created', $this->order(['id' => '2', 'number' => '2', 'xl' => $token]))->assertStatus(202);
         $this->assertSame(CommerceOrder::UNAVAILABLE, $this->stored('2')->match);
         $this->assertStringContainsString('already used for order #1', (string) $this->stored('2')->match_note);
 
         // Omar got a link but bought without it (another device): attribution unavailable.
-        $this->event('created', $this->order(['id' => '3', 'number' => '3', 'date_created' => now()->addMinute()->toIso8601String(), 'billing' => ['phone' => '0509999999', 'country' => 'AE']]))->assertOk();
+        $this->event('created', $this->order(['id' => '3', 'number' => '3', 'date_created' => now()->addMinute()->toIso8601String(), 'billing' => ['phone' => '0509999999', 'country' => 'AE']]))->assertStatus(202);
         $this->assertSame(CommerceOrder::UNAVAILABLE, $this->stored('3')->match);
         // Lina is a contact but got no link: an order from a WhatsApp contact, never chat revenue.
-        $this->event('created', $this->order(['id' => '4', 'number' => '4', 'billing' => ['phone' => '+971507777777']]))->assertOk();
+        $this->event('created', $this->order(['id' => '4', 'number' => '4', 'billing' => ['phone' => '+971507777777']]))->assertStatus(202);
         $this->assertSame(CommerceOrder::PHONE, $this->stored('4')->match);
         // A stranger: a website order.
-        $this->event('created', $this->order(['id' => '5', 'number' => '5', 'billing' => ['phone' => '+971521111111']]))->assertOk();
+        $this->event('created', $this->order(['id' => '5', 'number' => '5', 'billing' => ['phone' => '+971521111111']]))->assertStatus(202);
         $this->assertSame(CommerceOrder::NONE, $this->stored('5')->match);
         // An expired link.
         $this->tenantContext()->run($this->tenant, fn () => DB::table('commerce_link_tokens')->where('contact_id', $omar->contact_id)->update(['expires_at' => now()->subDay()]));
-        $this->event('created', $this->order(['id' => '6', 'number' => '6', 'xl' => $omarToken, 'billing' => ['phone' => '0509999999', 'country' => 'AE']]))->assertOk();
+        $this->event('created', $this->order(['id' => '6', 'number' => '6', 'xl' => $omarToken, 'billing' => ['phone' => '0509999999', 'country' => 'AE']]))->assertStatus(202);
         $this->assertSame(CommerceOrder::UNAVAILABLE, $this->stored('6')->match);
         $this->assertStringContainsString('expired', (string) $this->stored('6')->match_note);
         // A made-up token.
-        $this->event('created', $this->order(['id' => '8', 'number' => '8', 'xl' => str_repeat('A', 24), 'billing' => ['phone' => '+971521111111']]))->assertOk();
+        $this->event('created', $this->order(['id' => '8', 'number' => '8', 'xl' => str_repeat('A', 24), 'billing' => ['phone' => '+971521111111']]))->assertStatus(202);
         $this->assertSame(CommerceOrder::UNAVAILABLE, $this->stored('8')->match);
 
         $sales = $this->getJson('/api/v1/analytics/sales')->assertOk()->json('data');
@@ -261,7 +265,8 @@ final class CommerceSalesTest extends TestCase
         $r = $this->postJson('/api/integrations/woocommerce/plugin/connect', ['key' => $key, 'site_url' => 'https://other-shop.example'])->assertCreated();
         $this->storeId = (string) $r->json('data.store_id');
         $this->secret = (string) $r->json('data.secret');
-        $this->event('created', $this->order(['id' => '9', 'xl' => $m[1]]))->assertOk()->assertJsonPath('data.orders.0.match', 'unavailable');
+        $this->event('created', $this->order(['id' => '9', 'xl' => $m[1]]))->assertStatus(202);
+        $this->assertSame('unavailable', $this->tenantContext()->bypass(fn () => DB::table('commerce_orders')->where('tenant_id', $other->id)->where('external_id', '9')->value('match')));
 
         // The same store cannot be connected to two workspaces.
         $key2 = (string) $this->postJson('/api/v1/integrations/woocommerce/plugin-key')->assertCreated()->json('data.key');
@@ -279,7 +284,7 @@ final class CommerceSalesTest extends TestCase
 
         $c = $this->customerWrites();
         $token = $this->agentSendsLink($c);
-        $this->event('created', $this->order(['xl' => $token]))->assertOk();
+        $this->event('created', $this->order(['xl' => $token]))->assertStatus(202);
         $this->assertSame($won, $this->tenantContext()->run($this->tenant, fn () => Contact::query()->find($c->contact_id)?->getAttribute('stage_id')));
 
         $modified = Carbon::parse($this->stored('7001')->store_updated_at);

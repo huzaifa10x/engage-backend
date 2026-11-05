@@ -88,8 +88,9 @@ final class PlanManagementTest extends TestCase
         $this->getJson('/api/v1/tenant/entitlements')->assertOk()
             ->assertJsonPath('data.features.tags.limit', 60)->assertJsonPath('data.features.broadcasts.enabled', false)
             ->assertJsonPath('data.features.api_rate_limit_per_minute.limit', 2);
-        $this->getJson('/api/v1/tenant/entitlements')->assertOk()->assertHeader('X-RateLimit-Limit', '2');
-        $this->getJson('/api/v1/tenant/entitlements')->assertStatus(429)->assertJsonPath('error.code', 'rate_limited');
+        // The plan's API allowance is for the Public API only: the portal (agents in the inbox) is never held to it.
+        $this->getJson('/api/v1/tenant/entitlements')->assertOk();
+        $this->getJson('/api/v1/tenant/entitlements')->assertOk()->assertHeaderMissing('X-RateLimit-Remaining-Plan');
     }
 
     public function test_grandfathering_new_plans_and_deactivation(): void

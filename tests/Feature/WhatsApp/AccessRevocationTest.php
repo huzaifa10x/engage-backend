@@ -11,9 +11,11 @@ use App\Domain\WhatsApp\Enums\OnboardingType;
 use App\Domain\WhatsApp\Models\MetaAccessToken;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\WabaAccount;
+use App\Infrastructure\Meta\MetaUsage;
 use App\Notifications\InternalAlertNotification;
 use App\Notifications\ReconnectRequiredNotification;
 use GuzzleHttp\Promise\PromiseInterface;
+use GuzzleHttp\Psr7\Response;
 use Illuminate\Http\Client\Request;
 use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Support\Facades\Http;
@@ -200,6 +202,17 @@ final class AccessRevocationTest extends TestCase
     }
 
     // ── 3. The hourly check ────────────────────────────────────────────────────────────────
+
+    public function test_the_access_check_waits_while_our_meta_budget_for_the_account_is_high(): void
+    {
+        $this->connect();
+        MetaUsage::record(new \Illuminate\Http\Client\Response(new Response(200, [
+            'X-Business-Use-Case-Usage' => (string) json_encode([self::WABA => [['type' => 'whatsapp_business_management', 'call_count' => 90]]]),
+        ], '{}')));
+        Http::fake(['graph.facebook.com/*/'.self::WABA.'*' => fn () => $this->fail('an account at 90 % of its Meta budget must not be checked now')]);
+        $this->artisan('engage:whatsapp:verify-access')->assertSuccessful()->expectsOutputToContain('1 deferred');
+        $this->assertSame('connected', $this->state()[0]);
+    }
 
     public function test_the_hourly_check_finds_access_removed_while_nothing_was_being_sent(): void
     {

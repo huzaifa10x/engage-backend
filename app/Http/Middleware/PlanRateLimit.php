@@ -9,13 +9,15 @@ use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\TenantContext;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\RateLimiter;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Plan-wise API rate limit: all members of a workspace share the requests-per-minute allowance
- * of its plan (Super Admin → Plans, or a per-company override). Must run AFTER the tenant has
- * been resolved, which is why it is its own middleware rather than part of `throttle:api`.
+ * Public API rate limit: every API key of a workspace shares the requests-per-minute allowance of its
+ * plan (Super Admin → Plans, or a per-company override). The portal has its own, separate per-user
+ * abuse limit, so a busy integration can never slow the agents down. Also counts the requests of
+ * this minute and today for the Developer page (usage()).
  */
 final class PlanRateLimit
 {
@@ -28,13 +30,14 @@ final class PlanRateLimit
             return $next($request);
         }
 
+        self::count($tenant->id);
         $entitlement = $this->entitlements->for($tenant)->get(FeatureKey::ApiRateLimitPerMinute);
         if ($entitlement->isUnlimited() || ! $entitlement->enabled || (int) $entitlement->limit <= 0) {
-            return $next($request); // unlimited, or not configured for this plan: the global limiter still applies
+            return $next($request); // unlimited, or not configured for this plan
         }
 
         $perMinute = (int) $entitlement->limit;
-        $key = 'plan-api:'.$tenant->id;
+        $key = self::key($tenant->id);
 
         if (RateLimiter::tooManyAttempts($key, $perMinute)) {
             $retry = RateLimiter::availableIn($key);
@@ -51,5 +54,35 @@ final class PlanRateLimit
         $response->headers->set('X-RateLimit-Remaining', (string) max(0, RateLimiter::remaining($key, $perMinute)));
 
         return $response;
+    }
+
+    public static function key(string $tenantId): string
+    {
+        return 'plan-api:'.$tenantId;
+    }
+
+    /**
+     * Requests this minute (the limiter's window) and today (UTC day), for the Developer page.
+     *
+     * @return array{this_minute: int, today: int}
+     */
+    public static function usage(string $tenantId): array
+    {
+        return [
+            'this_minute' => RateLimiter::attempts(self::key($tenantId)),
+            'today' => (int) Cache::get(self::dayKey($tenantId), 0),
+        ];
+    }
+
+    private static function count(string $tenantId): void
+    {
+        $key = self::dayKey($tenantId);
+        Cache::add($key, 0, now()->addDays(2));
+        Cache::increment($key);
+    }
+
+    private static function dayKey(string $tenantId): string
+    {
+        return 'plan-api-day:'.$tenantId.':'.now()->utc()->toDateString();
     }
 }

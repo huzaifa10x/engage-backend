@@ -11,6 +11,9 @@ use App\Domain\Developer\Models\WebhookDelivery;
 use App\Domain\Developer\Models\WebhookEndpoint;
 use App\Domain\Developer\Services\UrlGuard;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\Models\Feature;
+use App\Domain\Plans\Models\TenantEntitlementOverride;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Notifications\WebhookEndpointDisabledNotification;
@@ -253,5 +256,40 @@ final class DeveloperModuleTest extends TestCase
                 $this->addToAssertionCount(1);
             }
         }
+    }
+
+    public function test_the_public_api_has_its_own_plan_allowance_and_the_portal_is_never_held_to_it(): void
+    {
+        $key = $this->apiKey();
+        $feature = Feature::query()->where('key', 'api_rate_limit_per_minute')->sole();
+        $this->tenantContext()->bypass(fn () => TenantEntitlementOverride::query()->create([
+            'tenant_id' => $this->tenant->id, 'feature_id' => $feature->id, 'enabled' => true, 'limit_value' => 2, 'unlimited' => false, 'reason' => 'test',
+        ]));
+        app(EntitlementService::class)->forget($this->tenant);
+
+        $this->api($key)->getJson('/api/public/v1/me')->assertOk()->assertHeader('X-RateLimit-Limit', '2');
+        $this->api($key)->getJson('/api/public/v1/me')->assertOk();
+        $this->api($key)->getJson('/api/public/v1/me')->assertStatus(429)->assertJsonPath('error.code', 'rate_limited')->assertHeader('Retry-After');
+
+        // A busy integration does not slow the agents: the portal has its own per-user limit.
+        $this->app['auth']->forgetGuards();
+        $this->flushHeaders();
+        $this->actingAsMember($this->owner);
+        foreach (range(1, 5) as $_) {
+            $this->getJson('/api/v1/developer')->assertOk();
+        }
+        $usage = $this->getJson('/api/v1/developer')->assertOk()->json('data.api_usage');
+        $this->assertSame(3, $usage['today']);
+        $this->assertGreaterThanOrEqual(2, $usage['this_minute']);
+    }
+
+    public function test_the_portal_abuse_limit_never_offers_an_upgrade(): void
+    {
+        config(['engage.api.rate_limit_per_minute' => 2]);
+        $this->actingAsMember($this->owner);
+        $this->getJson('/api/v1/developer')->assertOk();
+        $this->getJson('/api/v1/developer')->assertOk();
+        $r = $this->getJson('/api/v1/developer')->assertStatus(429)->assertJsonPath('error.code', 'rate_limited')->assertHeader('Retry-After');
+        $this->assertStringNotContainsStringIgnoringCase('upgrade', (string) $r->json('error.message'));
     }
 }

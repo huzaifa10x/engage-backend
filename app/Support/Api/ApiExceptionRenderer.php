@@ -60,7 +60,9 @@ final class ApiExceptionRenderer
             $e instanceof ModelNotFoundException, $e instanceof NotFoundHttpException => [404, ErrorCode::NotFound, 'Resource not found.', [], []],
             $e instanceof MethodNotAllowedHttpException => [405, ErrorCode::MethodNotAllowed, 'Method not allowed.', [], []],
             $e instanceof TokenMismatchException => [419, ErrorCode::CsrfMismatch, 'CSRF token mismatch.', [], []],
-            $e instanceof ThrottleRequestsException => [429, ErrorCode::RateLimited, 'Too many requests.', [], self::stringHeaders($e->getHeaders())],
+            // The portal's abuse limit: a calm "wait a moment", never an upgrade prompt (plan allowances
+            // apply to the Public API only, in PlanRateLimit).
+            $e instanceof ThrottleRequestsException => [429, ErrorCode::RateLimited, 'Too many requests at once. Please wait '.(int) ($e->getHeaders()['Retry-After'] ?? 5).' seconds and try again.', [], self::stringHeaders($e->getHeaders())],
             $e instanceof HttpExceptionInterface => [
                 $e->getStatusCode(),
                 $e->getStatusCode() === 503 ? ErrorCode::ServiceUnavailable : ($e->getStatusCode() >= 500 ? ErrorCode::ServerError : ErrorCode::Forbidden),

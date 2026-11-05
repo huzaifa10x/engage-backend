@@ -4,11 +4,10 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Integrations;
 
+use App\Domain\Commerce\Jobs\RecordPluginEvents;
 use App\Domain\Commerce\Models\CommerceOrder;
 use App\Domain\Commerce\Services\ChatLinks;
 use App\Domain\Commerce\Services\OrderPayload;
-use App\Domain\Commerce\Services\Orders;
-use App\Domain\Integrations\Jobs\HandleStoreWebhook;
 use App\Domain\Integrations\Models\Integration;
 use App\Domain\Integrations\Providers\WooCommercePlugin;
 use App\Domain\Tenancy\Models\Tenant;
@@ -82,39 +81,23 @@ final class WooCommercePluginController extends Controller
         return response()->json(['data' => ['store_id' => $integration->public_id, 'secret' => $secret, 'name' => $integration->name] + $this->settings($integration)], 201);
     }
 
-    public function events(Request $request, string $publicId, Orders $orders): JsonResponse
+    /**
+     * Verified and queued at once (202): recording happens in RecordPluginEvents, so a flash sale never
+     * makes the store wait or retry. Malformed events are counted as rejected and never retried.
+     */
+    public function events(Request $request, string $publicId): JsonResponse
     {
-        return $this->signed($request, $publicId, function (Integration $integration) use ($request, $orders) {
+        return $this->signed($request, $publicId, function (Integration $integration) use ($request) {
             $events = $request->json('events');
-            if (! is_array($events) || count($events) > self::MAX_EVENTS) {
+            if (! is_array($events) || $events === [] || count($events) > self::MAX_EVENTS) {
                 return response()->json(['message' => 'Send between 1 and '.self::MAX_EVENTS.' events.'], 422);
             }
-            $accepted = $duplicates = $rejected = 0;
-            $results = [];
-            foreach ($events as $e) {
-                $order = is_array($e) && is_array($e['order'] ?? null) ? OrderPayload::parse($e['order']) : null;
-                if ($order === null) {
-                    $rejected++;
-
-                    continue;
-                }
-                $event = (string) ($e['event'] ?? 'updated');
-                $at = null;
-                try {
-                    $at = isset($e['occurred_at']) && is_string($e['occurred_at']) ? Carbon::parse($e['occurred_at'])->utc() : null;
-                } catch (Throwable) {
-                    $at = null;
-                }
-                $result = $orders->record($integration, $order, $event, $at, ($e['via'] ?? null) === 'catch_up' ? 'catch_up' : 'plugin');
-                $result['duplicate'] ? $duplicates++ : $accepted++;
-                $results[] = ['id' => $order->id, 'match' => $result['order']?->match, 'duplicate' => $result['duplicate']];
-                if (! $result['duplicate']) {
-                    // Store messages (order confirmed, shipped, cancelled) use the same events.
-                    HandleStoreWebhook::dispatch($integration->id, $event === 'created' ? 'order.created' : 'order.updated', $e['order'], true);
-                }
+            $valid = array_values(array_filter($events, fn ($e) => is_array($e) && is_array($e['order'] ?? null) && OrderPayload::parse($e['order']) !== null));
+            if ($valid !== []) {
+                RecordPluginEvents::dispatch($integration->id, $valid);
             }
 
-            return response()->json(['data' => ['accepted' => $accepted, 'duplicates' => $duplicates, 'rejected' => $rejected, 'orders' => $results]]);
+            return response()->json(['data' => ['accepted' => count($valid), 'rejected' => count($events) - count($valid)]], 202);
         });
     }
 

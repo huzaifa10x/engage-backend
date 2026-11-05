@@ -18,6 +18,7 @@ use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Exceptions\WhatsappException;
 use App\Infrastructure\Meta\GraphClient;
 use App\Infrastructure\Meta\MetaApiException;
+use App\Infrastructure\Meta\MetaUsage;
 use App\Support\Queue\QueueName;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -68,6 +69,23 @@ final class SendWhatsappMessage implements ShouldQueue
         return now()->addHours(6);
     }
 
+    /**
+     * Seconds before the next try: 130429 (this number is sending faster than Meta allows) and 131056
+     * (too many messages to the same person in a short time — Meta's pair limit) back off longer than
+     * other transient errors, with a little jitter so a campaign's retries do not arrive together.
+     */
+    public static function retryDelay(?int $metaCode, int $attempt): int
+    {
+        $ladder = match ($metaCode) {
+            130429 => [5, 15, 30, 60, 120, 300],
+            131056 => [15, 30, 60, 120, 300, 600],
+            default => [2, 10, 30, 120, 300],
+        };
+        $base = $ladder[min(max(0, $attempt - 1), count($ladder) - 1)];
+
+        return $base + random_int(0, max(1, intdiv($base, 5)));
+    }
+
     /** @return list<int> */
     public function backoff(): array
     {
@@ -84,6 +102,15 @@ final class SendWhatsappMessage implements ShouldQueue
         $number = $message->phoneNumber;
         if ($number === null || $number->status !== PhoneNumberStatus::Connected || $number->wabaAccount === null) {
             $this->fail($message, 'number_unavailable', 'The WhatsApp number is no longer connected.');
+
+            return;
+        }
+
+        // Meta told us to stop calling for this number (or WABA) for a while: wait, still queued.
+        // An app-wide hold (from background calls) never stops customer messages.
+        $blocked = max(MetaUsage::blockedFor($number->phone_number_id, app: false), MetaUsage::blockedFor((string) $number->wabaAccount->waba_id, app: false));
+        if ($blocked > 0 && $this->job !== null && config('queue.default') !== 'sync') {
+            $this->release(min($blocked, 900));
 
             return;
         }
@@ -141,7 +168,8 @@ final class SendWhatsappMessage implements ShouldQueue
         } catch (MetaApiException $e) {
             if (in_array($e->metaCode, self::RETRYABLE, true) || $e->httpStatus >= 500) {
                 if ($this->attempts() < self::MAX_TRANSIENT_ATTEMPTS) {
-                    $this->release($this->backoff()[min($this->attempts() - 1, 4)]);
+                    // The message stays queued (never failed straight away) and waits a little longer each time.
+                    $this->release(self::retryDelay($e->metaCode, $this->attempts()));
 
                     return;
                 }

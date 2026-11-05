@@ -7,6 +7,7 @@ namespace Tests\Feature\Messaging;
 use App\Domain\Access\SystemRole;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Enums\MessageStatus;
+use App\Domain\Messaging\Jobs\SendWhatsappMessage;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
@@ -183,6 +184,26 @@ final class OutboundMessagingTest extends TestCase
 
         Http::assertSentCount(1);
         $this->tenantContext()->run($this->tenant, fn () => $this->assertSame(1, Message::query()->where('direction', 'outbound')->count()));
+    }
+
+    public function test_meta_throttling_keeps_the_message_queued_and_backs_off(): void
+    {
+        foreach ([130429 => '(#130429) Rate limit hit', 131056 => '(#131056) Pair rate limit hit'] as $code => $text) {
+            $conversation = $this->thread();
+            $this->fakeSend(['message' => $text, 'code' => $code, 'fbtrace_id' => 'T'.$code]);
+            $this->actingAsMember($this->owner);
+            $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hi '.$code])->assertStatus(202);
+
+            $this->tenantContext()->run($this->tenant, function () use ($code) {
+                $m = Message::query()->where('direction', 'outbound')->where('body', 'Hi '.$code)->sole();
+                $this->assertSame(MessageStatus::Queued, $m->status, "{$code} is retried, never failed straight away");
+            });
+        }
+        // Longer waits for sending too fast, longer still for too many messages to one person.
+        $this->assertGreaterThanOrEqual(5, SendWhatsappMessage::retryDelay(130429, 1));
+        $this->assertGreaterThanOrEqual(15, SendWhatsappMessage::retryDelay(131056, 1));
+        $this->assertGreaterThanOrEqual(300, SendWhatsappMessage::retryDelay(131056, 9));
+        $this->assertLessThanOrEqual(720, SendWhatsappMessage::retryDelay(131056, 9));
     }
 
     public function test_permanent_meta_errors_mark_the_message_failed(): void
