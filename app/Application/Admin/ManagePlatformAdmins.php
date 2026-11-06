@@ -92,6 +92,9 @@ final class ManagePlatformAdmins
 
     public function setUserStatus(User $user, bool $active, string $reason): void
     {
+        if (! $active && $user->isReviewAccount()) {
+            throw ValidationException::withMessages(['reason' => 'This is a review account (given to Meta App Review) and cannot be disabled. End the review account first if you really need to.']);
+        }
         $before = $user->isDisabled();
         $user->forceFill(['disabled_at' => $active ? null : now()])->save();
 

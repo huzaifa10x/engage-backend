@@ -9,6 +9,7 @@ use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 final class RemoveMember
 {
@@ -24,6 +25,11 @@ final class RemoveMember
 
         if ($member->isOwner() && ! $actor->isOwner()) {
             throw new AuthorizationException('Only owners can remove an owner.');
+        }
+
+        // The account given to Meta App Review must keep working: only a Super Admin can end it.
+        if ($member->user()->first()?->isReviewAccount() === true) {
+            throw ValidationException::withMessages(['member' => 'This is the review account given to Meta. It cannot be removed; ask 10X Engage support to end the review account first.']);
         }
 
         DB::transaction(function () use ($member) {

@@ -83,9 +83,13 @@ export default function UserShow({ user, memberships, audit }: Props) {
 
                 <Card title="Account status" padded>
                     <p className="text-[13.5px] text-ink-2">
-                        {user.disabled ? 'This user cannot sign in to any workspace.' : 'Disabling signs them out of every workspace and revokes their API tokens.'}
+                        {user.disabled
+                            ? 'This user cannot sign in to any workspace.'
+                            : user.review_account
+                              ? 'Protected: a review account cannot be disabled, removed from its workspace or given another role. End the review account first.'
+                              : 'Disabling signs them out of every workspace and revokes their API tokens.'}
                     </p>
-                    {canManage && (
+                    {canManage && (user.disabled || !user.review_account) && (
                         <Button className="mt-3" variant={user.disabled ? 'primary' : 'danger'} onClick={() => setModal('status')}>{user.disabled ? 'Re-enable user' : 'Disable user'}</Button>
                     )}
                 </Card>

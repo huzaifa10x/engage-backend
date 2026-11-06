@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Admin;
 
+use App\Domain\Access\Models\Role;
+use App\Domain\Access\SystemRole;
 use App\Domain\Audit\Models\AuditLog;
 use App\Domain\Identity\Models\User;
+use App\Domain\Tenancy\Models\TenantMembership;
 use App\Notifications\AccountChangedBySupportNotification;
 use App\Notifications\ResetPasswordNotification;
 use Illuminate\Notifications\AnonymousNotifiable;
@@ -116,5 +119,28 @@ final class UserManagementTest extends TestCase
         $this->post("/admin/users/{$this->user->id}/password-reset")->assertRedirect()->assertSessionHasNoErrors();
         Notification::assertSentTo($this->user, ResetPasswordNotification::class);
         $this->assertTrue($this->audited('user.password_reset_link_sent_by_support'));
+    }
+
+    public function test_a_review_account_cannot_be_disabled_removed_or_demoted(): void
+    {
+        $tenant = $this->createTenant();
+        $this->subscribe($tenant, 'pro');
+        $review = $this->addMember($tenant);
+        $other = $this->addMember($tenant);
+        $this->actingAsAdmin();
+        $this->patch("/admin/users/{$review->user_id}/review-account", ['enabled' => true, 'reason' => 'Meta App Review test account'])->assertRedirect();
+
+        $this->patch("/admin/users/{$review->user_id}/status", ['active' => false, 'reason' => 'Cleaning up'])->assertSessionHasErrors('reason');
+        $this->assertFalse(User::query()->findOrFail($review->user_id)->isDisabled());
+
+        // Another Owner of the workspace cannot remove it or change its role either.
+        $this->actingAsMember($other)->deleteJson("/api/v1/team/members/{$review->id}")->assertStatus(422);
+        $this->actingAsMember($other)->patchJson("/api/v1/team/members/{$review->id}", ['role_id' => Role::system(SystemRole::Agent)->id])->assertStatus(422);
+        $this->assertTrue($this->tenantContext()->run($tenant, fn () => TenantMembership::query()->whereKey($review->id)->exists()));
+
+        // Once the review account is ended, the usual actions work again.
+        $this->actingAsAdmin();
+        $this->patch("/admin/users/{$review->user_id}/review-account", ['enabled' => false, 'reason' => 'Review finished'])->assertRedirect();
+        $this->patch("/admin/users/{$review->user_id}/status", ['active' => false, 'reason' => 'Review finished'])->assertSessionHasNoErrors();
     }
 }
