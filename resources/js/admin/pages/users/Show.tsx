@@ -4,7 +4,7 @@ import { Button, Card, Field, Input, Modal, PageHeader, Pill, Table, Textarea } 
 import AdminLayout from '../../layouts/AdminLayout';
 import { date, dateTime, humanize, relative } from '../../lib/format';
 import type { SharedProps } from '../../types';
-import { ResetTwoFactorModal, ReviewAccountModal, StatusModal } from './modals';
+import { DeleteModal, ResetTwoFactorModal, ReviewAccountModal, StatusModal } from './modals';
 
 type User = {
     id: string; name: string; email: string; timezone: string | null; email_verified_at: string | null; disabled: boolean;
@@ -13,10 +13,12 @@ type User = {
 };
 type Membership = { id: string; tenant_id: string; tenant: string | null; role: string | null; status: string; joined_at: string | null };
 type Props = { user: User; memberships: Membership[]; audit: { id: string; action: string; actor_type: string; ip: string | null; created_at: string }[] };
-type ModalName = null | 'details' | 'password' | 'signout' | 'status' | 'reset2fa' | 'review';
+type ModalName = null | 'details' | 'password' | 'signout' | 'status' | 'reset2fa' | 'review' | 'delete';
 
 export default function UserShow({ user, memberships, audit }: Props) {
-    const canManage = (usePage<SharedProps>().props.auth.admin?.abilities ?? []).includes('users.manage');
+    const abilities = usePage<SharedProps>().props.auth.admin?.abilities ?? [];
+    const canManage = abilities.includes('users.manage');
+    const canDelete = abilities.includes('accounts.delete');
     const [modal, setModal] = useState<ModalName>(null);
     const close = () => setModal(null);
     const [busy, setBusy] = useState(false);
@@ -95,6 +97,16 @@ export default function UserShow({ user, memberships, audit }: Props) {
                 </Card>
             </div>
 
+            {canDelete && (
+                <Card title="Delete user" padded className="mt-4">
+                    <p className="text-[13.5px] text-ink-2">
+                        Permanently removes this person: their sign-in, workspace memberships, sessions and API tokens. Messages and notes they wrote stay in the workspaces.
+                        {user.review_account ? ' The review account must be ended first.' : ''}
+                    </p>
+                    <Button className="mt-3" variant="danger" disabled={user.review_account} onClick={() => setModal('delete')}>Delete user</Button>
+                </Card>
+            )}
+
             <Card title="Workspaces" className="mt-4">
                 <Table head={['Workspace', 'Role', 'Membership', 'Joined']} empty="Not a member of any workspace.">
                     {memberships.map((m) => (
@@ -127,6 +139,11 @@ export default function UserShow({ user, memberships, audit }: Props) {
             {modal === 'status' && <StatusModal user={user} onClose={close} />}
             {modal === 'reset2fa' && <ResetTwoFactorModal user={user} onClose={close} />}
             {modal === 'review' && <ReviewAccountModal user={user} onClose={close} />}
+            {modal === 'delete' && (
+                <DeleteModal title={`Delete ${user.name}`} url={`/admin/users/${user.id}`} confirmLabel="Type their email to confirm" confirmValue={user.email} onClose={close}>
+                    This cannot be undone. If they are the only Owner of a workspace with other members, make someone else Owner first (or delete the company).
+                </DeleteModal>
+            )}
         </AdminLayout>
     );
 }

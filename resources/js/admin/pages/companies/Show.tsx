@@ -5,6 +5,7 @@ import AdminLayout from '../../layouts/AdminLayout';
 import { date, dateTime, humanize, money, number, relative, statusTone } from '../../lib/format';
 import type { PlanOption, SharedProps } from '../../types';
 import { qualityLabel, qualityTone, tierLabel } from '../../lib/whatsapp';
+import { DeleteModal } from '../users/modals';
 
 type Company = {
     id: string; name: string; slug: string; status: string; timezone: string; currency: string;
@@ -63,8 +64,9 @@ export default function CompanyShow(props: Props) {
     const abilities = usePage<SharedProps>().props.auth.admin?.abilities ?? [];
     const canManage = abilities.includes('companies.manage');
     const canImpersonate = abilities.includes('impersonate');
+    const canDelete = abilities.includes('accounts.delete');
 
-    const [modal, setModal] = useState<null | 'plan' | 'trial' | 'status' | 'impersonate' | 'growth' | { feature: Feature }>(null);
+    const [modal, setModal] = useState<null | 'plan' | 'trial' | 'status' | 'impersonate' | 'growth' | 'delete' | { feature: Feature }>(null);
     const close = () => setModal(null);
     const suspended = company.status === 'suspended';
     const featureModal = modal !== null && typeof modal === 'object' ? modal.feature : null;
@@ -265,6 +267,16 @@ export default function CompanyShow(props: Props) {
                 <p className="mt-3 text-[12.5px] text-muted">Not part of any plan. Contacts created before tracking started stay “Before tracking”.</p>
             </Card>
 
+            {canDelete && (
+                <Card title="Delete company" padded className="mt-4">
+                    <p className="text-[13.5px] text-ink-2">
+                        Permanently erases this company: contacts, chats, templates, campaigns, chatbots, Growth Hub data, invoices and its audit history.
+                        A paid Stripe subscription is cancelled first and its WhatsApp accounts are disconnected. Member accounts stay (they can join or create another workspace).
+                    </p>
+                    <Button className="mt-3" variant="danger" onClick={() => setModal('delete')}>Delete company</Button>
+                </Card>
+            )}
+
             <Card title="Recent activity" aside={<Link href={`/admin/audit-log?tenant_id=${company.id}`} className="text-[13px] font-semibold text-brand">Full audit log</Link>} className="mt-4">
                 <Table head={['Action', 'By', 'When']} empty="No activity recorded yet.">
                     {audit.map((a) => (
@@ -282,6 +294,11 @@ export default function CompanyShow(props: Props) {
             <StatusModal open={modal === 'status'} onClose={close} companyId={company.id} suspended={suspended} />
             <GrowthModal open={modal === 'growth'} onClose={close} companyId={company.id} growth={growth} />
             <ImpersonateModal open={modal === 'impersonate'} onClose={close} companyId={company.id} members={members.filter((m) => m.status === 'active' && !m.disabled)} />
+            {modal === 'delete' && (
+                <DeleteModal title={`Delete ${company.name}`} url={`/admin/companies/${company.id}`} confirmLabel="Type the company name to confirm" confirmValue={company.name} onClose={close}>
+                    This cannot be undone. Everyone loses access at once and the data is erased in the background within a few minutes. A record of the deletion stays in the audit log.
+                </DeleteModal>
+            )}
             {featureModal && <OverrideModal key={featureModal.key} feature={featureModal} onClose={close} companyId={company.id} />}
         </AdminLayout>
     );

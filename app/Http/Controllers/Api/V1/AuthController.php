@@ -12,6 +12,7 @@ use App\Domain\Identity\Models\User;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\LoginRequest;
 use App\Http\Requests\Api\V1\RegisterRequest;
+use App\Notifications\TwoFactorChangedNotification;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -128,21 +129,34 @@ final class AuthController extends Controller
     }
 
     /** Step 2 with two-factor sign-in: a code from the authenticator app, or a recovery code. */
-    public function loginTwoFactor(Request $request, MeController $me): JsonResponse
+    public function loginTwoFactor(Request $request, MeController $me, LoginVerification $verification): JsonResponse
     {
         $this->ensureStateful($request);
         $user = $this->pendingUser($request);
         if (! (bool) ($request->session()->get(self::PENDING)['two_factor'] ?? false) || ! $user->hasTwoFactor()) {
             throw ValidationException::withMessages(['code' => 'Your sign-in has expired. Enter your email and password again.']);
         }
-        $data = $request->validate(['code' => ['nullable', 'string', 'max:10'], 'recovery_code' => ['nullable', 'string', 'max:30']]);
+        $data = $request->validate(['code' => ['nullable', 'string', 'max:10'], 'recovery_code' => ['nullable', 'string', 'max:30'], 'email_code' => ['nullable', 'string', 'max:12']]);
         foreach (['login-2fa:'.$user->id => 5, 'login-2fa-ip:'.$request->ip() => 30] as $key => $max) {
             if (RateLimiter::tooManyAttempts($key, $max)) {
                 throw ValidationException::withMessages(['code' => 'Too many attempts. Try again in '.(int) ceil(RateLimiter::availableIn($key) / 60).' minute(s).']);
             }
             RateLimiter::hit($key, 300);
         }
-        $method = TwoFactorController::check($user, $data['code'] ?? null, $data['recovery_code'] ?? null);
+        if (filled($data['email_code'] ?? null)) {
+            // Lost authenticator: a code emailed to the account's verified address (see loginTwoFactorEmail).
+            $result = $verification->check($user, (string) $data['email_code']);
+            if ($result !== 'ok') {
+                throw ValidationException::withMessages(['email_code' => match ($result) {
+                    'expired' => 'This code has expired. Send a new one.',
+                    'locked' => 'Too many wrong codes. Send a new code.',
+                    default => 'That code is not correct. Check the latest email and try again.',
+                }]);
+            }
+            $method = 'email';
+        } else {
+            $method = TwoFactorController::check($user, $data['code'] ?? null, $data['recovery_code'] ?? null);
+        }
         RateLimiter::clear('login-2fa:'.$user->id);
 
         $pending = (array) $request->session()->pull(self::PENDING);
@@ -150,13 +164,40 @@ final class AuthController extends Controller
         $request->session()->regenerate();
         $request->session()->put(LoginVerification::SESSION_STAMP, now()->timestamp);
         $user->forceFill(['last_login_at' => now()])->saveQuietly();
-        if ($method === 'recovery') {
+        if ($method === 'recovery' || $method === 'email') {
             // Probably a lost phone: for a short while this session may replace the authenticator without another code.
             $request->session()->put(TwoFactorController::RECOVERED, now()->timestamp);
-            app(AuditLogger::class)->record('user.two_factor_recovery_code_used', $user, meta: ['remaining' => count((array) $user->getAttribute('two_factor_recovery_codes'))]);
+            if ($method === 'recovery') {
+                app(AuditLogger::class)->record('user.two_factor_recovery_code_used', $user, meta: ['remaining' => count((array) $user->getAttribute('two_factor_recovery_codes'))]);
+            } else {
+                app(AuditLogger::class)->record('user.two_factor_email_code_used', $user);
+                try {
+                    $user->notify(new TwoFactorChangedNotification(TwoFactorChangedNotification::EMAIL_SIGN_IN, $request->ip()));
+                } catch (Throwable) {
+                    // the sign-in itself is what matters
+                }
+            }
         }
 
         return $me->payload($user, $user->last_active_tenant_id);
+    }
+
+    /**
+     * Lost authenticator at sign-in: email a one-time code to the account's verified address instead
+     * (the same code, limits and expiry as the normal sign-in code). Recovery codes work too.
+     */
+    public function loginTwoFactorEmail(Request $request, LoginVerification $verification): JsonResponse
+    {
+        $this->ensureStateful($request);
+        $user = $this->pendingUser($request);
+        if (! (bool) ($request->session()->get(self::PENDING)['two_factor'] ?? false) || ! $user->hasTwoFactor()) {
+            throw ValidationException::withMessages(['code' => 'Your sign-in has expired. Enter your email and password again.']);
+        }
+        if ($user->getAttribute('email_verified_at') === null) {
+            throw ValidationException::withMessages(['email_code' => 'Your email address is not verified, so a code cannot be emailed. Use a recovery code, or contact support.']);
+        }
+
+        return $this->sendLoginCode($user, $verification, resend: true);
     }
 
     public function loginResend(Request $request, LoginVerification $verification): JsonResponse

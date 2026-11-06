@@ -19,4 +19,5 @@ enum AdminAbility: string
     case InquiriesView = 'inquiries.view';         // website demo / contact requests
     case InquiriesManage = 'inquiries.manage';     // status, internal notes
     case TeamManage = 'team.manage';               // platform admins
+    case AccountsDelete = 'accounts.delete';       // permanently delete companies and users (Super Admin only)
 }

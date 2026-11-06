@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Admin;
 
+use App\Application\Admin\DeleteAccounts;
 use App\Application\Admin\ManageEntitlementOverride;
 use App\Application\Admin\ManageTenant;
 use App\Domain\Audit\Models\AuditLog;
@@ -302,5 +303,13 @@ final class CompanyController extends Controller
                 'label' => sprintf('%s (v%d, %s)', $v->plan?->name, $v->version,
                     $v->price_monthly_minor === null ? 'Custom' : '$'.number_format($v->price_monthly_minor / 100).'/mo'),
             ])->values()->all();
+    }
+
+    public function destroy(Request $request, Tenant $tenant, DeleteAccounts $delete): RedirectResponse
+    {
+        $data = $request->validate(['confirm' => ['required', 'string', 'max:200'], 'reason' => ['required', 'string', 'min:5', 'max:500']]);
+        $delete->deleteCompany($tenant, $data['confirm'], $data['reason']);
+
+        return redirect('/admin/companies')->with('success', "{$tenant->name} is being deleted. Its data is erased in the background within a few minutes.");
     }
 }

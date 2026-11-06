@@ -119,7 +119,7 @@ class User extends Authenticatable
 
     public function twoFactorRequired(): bool
     {
-        return ! $this->isReviewAccount() && (bool) config('engage.auth.owner_two_factor_required', true) && $this->ownsAWorkspace();
+        return ! $this->isReviewAccount() && (bool) config('engage.auth.owner_two_factor_required', false) && $this->ownsAWorkspace();
     }
 
     /**

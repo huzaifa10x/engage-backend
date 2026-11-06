@@ -621,6 +621,17 @@ final class StripeBilling
         $this->audit->record($cancel ? 'billing.cancel_scheduled' : 'billing.cancel_undone', $tenant);
     }
 
+    /** The company is being deleted: end the paid subscription in Stripe straight away (no refund). */
+    public function cancelNow(Tenant $tenant): void
+    {
+        $live = $this->liveStripeSubscription($tenant);
+        if ($live === null) {
+            return;
+        }
+        $this->stripe->delete("subscriptions/{$live->provider_subscription_id}");
+        $this->audit->record('billing.cancelled_for_deletion', $tenant);
+    }
+
     /** After the billing country changed: add or remove VAT on the running subscription. */
     public function applyTaxToSubscription(Tenant $tenant): void
     {

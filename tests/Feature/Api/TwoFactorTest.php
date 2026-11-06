@@ -264,4 +264,37 @@ final class TwoFactorTest extends TestCase
         $this->assertFalse($this->owner->refresh()->isReviewAccount());
         $this->assertTrue($this->owner->twoFactorRequired());
     }
+
+    public function test_a_lost_authenticator_can_sign_in_with_an_emailed_code_and_replace_it(): void
+    {
+        $this->actingAs($this->owner);
+        $this->enroll();
+        $this->signOut();
+
+        $this->spaPost('/api/v1/auth/login', ['email' => $this->owner->email, 'password' => self::PASSWORD])->assertStatus(202);
+        $this->spaPost('/api/v1/auth/login/two-factor/email')->assertStatus(202)->assertJsonPath('data.otp_required', true);
+        $code = null;
+        Notification::assertSentTo($this->owner, LoginCodeNotification::class, function (LoginCodeNotification $n) use (&$code) {
+            $code = $n->code;
+
+            return true;
+        });
+        $this->spaPost('/api/v1/auth/login/two-factor', ['email_code' => '000000'])->assertStatus(422);
+        $this->spaPost('/api/v1/auth/login/two-factor', ['email_code' => $code])->assertOk()->assertJsonPath('data.two_factor.recovery_sign_in', true);
+        $this->assertTrue($this->audited('user.two_factor_email_code_used'));
+        $this->sent(TwoFactorChangedNotification::EMAIL_SIGN_IN);
+
+        $new = $this->replaceStarted([]);
+        $this->spaPost('/api/v1/auth/two-factor/confirm', ['code' => Totp::codeAt($new, Totp::currentStep())])->assertOk();
+    }
+
+    public function test_it_is_optional_by_default_even_for_owners(): void
+    {
+        config(['engage.auth.owner_two_factor_required' => false]);
+        $this->actingAs($this->owner);
+        $this->spaGet('/api/v1/tenant')->assertOk();
+        $this->spaGet('/api/v1/auth/two-factor')->assertJsonPath('data.required', false);
+        [$secret] = $this->enroll();
+        $this->withHeaders(self::SPA)->deleteJson('/api/v1/auth/two-factor', ['code' => $this->freshCode($secret)])->assertOk()->assertJsonPath('data.enabled', false);
+    }
 }

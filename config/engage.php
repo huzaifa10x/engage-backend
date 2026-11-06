@@ -193,8 +193,9 @@ return [
     ],
 
     'auth' => [
-        // Workspace Owners must sign in with an authenticator app as a second factor.
-        'owner_two_factor_required' => (bool) env('OWNER_TWO_FACTOR_REQUIRED', true),
+        // Two-factor sign-in is optional for everyone (Settings › Two-factor sign-in). Set
+        // OWNER_TWO_FACTOR_REQUIRED=true to make workspace Owners turn it on before using the workspace.
+        'owner_two_factor_required' => (bool) env('OWNER_TWO_FACTOR_REQUIRED', false),
     ],
 
     'growth' => [

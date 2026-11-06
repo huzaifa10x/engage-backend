@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Admin;
 
+use App\Application\Admin\DeleteAccounts;
 use App\Application\Admin\ManagePlatformAdmins;
 use App\Application\Admin\ManageUserAccounts;
 use App\Domain\Audit\Models\AuditLog;
@@ -170,5 +171,14 @@ final class UserController extends Controller
         $accounts->signOutEverywhere($user, $data['reason']);
 
         return back()->with('success', "{$user->name} was signed out on every device.");
+    }
+
+    public function destroy(Request $request, User $user, DeleteAccounts $delete): RedirectResponse
+    {
+        $data = $request->validate(['confirm' => ['required', 'string', 'max:190'], 'reason' => ['required', 'string', 'min:5', 'max:500']]);
+        $name = $user->name;
+        $delete->deleteUser($user, $data['confirm'], $data['reason']);
+
+        return redirect('/admin/users')->with('success', "{$name} was deleted.");
     }
 }

@@ -1,6 +1,6 @@
 import { useForm } from '@inertiajs/react';
-import type { FormEvent } from 'react';
-import { Button, Field, Modal, Textarea } from '../../components/ui';
+import type { FormEvent, ReactNode } from 'react';
+import { Button, Field, Input, Modal, Textarea } from '../../components/ui';
 
 /** What these actions need to know about the user. */
 export type UserRef = { id: string; name: string; disabled: boolean; review_account: boolean };
@@ -71,6 +71,32 @@ export function ReviewAccountModal({ user, onClose }: { user: UserRef; onClose: 
                     <p className="text-[13.5px] text-ink-2">The usual checks come back: an emailed code at sign-in, and Owners set up an authenticator on their next visit.</p>
                 )}
                 <Field label="Reason" error={form.errors.reason} hint="Recorded in the audit log and shown on this page.">
+                    <Textarea value={form.data.reason} onChange={(e) => form.setData('reason', e.target.value)} required />
+                </Field>
+            </form>
+        </Modal>
+    );
+}
+
+/** Permanent deletion: type the name (or email) to confirm, and give a reason. */
+export function DeleteModal({ title, url, confirmLabel, confirmValue, children, onClose }: {
+    title: string; url: string; confirmLabel: string; confirmValue: string; children: ReactNode; onClose: () => void;
+}) {
+    const form = useForm({ confirm: '', reason: '' });
+    const submit = (e: FormEvent) => {
+        e.preventDefault();
+        form.delete(url, { preserveScroll: true });
+    };
+    const matches = form.data.confirm.trim().toLowerCase() === confirmValue.trim().toLowerCase();
+    return (
+        <Modal open onClose={onClose} title={title}
+            footer={<><Button onClick={onClose}>Cancel</Button><Button variant="danger" form="delete-form" disabled={form.processing || !matches}>Delete permanently</Button></>}>
+            <form id="delete-form" onSubmit={submit} className="space-y-3.5">
+                <div className="text-[13.5px] text-ink-2">{children}</div>
+                <Field label={confirmLabel} error={form.errors.confirm}>
+                    <Input value={form.data.confirm} onChange={(e) => form.setData('confirm', e.target.value)} placeholder={confirmValue} autoComplete="off" />
+                </Field>
+                <Field label="Reason" error={form.errors.reason} hint="Kept in the platform audit log after the deletion.">
                     <Textarea value={form.data.reason} onChange={(e) => form.setData('reason', e.target.value)} required />
                 </Field>
             </form>

@@ -85,6 +85,8 @@ Route::middleware(['auth:admin', 'admin.context', TrackAdminSession::class])->gr
 
     Route::get('users', [UserController::class, 'index'])->middleware('admin.can:users.view')->name('users.index');
     Route::get('users/{user}', [UserController::class, 'show'])->middleware('admin.can:users.view')->name('users.show');
+    Route::delete('users/{user}', [UserController::class, 'destroy'])->middleware('admin.can:accounts.delete')->name('users.destroy');
+    Route::delete('companies/{tenant}', [CompanyController::class, 'destroy'])->middleware('admin.can:accounts.delete')->name('companies.destroy');
     Route::middleware('admin.can:users.manage')->group(function () {
         Route::patch('users/{user}', [UserController::class, 'update'])->name('users.update');
         Route::put('users/{user}/password', [UserController::class, 'updatePassword'])->middleware('throttle:20,1')->name('users.password');
