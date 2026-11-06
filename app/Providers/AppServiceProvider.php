@@ -30,6 +30,7 @@ use App\Domain\WhatsApp\Jobs\VerifyMetaAccess;
 use App\Domain\WhatsApp\Models\EmbeddedSignupAttempt;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\WabaAccount;
+use Illuminate\Auth\Events\Login;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -51,6 +52,14 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Every portal sign-in (password, code, remember-me, support session) records when it happened,
+        // so "Sign out everywhere" can end the sessions that started earlier.
+        Event::listen(Login::class, function (Login $event): void {
+            if ($event->guard === 'web' && $event->user instanceof User && app()->bound('request') && request()->hasSession()) {
+                request()->session()->put(User::SIGNED_IN_AT, now()->timestamp);
+            }
+        });
+
         // Customer webhooks: message.* events follow the same event that updates the inbox.
         Event::listen(MessageStored::class, EmitMessageWebhooks::class);
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Middleware;
 
 use App\Application\Identity\LoginVerification;
+use App\Domain\Identity\Models\User;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -19,7 +20,17 @@ final class EnsureFreshLogin
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if (! LoginVerification::enabled() || ! $request->hasSession() || Auth::guard('web')->user() === null) {
+        $user = $request->hasSession() ? Auth::guard('web')->user() : null;
+        // Signed out everywhere by support (or a password set by support): this session is over.
+        if ($user instanceof User && $user->sessionRevoked($request->session()->get(User::SIGNED_IN_AT))) {
+            Auth::guard('web')->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return response()->json(['error' => ['code' => 'session_expired', 'message' => 'You were signed out. Please sign in again.']], 401);
+        }
+
+        if (! LoginVerification::enabled() || $user === null) {
             return $next($request);
         }
 

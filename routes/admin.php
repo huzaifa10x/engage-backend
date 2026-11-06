@@ -84,6 +84,14 @@ Route::middleware(['auth:admin', 'admin.context', TrackAdminSession::class])->gr
     Route::post('webhooks/replay-failed', [WebhookLogController::class, 'replayFailed'])->middleware('admin.can:system.view')->name('webhooks.replay');
 
     Route::get('users', [UserController::class, 'index'])->middleware('admin.can:users.view')->name('users.index');
+    Route::get('users/{user}', [UserController::class, 'show'])->middleware('admin.can:users.view')->name('users.show');
+    Route::middleware('admin.can:users.manage')->group(function () {
+        Route::patch('users/{user}', [UserController::class, 'update'])->name('users.update');
+        Route::put('users/{user}/password', [UserController::class, 'updatePassword'])->middleware('throttle:20,1')->name('users.password');
+        Route::post('users/{user}/password-reset', [UserController::class, 'sendPasswordReset'])->middleware('throttle:10,1')->name('users.password-reset');
+        Route::post('users/{user}/verify-email', [UserController::class, 'verifyEmail'])->name('users.verify-email');
+        Route::post('users/{user}/sign-out', [UserController::class, 'signOut'])->name('users.sign-out');
+    });
     Route::patch('users/{user}/status', [UserController::class, 'updateStatus'])->middleware('admin.can:users.manage')->name('users.status');
     Route::patch('users/{user}/review-account', [UserController::class, 'updateReviewAccount'])->middleware('admin.can:users.manage')->name('users.review-account');
     Route::post('users/{user}/reset-two-factor', [UserController::class, 'resetTwoFactor'])->middleware('admin.can:users.manage')->name('users.reset-two-factor');

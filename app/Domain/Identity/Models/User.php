@@ -48,6 +48,7 @@ class User extends Authenticatable
             'last_login_at' => 'datetime',
             'disabled_at' => 'datetime',
             'review_account_at' => 'datetime',
+            'sessions_revoked_at' => 'datetime',
             'password' => 'hashed',
         ];
     }
@@ -90,6 +91,17 @@ class User extends Authenticatable
     public function hasTwoFactor(): bool
     {
         return $this->getAttribute('two_factor_confirmed_at') !== null && $this->getAttribute('two_factor_secret') !== null;
+    }
+
+    /** When this browser session signed in (set on every login), kept in the session. */
+    public const SIGNED_IN_AT = 'auth.signed_in_at';
+
+    /** A browser session signed in before "Sign out everywhere" (or a password set by support) no longer works. */
+    public function sessionRevoked(mixed $signedInAt): bool
+    {
+        $revoked = $this->getAttribute('sessions_revoked_at');
+
+        return $revoked !== null && (! is_numeric($signedInAt) || (int) $signedInAt <= $revoked->getTimestamp());
     }
 
     /** Turns two-factor sign-in off: the user's own choice, or a Super Admin reset after a lost phone. */
