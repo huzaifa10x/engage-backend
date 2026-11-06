@@ -40,6 +40,7 @@ type Props = {
     features: Feature[];
     audit: { id: string; action: string; actor_type: string; entity_type: string | null; created_at: string }[];
     planVersions: PlanOption[];
+    lastTrialPlanId: string | null;
     growth: Growth;
 };
 
@@ -58,7 +59,7 @@ const describe = (f: Feature, v: Value): string => {
 };
 
 export default function CompanyShow(props: Props) {
-    const { company, subscription, effectivePlan, members, features, audit, subscriptionEvents, planVersions, whatsapp, signups, growth } = props;
+    const { company, subscription, effectivePlan, members, features, audit, subscriptionEvents, planVersions, lastTrialPlanId, whatsapp, signups, growth } = props;
     const abilities = usePage<SharedProps>().props.auth.admin?.abilities ?? [];
     const canManage = abilities.includes('companies.manage');
     const canImpersonate = abilities.includes('impersonate');
@@ -93,7 +94,7 @@ export default function CompanyShow(props: Props) {
                         {canManage && (
                             <>
                                 <Button onClick={() => setModal('plan')}>Change plan</Button>
-                                {subscription?.status === 'trialing' && <Button onClick={() => setModal('trial')}>Extend trial</Button>}
+                                <Button onClick={() => setModal('trial')}>{subscription?.status === 'trialing' ? 'Extend trial' : 'Give a trial'}</Button>
                                 <Button variant={suspended ? 'primary' : 'danger'} onClick={() => setModal('status')}>
                                     {suspended ? 'Reactivate' : 'Suspend'}
                                 </Button>
@@ -277,7 +278,7 @@ export default function CompanyShow(props: Props) {
             </Card>
 
             <PlanModal open={modal === 'plan'} onClose={close} companyId={company.id} planVersions={planVersions} currentKey={subscription?.plan_key} />
-            <TrialModal open={modal === 'trial'} onClose={close} companyId={company.id} />
+            <TrialModal open={modal === 'trial'} onClose={close} companyId={company.id} trialing={subscription?.status === 'trialing'} trialEndsAt={subscription?.trial_ends_at ?? null} planVersions={planVersions} defaultPlanId={lastTrialPlanId} />
             <StatusModal open={modal === 'status'} onClose={close} companyId={company.id} suspended={suspended} />
             <GrowthModal open={modal === 'growth'} onClose={close} companyId={company.id} growth={growth} />
             <ImpersonateModal open={modal === 'impersonate'} onClose={close} companyId={company.id} members={members.filter((m) => m.status === 'active' && !m.disabled)} />
@@ -372,16 +373,36 @@ function GrowthModal({ open, onClose, companyId, growth }: { open: boolean; onCl
     );
 }
 
-function TrialModal({ open, onClose, companyId }: { open: boolean; onClose: () => void; companyId: string }) {
-    const form = useForm({ days: 7, reason: '' });
+/**
+ * On a trial: add days. Otherwise (the trial ended and the company dropped to Free, or it never had
+ * one): start a new trial, by default of the plan of its last trial.
+ */
+function TrialModal({ open, onClose, companyId, trialing, trialEndsAt, planVersions, defaultPlanId }: {
+    open: boolean; onClose: () => void; companyId: string; trialing: boolean; trialEndsAt: string | null; planVersions: PlanOption[]; defaultPlanId: string | null;
+}) {
+    const form = useForm({ days: trialing ? 7 : 14, reason: '', plan_version_id: defaultPlanId ?? planVersions.find((p) => p.plan_key !== 'free')?.id ?? '' });
     const submit = (e: FormEvent) => {
         e.preventDefault();
+        form.transform((d) => (trialing ? { days: d.days, reason: d.reason } : d));
         form.post(`/admin/companies/${companyId}/trial`, { preserveScroll: true, onSuccess: () => { form.reset(); onClose(); } });
     };
+    const title = trialing ? 'Extend trial' : 'Give a trial';
     return (
-        <Modal open={open} onClose={onClose} title="Extend trial" footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" form="trial-form" disabled={form.processing}>Extend trial</Button></>}>
+        <Modal open={open} onClose={onClose} title={title} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" form="trial-form" disabled={form.processing}>{title}</Button></>}>
             <form id="trial-form" onSubmit={submit} className="space-y-3.5">
-                <Field label="Extra days" error={form.errors.days}>
+                <p className="text-[13.5px] text-ink-2">
+                    {trialing
+                        ? `The trial ends ${trialEndsAt ? date(trialEndsAt) : 'soon'}; the extra days are added to that date.`
+                        : 'This company is not on a trial (it ended, or it never had one). A new trial of the plan below starts today; when it ends the company drops to Free again.'}
+                </p>
+                {!trialing && (
+                    <Field label="Plan" error={form.errors.plan_version_id}>
+                        <Select value={form.data.plan_version_id} onChange={(e) => form.setData('plan_version_id', e.target.value)} required>
+                            {planVersions.map((p) => <option key={p.id} value={p.id}>{p.label}{p.id === defaultPlanId ? ' (last trial)' : ''}</option>)}
+                        </Select>
+                    </Field>
+                )}
+                <Field label={trialing ? 'Extra days' : 'Trial length (days)'} error={form.errors.days}>
                     <Input type="number" min={1} max={60} value={form.data.days} onChange={(e) => form.setData('days', Number(e.target.value))} />
                 </Field>
                 <Field label="Reason" error={form.errors.reason} hint="Recorded in the audit log.">

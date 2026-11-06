@@ -84,14 +84,17 @@ final class ManageTenant
         });
     }
 
-    public function extendTrial(Tenant $tenant, int $days, string $reason): void
+    /**
+     * On a trial: adds days to it. Not on a trial (it ended and the company dropped to Free, or it
+     * never had one): starts a new trial of the given plan, or of the plan of its last trial.
+     */
+    public function extendTrial(Tenant $tenant, int $days, string $reason, ?PlanVersion $plan = null): void
     {
-        $this->context->bypass(fn () => DB::transaction(function () use ($tenant, $days, $reason) {
+        $extended = $this->context->bypass(fn () => DB::transaction(function () use ($tenant, $days, $reason) {
             /** @var Subscription|null $subscription */
             $subscription = $tenant->liveSubscription()->lockForUpdate()->first();
-
             if ($subscription === null || $subscription->status !== SubscriptionStatus::Trialing) {
-                throw ValidationException::withMessages(['days' => 'This company is not on a trial.']);
+                return false;
             }
 
             $before = $subscription->trial_ends_at;
@@ -101,8 +104,32 @@ final class ManageTenant
             $this->audit->record('subscription.trial_extended', $subscription,
                 before: ['trial_ends_at' => $before?->toIso8601String()], after: ['trial_ends_at' => $after->toIso8601String()],
                 meta: ['reason' => $reason, 'days' => $days], tenantId: $tenant->getKey());
+
+            return true;
         }));
 
+        if (! $extended) {
+            $plan ??= $this->lastTrialPlan($tenant);
+            if ($plan === null) {
+                throw ValidationException::withMessages(['plan_version_id' => 'Choose the plan for the new trial.']);
+            }
+            $this->changePlan($tenant, $plan, SubscriptionStatus::Trialing, $days, $reason);
+            $this->context->bypass(fn () => $this->audit->record('subscription.trial_restarted', $tenant,
+                after: ['plan_version_id' => $plan->getKey(), 'days' => $days], meta: ['reason' => $reason], tenantId: $tenant->getKey()));
+        }
+
         $this->entitlements->forget($tenant);
+    }
+
+    /** The plan of the company's most recent trial, if it had one. */
+    public function lastTrialPlan(Tenant $tenant): ?PlanVersion
+    {
+        return $this->context->bypass(function () use ($tenant) {
+            /** @var Subscription|null $last */
+            $last = Subscription::query()->withoutGlobalScopes()->where('tenant_id', $tenant->getKey())
+                ->whereNotNull('trial_ends_at')->orderByDesc('created_at')->first();
+
+            return $last?->planVersion;
+        });
     }
 }

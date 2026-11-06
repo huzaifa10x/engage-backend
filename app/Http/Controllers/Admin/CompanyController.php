@@ -77,7 +77,7 @@ final class CompanyController extends Controller
         ]);
     }
 
-    public function show(Tenant $tenant, EntitlementService $entitlements): Response
+    public function show(Tenant $tenant, EntitlementService $entitlements, ManageTenant $manage): Response
     {
         $tenant->load('liveSubscription.planVersion.plan');
         $subscription = $tenant->liveSubscription;
@@ -183,6 +183,7 @@ final class CompanyController extends Controller
             'growth' => GrowthSettings::for($tenant)->toArray(),
             'audit' => $audit,
             'planVersions' => $this->planOptions(),
+            'lastTrialPlanId' => $manage->lastTrialPlan($tenant)?->getKey(),
         ]);
     }
 
@@ -244,11 +245,14 @@ final class CompanyController extends Controller
         $data = $request->validate([
             'days' => ['required', 'integer', 'min:1', 'max:60'],
             'reason' => ['required', 'string', 'min:5', 'max:500'],
+            'plan_version_id' => ['nullable', 'uuid'],
         ]);
+        $plan = isset($data['plan_version_id']) ? PlanVersion::query()->findOrFail($data['plan_version_id']) : null;
+        $trialing = $tenant->liveSubscription?->status === SubscriptionStatus::Trialing;
 
-        $manage->extendTrial($tenant, (int) $data['days'], $data['reason']);
+        $manage->extendTrial($tenant, (int) $data['days'], $data['reason'], $plan);
 
-        return back()->with('success', "Trial extended by {$data['days']} days.");
+        return back()->with('success', $trialing ? "Trial extended by {$data['days']} days." : "New {$data['days']}-day trial started.");
     }
 
     public function setOverride(Request $request, Tenant $tenant, string $feature, ManageEntitlementOverride $overrides): RedirectResponse

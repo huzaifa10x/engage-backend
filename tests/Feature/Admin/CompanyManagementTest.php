@@ -98,6 +98,26 @@ final class CompanyManagementTest extends TestCase
         $this->assertTrue($ends->between(now()->addDays(20), now()->addDays(22)));
     }
 
+    public function test_an_ended_trial_can_be_given_again_from_the_company_page(): void
+    {
+        $this->actingAsAdmin();
+        $tenant = $this->createTenant();
+        $pro = Plan::byKey('pro')->activeVersionOrFail();
+        $this->put("/admin/companies/{$tenant->id}/plan", ['plan_version_id' => $pro->id, 'status' => 'trialing', 'trial_days' => 14, 'reason' => 'Sales-led trial']);
+
+        // The trial ends: the company drops to Free. The button is still there, offering a new trial of Pro.
+        $this->travel(15)->days();
+        $this->artisan('engage:subscriptions:expire-trials')->assertSuccessful();
+        $this->get("/admin/companies/{$tenant->id}")->assertOk()
+            ->assertInertia(fn (Assert $page) => $page->where('subscription.status', 'active')->where('lastTrialPlanId', $pro->id));
+
+        $this->post("/admin/companies/{$tenant->id}/trial", ['days' => 10, 'reason' => 'Asked for more time'])->assertSessionHas('success');
+        $live = $this->tenantContext()->bypass(fn () => $tenant->liveSubscription()->first());
+        $this->assertSame('trialing', $live->status->value);
+        $this->assertSame($pro->id, $live->plan_version_id);
+        $this->assertTrue($live->trial_ends_at->between(now()->addDays(9), now()->addDays(11)));
+    }
+
     public function test_support_role_can_view_but_not_manage(): void
     {
         $this->actingAsAdmin(PlatformRole::Support);
