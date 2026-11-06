@@ -46,22 +46,22 @@ final class TemplateController extends Controller
 
         // Templates waiting for Meta's review are re-checked often, so a decision shows up within
         // seconds even if a webhook is missed; everything else is refreshed every couple of minutes.
-        $reviewing = MessageTemplate::query()->whereIn('waba_account_id', $accounts->modelKeys())
-            ->where('status', TemplateStatus::PENDING)->pluck('waba_account_id')->unique()->all();
-
+        // Best effort: the list is always served from what is stored, even if the cache or queue is down.
         $synced = [];
-        foreach ($accounts as $account) {
-            $at = $sync->lastSyncedAt($account);
-            $synced[$account->id] = $at;
-            $maxAge = in_array($account->id, $reviewing, true) ? 20 : 120;
-            if ($at === null || Carbon::parse($at)->lt(now()->subSeconds($maxAge))) {
-                try {
+        try {
+            $reviewing = MessageTemplate::query()->whereIn('waba_account_id', $accounts->modelKeys())
+                ->where('status', TemplateStatus::PENDING)->pluck('waba_account_id')->unique()->all();
+
+            foreach ($accounts as $account) {
+                $at = $sync->lastSyncedAt($account);
+                $synced[$account->id] = $at;
+                $maxAge = in_array($account->id, $reviewing, true) ? 20 : 120;
+                if ($at === null || Carbon::parse($at)->lt(now()->subSeconds($maxAge))) {
                     SyncMessageTemplates::dispatch($account->id);
-                } catch (Throwable $e) {
-                    // Listing must work even when Meta or the queue is unavailable.
-                    Log::warning('Could not start a template sync.', ['waba_id' => $account->waba_id, 'error' => $e->getMessage()]);
                 }
             }
+        } catch (Throwable $e) {
+            Log::warning('Could not start a template sync.', ['error' => $e->getMessage()]);
         }
 
         $templates = MessageTemplate::query()

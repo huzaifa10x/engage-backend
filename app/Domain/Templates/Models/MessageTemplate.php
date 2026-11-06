@@ -26,7 +26,7 @@ use Illuminate\Support\Carbon;
  * @property ?string $quality_score
  * @property ?string $rejected_reason
  * @property string $parameter_format
- * @property ?array<int, array<string, mixed>> $components
+ * @property ?array<int, mixed> $components stored as Meta sent it; read through component()
  * @property ?string $created_by_membership_id
  * @property ?Carbon $last_synced_at
  * @property ?Carbon $deleted_at
@@ -83,7 +83,7 @@ class MessageTemplate extends Model
     public function component(string $type): ?array
     {
         foreach ((array) $this->components as $component) {
-            if (strtoupper((string) ($component['type'] ?? '')) === $type) {
+            if (is_array($component) && is_string($component['type'] ?? null) && strtoupper($component['type']) === $type) {
                 return $component;
             }
         }
@@ -96,7 +96,11 @@ class MessageTemplate extends Model
     {
         $header = $this->component('HEADER');
 
-        return $header === null ? null : strtoupper((string) ($header['format'] ?? 'TEXT'));
+        if ($header === null) {
+            return null;
+        }
+
+        return is_string($header['format'] ?? null) ? strtoupper($header['format']) : 'TEXT';
     }
 
     /**
@@ -129,20 +133,26 @@ class MessageTemplate extends Model
             if (! is_array($button)) {
                 continue;
             }
-            $type = strtoupper((string) ($button['type'] ?? ''));
+            $type = strtoupper(self::text($button['type'] ?? null));
             $buttons[] = [
                 'index' => $index,
                 'type' => $type,
-                'text' => (string) ($button['text'] ?? ''),
-                'variable' => ($type === 'URL' && self::placeholders((string) ($button['url'] ?? '')) !== []) || in_array($type, ['COPY_CODE', 'OTP'], true),
+                'text' => self::text($button['text'] ?? null),
+                'variable' => ($type === 'URL' && self::placeholders(self::text($button['url'] ?? null)) !== []) || in_array($type, ['COPY_CODE', 'OTP'], true),
             ];
         }
 
         return [
-            'header' => $format === 'TEXT' ? self::placeholders((string) ($header['text'] ?? '')) : [],
+            'header' => $format === 'TEXT' ? self::placeholders(self::text($header['text'] ?? null)) : [],
             'header_format' => $format,
-            'body' => self::placeholders((string) ($this->component('BODY')['text'] ?? '')),
+            'body' => self::placeholders(self::text($this->component('BODY')['text'] ?? null)),
             'buttons' => $buttons,
         ];
+    }
+
+    /** A text field as Meta should send it; anything else (a list, an object) reads as empty. */
+    private static function text(mixed $value): string
+    {
+        return is_string($value) || is_int($value) || is_float($value) ? (string) $value : '';
     }
 }

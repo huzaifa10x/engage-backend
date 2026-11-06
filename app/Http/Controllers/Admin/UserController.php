@@ -32,6 +32,7 @@ final class UserController extends Controller
                 'name' => $u->name,
                 'email' => $u->email,
                 'disabled' => $u->isDisabled(),
+                'two_factor' => $u->hasTwoFactor(),
                 'last_login_at' => $u->getAttribute('last_login_at')?->toIso8601String(),
                 'created_at' => $u->created_at?->toIso8601String(),
                 'memberships' => $u->memberships->map(fn (TenantMembership $m) => [
@@ -60,5 +61,13 @@ final class UserController extends Controller
         $manage->setUserStatus($user, (bool) $data['active'], $data['reason']);
 
         return back()->with('success', $data['active'] ? 'User re-enabled.' : 'User disabled. Their sessions stop working immediately.');
+    }
+
+    public function resetTwoFactor(Request $request, User $user, ManagePlatformAdmins $manage): RedirectResponse
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:500']]);
+        $manage->resetUserTwoFactor($user, $data['reason']);
+
+        return back()->with('success', "Two-factor sign-in reset for {$user->name}. They sign in with password + emailed code and set up a new authenticator.");
     }
 }

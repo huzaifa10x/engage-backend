@@ -8,7 +8,10 @@ use App\Domain\Audit\AuditLogger;
 use App\Domain\Identity\Enums\PlatformRole;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Identity\Models\User;
+use App\Notifications\TwoFactorChangedNotification;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /** 10X staff accounts and end-user account status. */
 final class ManagePlatformAdmins
@@ -53,6 +56,22 @@ final class ManagePlatformAdmins
         ])->save();
 
         $this->audit->record('platform_admin.two_factor_reset', $target);
+    }
+
+    /**
+     * A portal user lost their phone and their recovery codes: turn two-factor sign-in off so they can
+     * sign in with password + emailed code and set up a new authenticator (Owners are asked at once).
+     */
+    public function resetUserTwoFactor(User $user, string $reason): void
+    {
+        $had = $user->hasTwoFactor();
+        $user->clearTwoFactor();
+        $this->audit->record('user.two_factor_reset', $user, before: ['two_factor' => $had], after: ['two_factor' => false], meta: ['reason' => $reason]);
+        try {
+            $user->notify(new TwoFactorChangedNotification(TwoFactorChangedNotification::RESET));
+        } catch (Throwable $e) {
+            Log::warning('Could not email a two-factor reset.', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+        }
     }
 
     public function setUserStatus(User $user, bool $active, string $reason): void

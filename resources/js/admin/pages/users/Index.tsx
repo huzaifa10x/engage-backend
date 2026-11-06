@@ -6,7 +6,7 @@ import { number, relative } from '../../lib/format';
 import type { Paginated, SharedProps } from '../../types';
 
 type User = {
-    id: string; name: string; email: string; disabled: boolean; last_login_at: string | null; created_at: string;
+    id: string; name: string; email: string; disabled: boolean; two_factor: boolean; last_login_at: string | null; created_at: string;
     memberships: { tenant_id: string; tenant: string | null; role: string | null }[];
 };
 type Props = { users: Paginated<User>; filters: { q?: string }; totals: { users: number; active_7d: number; disabled: number } };
@@ -15,6 +15,7 @@ export default function UsersIndex({ users, filters, totals }: Props) {
     const canManage = (usePage<SharedProps>().props.auth.admin?.abilities ?? []).includes('users.manage');
     const [q, setQ] = useState(filters.q ?? '');
     const [target, setTarget] = useState<User | null>(null);
+    const [resetFor, setResetFor] = useState<User | null>(null);
 
     const search = (e: FormEvent) => {
         e.preventDefault();
@@ -33,7 +34,7 @@ export default function UsersIndex({ users, filters, totals }: Props) {
             <Card className="mt-4" title="All users" aside={
                 <form onSubmit={search} className="w-64"><Input type="search" placeholder="Search name or email" value={q} onChange={(e) => setQ(e.target.value)} /></form>
             }>
-                <Table head={['User', 'Workspaces', 'Last sign-in', 'Status', '']} empty="No users match this search.">
+                <Table head={['User', 'Workspaces', 'Last sign-in', 'Two-factor', 'Status', '']} empty="No users match this search.">
                     {users.data.map((u) => (
                         <tr key={u.id}>
                             <td><div className="font-semibold">{u.name}</div><div className="text-[12.5px] text-muted">{u.email}</div></td>
@@ -48,8 +49,10 @@ export default function UsersIndex({ users, filters, totals }: Props) {
                                 </div>
                             </td>
                             <td className="text-muted">{relative(u.last_login_at)}</td>
+                            <td>{u.two_factor ? <Pill tone="good">On</Pill> : <span className="text-faint">Off</span>}</td>
                             <td>{u.disabled ? <Pill tone="bad">Disabled</Pill> : <Pill tone="good">Active</Pill>}</td>
-                            <td className="text-right">
+                            <td className="text-right whitespace-nowrap">
+                                {canManage && u.two_factor && <Button size="sm" variant="quiet" onClick={() => setResetFor(u)}>Reset 2FA</Button>}
                                 {canManage && <Button size="sm" variant="quiet" onClick={() => setTarget(u)}>{u.disabled ? 'Re-enable' : 'Disable'}</Button>}
                             </td>
                         </tr>
@@ -59,6 +62,7 @@ export default function UsersIndex({ users, filters, totals }: Props) {
             </Card>
 
             {target && <StatusModal user={target} onClose={() => setTarget(null)} />}
+            {resetFor && <ResetTwoFactorModal user={resetFor} onClose={() => setResetFor(null)} />}
         </AdminLayout>
     );
 }
@@ -75,6 +79,29 @@ function StatusModal({ user, onClose }: { user: User; onClose: () => void }) {
             <form id="user-status" onSubmit={submit} className="space-y-3.5">
                 <p className="text-[13.5px] text-ink-2">
                     {user.disabled ? 'They can sign in again straight away.' : 'They are signed out of every workspace and their API tokens are revoked.'}
+                </p>
+                <Field label="Reason" error={form.errors.reason} hint="Recorded in the audit log.">
+                    <Textarea value={form.data.reason} onChange={(e) => form.setData('reason', e.target.value)} required />
+                </Field>
+            </form>
+        </Modal>
+    );
+}
+
+/** Lost phone and recovery codes: the user signs in with password + emailed code and sets up a new authenticator. */
+function ResetTwoFactorModal({ user, onClose }: { user: User; onClose: () => void }) {
+    const form = useForm({ reason: '' });
+    const submit = (e: FormEvent) => {
+        e.preventDefault();
+        form.post(`/admin/users/${user.id}/reset-two-factor`, { preserveScroll: true, onSuccess: onClose });
+    };
+    return (
+        <Modal open onClose={onClose} title={`Reset two-factor sign-in for ${user.name}`}
+            footer={<><Button onClick={onClose}>Cancel</Button><Button variant="danger" form="user-2fa-reset" disabled={form.processing}>Reset two-factor</Button></>}>
+            <form id="user-2fa-reset" onSubmit={submit} className="space-y-3.5">
+                <p className="text-[13.5px] text-ink-2">
+                    Only do this after confirming who is asking (for example a call from the number on file). Their authenticator and recovery codes stop working;
+                    they sign in with their password and an emailed code, and workspace Owners are asked to set up a new authenticator straight away. They get an email about it.
                 </p>
                 <Field label="Reason" error={form.errors.reason} hint="Recorded in the audit log.">
                     <Textarea value={form.data.reason} onChange={(e) => form.setData('reason', e.target.value)} required />

@@ -141,6 +141,8 @@ final class AuthController extends Controller
         $request->session()->put(LoginVerification::SESSION_STAMP, now()->timestamp);
         $user->forceFill(['last_login_at' => now()])->saveQuietly();
         if ($method === 'recovery') {
+            // Probably a lost phone: for a short while this session may replace the authenticator without another code.
+            $request->session()->put(TwoFactorController::RECOVERED, now()->timestamp);
             app(AuditLogger::class)->record('user.two_factor_recovery_code_used', $user, meta: ['remaining' => count((array) $user->getAttribute('two_factor_recovery_codes'))]);
         }
 

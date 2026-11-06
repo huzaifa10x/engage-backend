@@ -85,6 +85,7 @@ Route::middleware(['auth:admin', 'admin.context', TrackAdminSession::class])->gr
 
     Route::get('users', [UserController::class, 'index'])->middleware('admin.can:users.view')->name('users.index');
     Route::patch('users/{user}/status', [UserController::class, 'updateStatus'])->middleware('admin.can:users.manage')->name('users.status');
+    Route::post('users/{user}/reset-two-factor', [UserController::class, 'resetTwoFactor'])->middleware('admin.can:users.manage')->name('users.reset-two-factor');
 
     Route::get('subscriptions', [SubscriptionController::class, 'index'])->middleware('admin.can:billing.view')->name('subscriptions.index');
 

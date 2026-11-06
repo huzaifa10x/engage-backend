@@ -91,6 +91,12 @@ class User extends Authenticatable
         return $this->getAttribute('two_factor_confirmed_at') !== null && $this->getAttribute('two_factor_secret') !== null;
     }
 
+    /** Turns two-factor sign-in off: the user's own choice, or a Super Admin reset after a lost phone. */
+    public function clearTwoFactor(): void
+    {
+        $this->forceFill(['two_factor_secret' => null, 'two_factor_recovery_codes' => null, 'two_factor_confirmed_at' => null, 'two_factor_last_used_step' => null])->save();
+    }
+
     /** Owner of at least one active workspace: two-factor sign-in is required (engage.auth.owner_two_factor_required). */
     public function ownsAWorkspace(): bool
     {

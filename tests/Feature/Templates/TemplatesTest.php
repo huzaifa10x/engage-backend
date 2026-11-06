@@ -288,4 +288,25 @@ final class TemplatesTest extends TestCase
 
         $this->assertSame(2, $this->tenantContext()->run($this->tenant, fn () => Message::query()->where('type', 'template')->count()));
     }
+
+    public function test_one_unreadable_template_never_takes_the_templates_page_down(): void
+    {
+        $this->actingAsMember($this->owner);
+        $this->tenantContext()->run($this->tenant, function (): void {
+            $base = ['waba_account_id' => $this->number->waba_account_id, 'language' => 'en', 'status' => 'APPROVED', 'category' => 'MARKETING'];
+            MessageTemplate::query()->create($base + ['name' => 'a_good', 'components' => [['type' => 'BODY', 'text' => 'Hi {{1}}']]]);
+            // Shapes Meta should never send, but a stored row may hold: lists where text belongs, stray strings, numbers.
+            MessageTemplate::query()->create($base + ['name' => 'b_odd', 'components' => [
+                'stray', 7, ['type' => ['BODY']], ['type' => 'HEADER', 'format' => ['IMAGE'], 'text' => ['x']],
+                ['type' => 'BODY', 'text' => ['Hi']], ['type' => 'BUTTONS', 'buttons' => [['type' => 'URL', 'text' => ['Shop'], 'url' => ['x']], 'x']],
+            ]]);
+            MessageTemplate::query()->create($base + ['name' => 'c_empty', 'components' => null]);
+        });
+
+        $this->getJson('/api/v1/templates')->assertOk()->assertJsonCount(3, 'data')
+            ->assertJsonPath('data.0.variables.body', ['1'])
+            ->assertJsonPath('data.1.name', 'b_odd')->assertJsonPath('data.1.variables.body', [])
+            ->assertJsonPath('data.1.variables.buttons.0.text', '')
+            ->assertJsonPath('data.2.components', []);
+    }
 }

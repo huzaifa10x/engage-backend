@@ -10,7 +10,7 @@ namespace App\Domain\Identity\TwoFactor;
  */
 final class Totp
 {
-    private const PERIOD = 30;
+    public const PERIOD = 30;
 
     private const DIGITS = 6;
 

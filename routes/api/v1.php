@@ -90,6 +90,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, 'tenant:optional', '
     Route::get('auth/two-factor', [TwoFactorController::class, 'show'])->name('auth.two-factor');
     Route::post('auth/two-factor/setup', [TwoFactorController::class, 'setup'])->middleware('throttle:10,1')->name('auth.two-factor.setup');
     Route::post('auth/two-factor/confirm', [TwoFactorController::class, 'confirm'])->name('auth.two-factor.confirm');
+    Route::post('auth/two-factor/replace', [TwoFactorController::class, 'replace'])->middleware('throttle:10,1')->name('auth.two-factor.replace');
     Route::post('auth/two-factor/recovery-codes', [TwoFactorController::class, 'recoveryCodes'])->name('auth.two-factor.recovery-codes');
     Route::delete('auth/two-factor', [TwoFactorController::class, 'destroy'])->name('auth.two-factor.destroy');
     Route::put('me/active-tenant', [ActiveTenantController::class, 'update'])->name('me.active-tenant');
