@@ -47,6 +47,7 @@ class User extends Authenticatable
             'two_factor_last_used_step' => 'integer',
             'last_login_at' => 'datetime',
             'disabled_at' => 'datetime',
+            'review_account_at' => 'datetime',
             'password' => 'hashed',
         ];
     }
@@ -106,6 +107,15 @@ class User extends Authenticatable
 
     public function twoFactorRequired(): bool
     {
-        return (bool) config('engage.auth.owner_two_factor_required', true) && $this->ownsAWorkspace();
+        return ! $this->isReviewAccount() && (bool) config('engage.auth.owner_two_factor_required', true) && $this->ownsAWorkspace();
+    }
+
+    /**
+     * A review account (e.g. for Meta App Review): email + password only, no authenticator and no
+     * emailed code, so a reviewer can sign in unattended. Set by a Super Admin, audited.
+     */
+    public function isReviewAccount(): bool
+    {
+        return $this->getAttribute('review_account_at') !== null;
     }
 }

@@ -235,4 +235,33 @@ final class TwoFactorTest extends TestCase
         $this->spaGet('/api/v1/tenant')->assertStatus(403)->assertJsonPath('error.code', 'two_factor_setup_required');
         $this->enroll();
     }
+
+    public function test_a_review_account_signs_in_with_email_and_password_only(): void
+    {
+        config(['engage.login_otp.enabled' => true]);
+        $this->actingAs($this->owner);
+        $this->enroll();
+        $this->actingAsAdmin();
+        $this->patch("/admin/users/{$this->owner->id}/review-account", ['enabled' => true, 'reason' => 'Meta App Review test account'])->assertRedirect();
+        $this->assertTrue($this->owner->refresh()->isReviewAccount());
+        $this->assertFalse($this->owner->hasTwoFactor()); // removed, so nothing asks for a code
+        $this->assertTrue($this->audited('user.review_account_on'));
+
+        // No authenticator and no emailed code, even as an Owner, and the workspace works.
+        $this->app['auth']->forgetGuards();
+        $this->flushSession();
+        $this->spaPost('/api/v1/auth/login', ['email' => $this->owner->email, 'password' => self::PASSWORD])->assertOk()
+            ->assertJsonPath('data.user.email', $this->owner->email)->assertJsonPath('data.two_factor.required', false)
+            ->assertJsonPath('data.two_factor.review_account', true);
+        Notification::assertNotSentTo($this->owner, LoginCodeNotification::class);
+        $this->spaGet('/api/v1/tenant')->assertOk();
+        $this->spaPost('/api/v1/auth/two-factor/setup')->assertStatus(422);
+        $this->assertTrue($this->audited('user.review_account_signed_in'));
+
+        // Turned off: the usual checks are back.
+        $this->actingAsAdmin();
+        $this->patch("/admin/users/{$this->owner->id}/review-account", ['enabled' => false, 'reason' => 'App Review approved'])->assertRedirect();
+        $this->assertFalse($this->owner->refresh()->isReviewAccount());
+        $this->assertTrue($this->owner->twoFactorRequired());
+    }
 }

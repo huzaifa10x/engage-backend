@@ -33,6 +33,8 @@ final class UserController extends Controller
                 'email' => $u->email,
                 'disabled' => $u->isDisabled(),
                 'two_factor' => $u->hasTwoFactor(),
+                'review_account' => $u->isReviewAccount(),
+                'review_account_note' => $u->getAttribute('review_account_note'),
                 'last_login_at' => $u->getAttribute('last_login_at')?->toIso8601String(),
                 'created_at' => $u->created_at?->toIso8601String(),
                 'memberships' => $u->memberships->map(fn (TenantMembership $m) => [
@@ -69,5 +71,18 @@ final class UserController extends Controller
         $manage->resetUserTwoFactor($user, $data['reason']);
 
         return back()->with('success', "Two-factor sign-in reset for {$user->name}. They sign in with password + emailed code and set up a new authenticator.");
+    }
+
+    public function updateReviewAccount(Request $request, User $user, ManagePlatformAdmins $manage): RedirectResponse
+    {
+        $data = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'reason' => ['required', 'string', 'min:5', 'max:500'],
+        ]);
+        $manage->setReviewAccount($user, (bool) $data['enabled'], $data['reason']);
+
+        return back()->with('success', $data['enabled']
+            ? "{$user->name} is a review account: email + password only, no authenticator or emailed code."
+            : "{$user->name} is a normal account again: the usual sign-in checks apply.");
     }
 }

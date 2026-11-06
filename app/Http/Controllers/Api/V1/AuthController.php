@@ -57,6 +57,16 @@ final class AuthController extends Controller
         $user = $request->authenticate();
         $remember = $request->boolean('remember');
 
+        // A review account (Meta App Review) is never asked for a second step; every sign-in is audited.
+        if ($user->isReviewAccount()) {
+            $request->session()->regenerate();
+            $request->session()->put(LoginVerification::SESSION_STAMP, now()->timestamp);
+            $user->forceFill(['last_login_at' => now()])->saveQuietly();
+            app(AuditLogger::class)->record('user.review_account_signed_in', $user);
+
+            return $me->payload($user, $user->last_active_tenant_id);
+        }
+
         // Two-factor sign-in (authenticator app) replaces the emailed code: always asked, on every browser.
         if ($user->hasTwoFactor()) {
             Auth::guard('web')->logout();

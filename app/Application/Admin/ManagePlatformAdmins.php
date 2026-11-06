@@ -74,6 +74,22 @@ final class ManagePlatformAdmins
         }
     }
 
+    /**
+     * Review account on/off (e.g. the account given to Meta App Review): email + password only.
+     * Turning it on removes any authenticator, so nothing asks the reviewer for a code; turning it
+     * off brings the normal checks back (Owners set up an authenticator on their next visit).
+     */
+    public function setReviewAccount(User $user, bool $on, string $reason): void
+    {
+        $before = $user->isReviewAccount();
+        if ($on && $user->hasTwoFactor()) {
+            $user->clearTwoFactor();
+        }
+        $user->forceFill(['review_account_at' => $on ? ($user->getAttribute('review_account_at') ?? now()) : null, 'review_account_note' => $on ? $reason : null])->save();
+        $this->audit->record($on ? 'user.review_account_on' : 'user.review_account_off', $user,
+            before: ['review_account' => $before], after: ['review_account' => $on], meta: ['reason' => $reason]);
+    }
+
     public function setUserStatus(User $user, bool $active, string $reason): void
     {
         $before = $user->isDisabled();

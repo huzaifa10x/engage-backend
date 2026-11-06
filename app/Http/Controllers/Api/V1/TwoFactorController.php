@@ -58,6 +58,9 @@ final class TwoFactorController extends Controller
     public function setup(Request $request): JsonResponse
     {
         $user = $this->user($request);
+        if ($user->isReviewAccount()) {
+            throw ValidationException::withMessages(['code' => 'This is a review account: it signs in with email and password only. A Super Admin can turn that off.']);
+        }
         if ($user->hasTwoFactor()) {
             throw ValidationException::withMessages(['code' => 'Two-factor sign-in is already on. Use “Replace authenticator” to move it to another phone or app.']);
         }
@@ -161,7 +164,7 @@ final class TwoFactorController extends Controller
     }
 
     /**
-     * @return array{enabled: bool, required: bool, confirmed_at: ?string, last_used_at: ?string, recovery_codes_left: int, recovery_sign_in: bool}
+     * @return array{enabled: bool, required: bool, confirmed_at: ?string, last_used_at: ?string, recovery_codes_left: int, review_account: bool, recovery_sign_in: bool}
      */
     public static function status(User $user): array
     {
@@ -174,6 +177,7 @@ final class TwoFactorController extends Controller
             'confirmed_at' => $user->getAttribute('two_factor_confirmed_at')?->toIso8601String(),
             'last_used_at' => is_numeric($step) && (int) $step > 0 ? Carbon::createFromTimestamp((int) $step * Totp::PERIOD)->toIso8601String() : null,
             'recovery_codes_left' => count((array) $user->getAttribute('two_factor_recovery_codes')),
+            'review_account' => $user->isReviewAccount(),
             // Signed in with a recovery code a moment ago: the phone is probably lost, offer the replacement.
             'recovery_sign_in' => $user->hasTwoFactor() && $request->hasSession() && self::recoveredRecently($request),
         ];
