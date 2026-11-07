@@ -57,7 +57,7 @@ final class CoexistenceSyncHandler implements WebhookHandler
             }
             $this->import->enqueue($number, $job, $records);
             ImportCoexistenceBatch::kick($number->tenant_id);
-            CoexistenceSyncJob::query()->whereKey($job->id)->update(['status' => 'in_progress', 'chunks_received' => DB::raw('chunks_received + 1')]);
+            CoexistenceSyncJob::query()->whereKey($job->id)->update(['status' => 'in_progress', 'chunks_received' => DB::raw('chunks_received + 1'), 'last_received_at' => now()]);
 
             return ProcessResult::Processed;
         }
@@ -106,6 +106,15 @@ final class CoexistenceSyncHandler implements WebhookHandler
                 'progress' => DB::raw('GREATEST(progress, '.max(0, min(100, (int) ($meta['progress'] ?? 0))).')'),
                 'chunks_received' => DB::raw('chunks_received + 1'),
             ]);
+        }
+
+        // When WhatsApp last sent anything for this sync: "paused" is measured from here.
+        CoexistenceSyncJob::query()->whereKey($job->id)->update(['last_received_at' => now()]);
+        // A sync closed after WhatsApp went quiet comes back to life if WhatsApp resumes sending.
+        if ($number->coexistence_status === CoexistenceStatus::Synced && ($change->value['history'] ?? []) !== []
+            && CoexistenceSyncJob::query()->whereKey($job->id)->where('progress', '<', 100)->exists()) {
+            $number->forceFill(['coexistence_status' => CoexistenceStatus::HistorySyncing])->save();
+            CoexistenceSyncJob::query()->whereKey($job->id)->update(['status' => 'in_progress', 'completed_at' => null]);
         }
 
         $this->import->enqueue($number, $job, $records);

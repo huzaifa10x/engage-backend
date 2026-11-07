@@ -124,6 +124,9 @@ final class CoexistenceImport
     }
 
     /** History is finished when WhatsApp has sent everything AND everything received has been imported. */
+    /** No chunk from WhatsApp for this long, with nothing waiting → shown as paused, not importing. */
+    public const PAUSED_AFTER_MINUTES = 30;
+
     public function finishIfDone(PhoneNumber $number): void
     {
         $history = CoexistenceSyncJob::query()->where('phone_number_id', $number->id)->where('sync_type', 'history')->first();
@@ -168,16 +171,29 @@ final class CoexistenceImport
         $whatsappDone = ($history === null && $number->coexistence_status === CoexistenceStatus::Synced)
             || ($history !== null && ($history->progress >= 100 || in_array($history->status, ['declined', 'completed'], true)));
 
+        // WhatsApp stopped sending before 100%: everything that arrived is imported and nothing has come
+        // for a while. Then the import is not busy; it is waiting on WhatsApp (usually the phone's app).
+        $lastReceived = $jobs->max('last_received_at');
+        $quiet = $lastReceived !== null && $lastReceived->lte(now()->subMinutes(self::PAUSED_AFTER_MINUTES));
+        $windowEnds = $number->getAttribute('app_sync_expires_at');
+        // Closed after Meta's window with less than everything: final, but say how much WhatsApp shared.
+        $partial = $history !== null && $history->status === 'completed' && $history->progress < 100;
+
         return [
             'state' => match (true) {
                 $number->coexistence_status === CoexistenceStatus::SyncFailed => 'failed',
                 $waiting === 0 && $whatsappDone => 'complete',
                 $received === 0 => 'waiting',          // requested, nothing has arrived yet
+                $waiting === 0 && $quiet => 'paused',   // WhatsApp stopped sending; nothing for us to do
                 default => 'importing',
             },
+            'partial' => $partial,
+            'shared_percent' => (int) ($history->progress ?? 0),                              // what WhatsApp actually sent (even when closed)
+            'last_received_at' => $lastReceived?->toIso8601String(),
+            'window_ends_at' => $windowEnds?->toIso8601String(),
             'history_declined' => $history?->status === 'declined',
             // Two different measures, shown separately:
-            'whatsapp_percent' => $whatsappDone ? 100 : (int) ($history->progress ?? 0),     // how much WhatsApp has sent us
+            'whatsapp_percent' => $whatsappDone && ! $partial ? 100 : (int) ($history->progress ?? 0),     // how much WhatsApp has sent us
             'whatsapp_finished' => $whatsappDone,
             'received' => $received,                                                          // records that have arrived
             'imported' => $imported,                                                          // … of which are in the inbox

@@ -8,15 +8,19 @@ use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Models\CoexistenceSyncJob;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Domain\WhatsApp\Services\CoexistenceImport;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Hourly housekeeping for coexistence imports, so a number never shows "syncing" forever:
  *
  *  • the sync was never requested and Meta's 24-hour window has closed → "sync failed"
  *    (the import can no longer be started; the number itself keeps working);
- *  • the sync was requested but no data has arrived for a long time (phone offline, or the
- *    owner declined) → closed as "synced" with whatever was imported.
+ *  • the window has closed, WhatsApp has sent nothing for 30 minutes and everything that arrived is
+ *    imported (WhatsApp stopped part-way, usually the phone's app) → closed as "synced" with what it
+ *    shared; it re-opens by itself if WhatsApp resumes sending;
+ *  • no activity at all for a long time → closed the same way.
  */
 final class WatchCoexistenceSync extends Command
 {
@@ -46,8 +50,14 @@ final class WatchCoexistenceSync extends Command
                     continue;
                 }
 
+                // Meta's window is over. Once WhatsApp has been quiet for a while and everything that
+                // arrived is imported, close it with what WhatsApp shared (it re-opens if WhatsApp resumes).
+                $lastReceived = $jobs->max('last_received_at');
+                $waiting = DB::table('coexistence_sync_items')->where('phone_number_id', $number->id)->exists();
+                $quietSinceWindow = $lastReceived !== null && $lastReceived->lte(now()->subMinutes(CoexistenceImport::PAUSED_AFTER_MINUTES));
                 $lastActivity = $jobs->max('updated_at') ?? $number->getAttribute('app_sync_started_at');
-                if ($lastActivity !== null && $lastActivity->lte(now()->subHours($staleHours))) {
+                $stale = $lastActivity !== null && $lastActivity->lte(now()->subHours($staleHours));
+                if (($quietSinceWindow && ! $waiting) || $stale) {
                     $number->forceFill(['coexistence_status' => CoexistenceStatus::Synced])->save();
                     $jobs->filter(fn (CoexistenceSyncJob $j) => $j->getAttribute('completed_at') === null)
                         ->each(fn (CoexistenceSyncJob $j) => $j->forceFill(['status' => 'completed', 'completed_at' => now()])->save());

@@ -157,6 +157,40 @@ final class CoexistenceImportTest extends TestCase
         $this->assertSame(35, $this->waiting());
     }
 
+    public function test_whatsapp_stopping_part_way_shows_paused_then_closes_after_the_window_and_reopens_if_it_resumes(): void
+    {
+        Queue::fake([ImportCoexistenceBatch::class]);
+        $this->tenantContext()->run($this->tenant, fn () => $this->number->forceFill(['app_sync_expires_at' => now()->addHours(6)])->save());
+        $this->history(80, progress: 25);
+        $this->tenantContext()->bypass(fn () => DB::table('coexistence_sync_jobs')->update(['request_id' => 'req-1']));
+        $this->runOneBatch();
+        $this->assertSame(0, $this->waiting());
+
+        // Everything that arrived is in, but WhatsApp is still expected to send more: importing (not finished).
+        $this->assertSame('importing', $this->sync()['state']);
+
+        // WhatsApp sends nothing for 30 minutes: paused, our side is idle.
+        $this->travel(31)->minutes();
+        $sync = $this->sync();
+        $this->assertSame('paused', $sync['state']);
+        $this->assertSame(25, $sync['whatsapp_percent']);
+        $this->assertNotNull($sync['last_received_at']);
+        $this->artisan('engage:coexistence:watch')->assertSuccessful(); // window still open: stays paused
+        $this->assertSame('paused', $this->sync()['state']);
+
+        // The 24-hour window closes: the import is closed with what WhatsApp shared.
+        $this->travel(6)->hours();
+        $this->artisan('engage:coexistence:watch')->assertSuccessful();
+        $sync = $this->sync();
+        $this->assertSame(['complete', true, 25, 25], [$sync['state'], $sync['partial'], $sync['shared_percent'], $sync['whatsapp_percent']]);
+        $this->assertSame('synced', $this->getJson("/api/v1/phone-numbers/{$this->number->id}")->json('data.coexistence_status'));
+
+        // WhatsApp resumes after all: importing again, nothing is lost.
+        $this->history(40, progress: 60, offset: 500);
+        $this->assertSame('importing', $this->sync()['state']);
+        $this->assertSame('history_syncing', $this->getJson("/api/v1/phone-numbers/{$this->number->id}")->json('data.coexistence_status'));
+    }
+
     public function test_a_large_history_chunk_of_many_mb_is_accepted_not_refused(): void
     {
         Queue::fake();

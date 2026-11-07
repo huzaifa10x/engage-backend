@@ -32,6 +32,6 @@ class CoexistenceSyncJob extends Model
 
     protected function casts(): array
     {
-        return ['requested_at' => 'datetime', 'completed_at' => 'datetime', 'last_imported_at' => 'datetime', 'progress' => 'integer', 'records_received' => 'integer', 'records_imported' => 'integer'];
+        return ['requested_at' => 'datetime', 'completed_at' => 'datetime', 'last_imported_at' => 'datetime', 'last_received_at' => 'datetime', 'progress' => 'integer', 'records_received' => 'integer', 'records_imported' => 'integer'];
     }
 }
