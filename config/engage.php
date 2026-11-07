@@ -128,7 +128,10 @@ return [
         'fake' => (bool) env('META_FAKE', false),
         'timeout' => (int) env('META_HTTP_TIMEOUT', 20),
         // Coexistence history chunks can describe thousands of messages.
-        'webhook_max_body_kb' => (int) env('META_WEBHOOK_MAX_BODY_KB', 8192),
+        // Coexistence history webhooks carry thousands of messages each and can be tens of MB. A body
+        // refused here (413) is a chunk of the customer's history Meta keeps retrying, so the cap
+        // matches what PHP (post_max_size 110M) and Caddy (110MB) accept.
+        'webhook_max_body_kb' => (int) env('META_WEBHOOK_MAX_BODY_KB', 102400),
         'webhook_retention_days' => (int) env('META_WEBHOOK_RETENTION_DAYS', 90),
         'deletion_status_url' => env('META_DELETION_STATUS_URL'), // default: APP_URL/deletion-status
         // Fixed throughput for numbers shared with the WhatsApp Business app (Meta: 20 mps).

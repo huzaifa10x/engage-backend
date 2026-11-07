@@ -157,6 +157,25 @@ final class CoexistenceImportTest extends TestCase
         $this->assertSame(35, $this->waiting());
     }
 
+    public function test_a_large_history_chunk_of_many_mb_is_accepted_not_refused(): void
+    {
+        Queue::fake();
+        // One chunk of a big phase-1 history: about 12 MB, more than the old 8 MB cap that answered 413.
+        $threads = [];
+        for ($n = 0; $n < 9000; $n++) {
+            $customer = '9715033'.str_pad((string) ($n % 300), 5, '0', STR_PAD_LEFT);
+            $threads[$customer]['id'] = $customer;
+            $threads[$customer]['messages'][] = ['from' => $customer, 'id' => "wamid.BIG{$n}", 'timestamp' => (string) (1739230000 + $n), 'type' => 'text',
+                'text' => ['body' => str_repeat('Long consultation message. ', 50)], 'history_context' => ['status' => 'READ']];
+        }
+        $body = $this->webhookBody('history', ['messaging_product' => 'whatsapp', 'metadata' => self::META,
+            'history' => [['metadata' => ['phase' => 1, 'chunk_order' => 3, 'progress' => 40], 'threads' => array_values($threads)]]]);
+        $this->assertGreaterThan(8192 * 1024, strlen($body));
+
+        $this->postWebhook($body)->assertOk();
+        $this->assertSame(1, $this->tenantContext()->bypass(fn () => DB::table('webhook_inbound_log')->where('field', 'history')->count()));
+    }
+
     public function test_a_broken_chain_is_restarted_by_the_scheduler(): void
     {
         Queue::fake([ImportCoexistenceBatch::class]);

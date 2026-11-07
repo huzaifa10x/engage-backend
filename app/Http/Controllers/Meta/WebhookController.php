@@ -36,8 +36,12 @@ final class WebhookController extends Controller
     {
         $raw = $request->getContent();
 
-        if (strlen($raw) > (int) config('engage.meta.webhook_max_body_kb', 8192) * 1024) {
-            Log::error('Meta webhook body exceeds the configured maximum.', ['bytes' => strlen($raw)]);
+        if (strlen($raw) > (int) config('engage.meta.webhook_max_body_kb', 102400) * 1024) {
+            // Loud on purpose: a refused coexistence history chunk means missing chats (raise META_WEBHOOK_MAX_BODY_KB).
+            Log::critical('Meta webhook body exceeds the configured maximum (META_WEBHOOK_MAX_BODY_KB); Meta will retry it.', [
+                'bytes' => strlen($raw), 'limit_kb' => (int) config('engage.meta.webhook_max_body_kb', 102400),
+                'history' => str_contains(substr($raw, 0, 4096), '"history"'),
+            ]);
 
             return response('Payload too large', 413);
         }
