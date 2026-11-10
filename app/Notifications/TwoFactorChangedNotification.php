@@ -56,7 +56,7 @@ final class TwoFactorChangedNotification extends Notification implements ShouldQ
         }
 
         return $mail
-            ->action('Review your sign-in', config('engage.frontend_url').'/settings')
+            ->action('Review your sign-in', config('engage.frontend_url').'/settings?tab=security')
             ->line('If this was not you, reset your password straight away and contact support.');
     }
 }

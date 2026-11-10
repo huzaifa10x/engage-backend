@@ -60,9 +60,11 @@ final class LeadController extends Controller
      * message came from the ad; returning: they were already customers (or wrote before) and came
      * back through an ad.
      */
-    public function summary(): JsonResponse
+    public function summary(Request $request): JsonResponse
     {
         $this->ensureFull();
+        // The number chosen in the top bar (CN-02): lead counts for that number only.
+        $number = $request->validate(['phone_number_id' => ['nullable', 'uuid']])['phone_number_id'] ?? null;
         $tenant = $this->context->tenant();
         $startedAt = GrowthSettings::for($tenant)->startedAt;
         $since = now()->subDays(30);
@@ -70,8 +72,8 @@ final class LeadController extends Controller
         // The touch counted for a lead: its latest paid touch.
         $touch = 'coalesce(acquisition_latest, acquisition_original)';
 
-        $count = function (?callable $extra = null): int {
-            $q = $this->leads->filtered(['days' => 30], withTab: false);
+        $count = function (?callable $extra = null) use ($number): int {
+            $q = $this->leads->filtered(['days' => 30, 'phone_number_id' => $number], withTab: false);
             if ($extra !== null) {
                 $q->whereHas('contact', $extra);
             }

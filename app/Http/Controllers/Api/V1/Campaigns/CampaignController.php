@@ -34,7 +34,10 @@ final class CampaignController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $list = Campaign::query()->with('phoneNumber')->orderByDesc('created_at')->limit(200)->get();
+        // The number chosen in the top bar (CN-02).
+        $number = $request->validate(['phone_number_id' => ['nullable', 'uuid']])['phone_number_id'] ?? null;
+        $list = Campaign::query()->with('phoneNumber.wabaAccount')->when($number, fn ($q, string $id) => $q->where('phone_number_id', $id))
+            ->orderByDesc('created_at')->limit(200)->get();
 
         return response()->json(['data' => $list->map(fn (Campaign $c) => $this->present($c))]);
     }

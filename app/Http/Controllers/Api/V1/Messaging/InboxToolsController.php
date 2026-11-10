@@ -269,18 +269,22 @@ final class InboxToolsController extends Controller
 
     // ── Dashboard numbers ──────────────────────────────────────────────────────────────────
 
-    public function dashboard(): JsonResponse
+    public function dashboard(Request $request): JsonResponse
     {
         $membership = $this->context->membership()?->loadMissing('role') ?? abort(403);
+        // The number chosen in the top bar (CN-02): every figure is for that number only.
+        $number = $request->validate(['phone_number_id' => ['nullable', 'uuid']])['phone_number_id'] ?? null;
         $tenant = $this->context->tenant();
         $today = now()->setTimezone($tenant->timezone ?: 'UTC')->startOfDay()->utc();
         $month = now()->setTimezone($tenant->timezone ?: 'UTC')->startOfMonth()->utc();
 
         // Counts follow chat visibility: agents count only the chats assigned to them.
-        $conversations = fn () => $this->access->scopeChats(Conversation::query()->whereNotNull('last_message_at'), $membership);
-        $messages = fn () => $this->access->seesAllChats($membership)
+        $conversations = fn () => $this->access->scopeChats(Conversation::query()->whereNotNull('last_message_at'), $membership)
+            ->when($number, fn ($q, string $id) => $q->where('phone_number_id', $id));
+        $messages = fn () => ($this->access->seesAllChats($membership)
             ? $this->access->scope(Message::query(), $membership, 'phone_number_id')
-            : Message::query()->whereIn('conversation_id', $this->access->scopeChats(Conversation::query(), $membership)->select('id'));
+            : Message::query()->whereIn('conversation_id', $this->access->scopeChats(Conversation::query(), $membership)->select('id')))
+            ->when($number, fn ($q, string $id) => $q->where('phone_number_id', $id));
 
         return response()->json(['data' => [
             'conversations_today' => $conversations()->where('last_inbound_at', '>=', $today)->count(),

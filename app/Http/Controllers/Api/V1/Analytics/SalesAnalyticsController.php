@@ -35,11 +35,15 @@ final class SalesAnalyticsController extends Controller
         if (! CommerceAccess::allows($tenant)) {
             return response()->json(['data' => ['locked' => true]]);
         }
-        $days = (int) ($request->validate(['days' => ['nullable', 'integer', 'in:7,30,90,365']])['days'] ?? 30);
+        $f = $request->validate(['days' => ['nullable', 'integer', 'in:7,30,90,365'], 'phone_number_id' => ['nullable', 'uuid']]);
+        $days = (int) ($f['days'] ?? 30);
+        // The number chosen in the top bar (CN-02): only orders matched to chats on that number count.
+        $number = $f['phone_number_id'] ?? null;
         $since = now()->subDays($days);
         $tz = $tenant->timezone ?: 'Asia/Dubai';
 
-        $base = fn () => DB::table('commerce_orders')->where('tenant_id', $tenant->id)->where('placed_at', '>=', $since);
+        $base = fn () => DB::table('commerce_orders')->where('tenant_id', $tenant->id)->where('placed_at', '>=', $since)
+            ->when($number, fn ($q, string $id) => $q->whereIn('conversation_id', DB::table('conversations')->where('phone_number_id', $id)->select('id')));
         $currency = (string) ($base()->select('currency', DB::raw('count(*) n'))->groupBy('currency')->orderByDesc('n')->value('currency') ?? 'AED');
         $inCurrency = fn () => $base()->where('currency', $currency);
 
@@ -64,6 +68,7 @@ final class SalesAnalyticsController extends Controller
         $products = DB::table('commerce_order_items as i')->join('commerce_orders as o', 'o.id', '=', 'i.order_id')
             ->where('o.tenant_id', $tenant->id)->where('o.placed_at', '>=', $since)->where('o.currency', $currency)->where('o.paid', true)
             ->whereIn('o.match', [CommerceOrder::LINK, CommerceOrder::PHONE])
+            ->when($number, fn ($q, string $id) => $q->whereIn('o.conversation_id', DB::table('conversations')->where('phone_number_id', $id)->select('id')))
             ->selectRaw("i.name, coalesce(o.conversation_source->>'label', o.original_source->>'label', 'No tracked source') as source, o.match, sum(i.quantity) as quantity, sum(i.total) as revenue")
             ->groupByRaw('1, 2, 3')->orderByDesc('revenue')->limit(25)->get()
             ->map(fn (object $r) => ['name' => $r->name, 'source' => $r->source, 'match' => $r->match, 'quantity' => (int) $r->quantity, 'revenue' => SalesPresenter::money($r->revenue)])->values();
@@ -80,6 +85,8 @@ final class SalesAnalyticsController extends Controller
         return response()->json(['data' => [
             'locked' => false,
             'stores' => $stores,
+            // Filtered by a number: only orders matched to chats on it (store-wide columns are then empty).
+            'number_filtered' => $number !== null,
             'range' => ['days' => $days, 'from' => $since->toIso8601String(), 'timezone' => $tz],
             'currency' => $currency,
             'other_currencies' => $base()->where('currency', '!=', $currency)->distinct()->pluck('currency')->values(),

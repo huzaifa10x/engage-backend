@@ -30,6 +30,8 @@ final class SalesController extends Controller
         'q' => ['nullable', 'string', 'max:100'],
         'days' => ['nullable', 'integer', 'in:7,30,90,365'],
         'store' => ['nullable', 'uuid'],
+        // The number chosen in the top bar (CN-02): orders matched to chats on that number.
+        'phone_number_id' => ['nullable', 'uuid'],
         'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         'cursor' => ['nullable', 'string'],
     ];
@@ -113,6 +115,9 @@ final class SalesController extends Controller
         }
         if (! empty($f['store'])) {
             $q->where('integration_id', $f['store']);
+        }
+        if (! empty($f['phone_number_id'])) {
+            $q->whereIn('conversation_id', DB::table('conversations')->where('phone_number_id', $f['phone_number_id'])->select('id'));
         }
         if (! empty($f['q'])) {
             $term = trim((string) $f['q']);

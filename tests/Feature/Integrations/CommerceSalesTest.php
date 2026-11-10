@@ -15,6 +15,7 @@ use App\Domain\Tenancy\Models\TenantMembership;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
@@ -187,6 +188,13 @@ final class CommerceSalesTest extends TestCase
         $this->assertSame('AED', $sales['currency']);
         $this->assertSame('Linen shirt', $sales['products'][0]['name']);
         $this->assertNotNull($sales['time_to_order']['median_hours']);
+
+        // Filtered by the number chosen in the top bar (CN-02): the chat's number keeps it, another number has none.
+        $this->getJson("/api/v1/growth/sales?phone_number_id={$c->phone_number_id}")->assertOk()->assertJsonCount(1, 'data');
+        $other = (string) Str::uuid();
+        $this->getJson("/api/v1/growth/sales?phone_number_id={$other}")->assertOk()->assertJsonCount(0, 'data');
+        $this->getJson("/api/v1/analytics/sales?phone_number_id={$other}")->assertOk()->assertJsonPath('data.number_filtered', true)->assertJsonPath('data.chat_link.orders', 0);
+        $this->getJson("/api/v1/analytics/sales?phone_number_id={$c->phone_number_id}")->assertOk()->assertJsonPath('data.chat_link.orders', 1);
 
         // Growth Hub › Sales with the evidence, and the chat sidebar.
         $row = $this->getJson('/api/v1/growth/sales')->assertOk()->json('data.0');
