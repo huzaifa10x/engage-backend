@@ -1,76 +1,62 @@
-cd ~/path/to/engage-backend
+## Local development
+cd ~/engage-backend
 
-# Stop Old Docker Container First Time
+# First time only: stop the old Docker setup
 docker compose down
 
-# Start New Setup
-./dev setup
-./dev start
+./dev setup        # first time on a machine (safe to re-run)
+./dev start        # backend + client portal + website (Ctrl+C stops the frontends)
+./dev start --backend   # backend only
 
-Redeploy
-Commands on the server
+## Release (from your Mac, in ~/engage-backend, after pushing to main)
+npm run release              # staging → promote → production (asks before production)
 
-Both together:
+# Step by step
+npm run deploy:staging       # main → staging, deploy staging
+npm run release:promote      # staging → main
+npm run deploy:production    # deploy main to production (asks to confirm)
 
-bash /opt/engage/backend/deploy/deploy.sh all
-
-Backend only:
-
-bash /opt/engage/backend/deploy/deploy.sh backend
-
-Frontend only:
-
-bash /opt/engage/backend/deploy/deploy.sh web
-
-Restart on the Server 
-
-bash /opt/engage/backend/deploy/deploy.sh restart
-
-To Update ENV on live server
-Open the file on the server:
-   nano /opt/engage/backend/.env
-
-bash /opt/engage/backend/deploy/deploy.sh restart
-
-To delete a workspace
-Preview (changes nothing):
-   docker compose --project-directory /opt/engage/backend/deploy -f /opt/engage/backend/deploy/docker-compose.prod.yml exec app php artisan engage:client:delete teamdubai103@gmail.com
-
-It lists the account, each workspace marked DELETE or KEEP, and the counts of contacts, conversations and messages.
-
-If the preview is what you expect, delete:
-   docker compose --project-directory /opt/engage/backend/deploy -f /opt/engage/backend/deploy/docker-compose.prod.yml exec app php artisan engage:client:delete teamdubai103@gmail.com --force
-
-Shopify setup (your side)
-
-Shopify shows as “Coming soon” until these are set. WooCommerce and Zapier/Make work without them.
-
-Create the app in Shopify’s Dev Dashboard.
-Set App URL to https://app.10xdigital.ae/api/integrations/shopify/app.
-Set the redirect URL to https://app.10xdigital.ae/api/integrations/shopify/callback.
-Point the three compliance webhooks at https://app.10xdigital.ae/api/integrations/shopify/webhook.
-Set the scope to read_orders.
-Add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET to the backend .env and redeploy.
-Request protected customer data access (name, phone, email, address). Without it, a public app receives orders with the phone number removed and nothing can be sent.
-
-Restart Staging
-bash /opt/engage-staging/backend/deploy/deploy.sh restart
-
-huzaifa@10xuae.com Wv-N=8&j2S.T
-
-
-Deploy To Staging
-npm run deploy:staging
-
-Then run to production
-npm run release:promote
-
-Deploye all
-
-npm run deploy:staging
-npm run release:promote
-npm run deploy:production
-
-Direct to Production
-npm run release:promote
+# Emergency fix straight to production (skips staging; push the fix to main first)
 npm run deploy:production -- --hotfix
+
+# What is running where / roll back
+npm run release:status
+npm run rollback:staging
+npm run rollback:production
+
+## On the production server
+bash /opt/engage/backend/deploy/deploy.sh all       # backend + web + site
+bash /opt/engage/backend/deploy/deploy.sh backend   # backend only
+bash /opt/engage/backend/deploy/deploy.sh web       # client portal only
+bash /opt/engage/backend/deploy/deploy.sh restart   # after editing .env
+bash /opt/engage/backend/deploy/deploy.sh status    # what is deployed, last releases
+bash /opt/engage/backend/deploy/deploy.sh check     # health checks only
+
+# Change .env on production
+nano /opt/engage/backend/.env
+bash /opt/engage/backend/deploy/deploy.sh restart
+
+## On the staging server (same commands, staging folder)
+bash /opt/engage-staging/backend/deploy/deploy.sh all
+bash /opt/engage-staging/backend/deploy/deploy.sh restart
+nano /opt/engage-staging/backend/.env
+
+## Delete a user or a workspace
+Easiest: Super Admin › Users › (user) › Delete user, or Companies › (company) › Delete company.
+
+Command line (production):
+# Preview, changes nothing
+docker compose --project-directory /opt/engage/backend/deploy -f /opt/engage/backend/deploy/docker-compose.prod.yml exec app php artisan engage:client:delete EMAIL
+# Delete
+docker compose --project-directory /opt/engage/backend/deploy -f /opt/engage/backend/deploy/docker-compose.prod.yml exec app php artisan engage:client:delete EMAIL --force
+# (add --ignore-billing only if a workspace still has a paid subscription you mean to drop)
+
+## Shopify setup (your side)
+Shopify shows "Coming soon" until these are set. WooCommerce and Zapier/Make work without them.
+- Create the app in Shopify's Dev Dashboard.
+- App URL: https://app.10xdigital.ae/api/integrations/shopify/app
+- Redirect URL: https://app.10xdigital.ae/api/integrations/shopify/callback
+- Compliance webhooks (all three): https://app.10xdigital.ae/api/integrations/shopify/webhook
+- Scope: read_orders
+- Add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET to /opt/engage/backend/.env, then deploy.sh restart
+- Request protected customer data access (name, phone, email, address); without it orders arrive without the phone number.
