@@ -7,6 +7,7 @@ namespace Tests\Feature\Api;
 use App\Domain\Access\Models\Role;
 use App\Domain\Access\SystemRole;
 use App\Domain\Campaigns\Models\Campaign;
+use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -70,5 +71,20 @@ final class NumberFilterTest extends TestCase
         $this->getJson('/api/v1/templates')->assertOk();
         $this->getJson('/api/v1/tenant/followups')->assertForbidden();
         $this->getJson('/api/v1/analytics/overview')->assertForbidden();
+    }
+
+    public function test_dashboard_needs_reply_is_the_inbox_needs_reply(): void
+    {
+        // One chat whose last customer message came with the imported history: not in Needs reply.
+        $this->tenantContext()->run($this->tenant, fn () => Conversation::query()
+            ->whereHas('contact', fn ($c) => $c->where('wa_id', '971503333333'))->update(['reply_state' => null, 'needs_reply_since' => null]));
+
+        $inbox = $this->getJson('/api/v1/conversations/counts')->assertOk()->json('data');
+        $this->getJson('/api/v1/dashboard/summary')->assertOk()
+            ->assertJsonPath('data.needs_reply', $inbox['needs_reply'])
+            ->assertJsonPath('data.needs_reply', 2)
+            ->assertJsonPath('data.needs_reply_unassigned', 2)
+            ->assertJsonPath('data.older_no_reply', 1)
+            ->assertJsonPath('data.waiting_for_reply', 2);
     }
 }

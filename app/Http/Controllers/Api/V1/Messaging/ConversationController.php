@@ -16,6 +16,7 @@ use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Jobs\SendReadReceipt;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Messaging\Services\InboxCounts;
 use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -87,23 +88,16 @@ final class ConversationController extends Controller
      * Counts for the inbox tabs (Needs reply, Arrived after hours, Unassigned, Mine), with the same
      * visibility rules as the list (agents: their own chats).
      */
-    public function counts(Request $request): JsonResponse
+    public function counts(Request $request, InboxCounts $counts): JsonResponse
     {
         $data = $request->validate(['phone_number_id' => ['nullable', 'uuid']]);
-        $membership = $this->membership();
-        $base = function () use ($membership, $data) {
-            $q = Conversation::query()->whereNotNull('last_message_at')->where('status', ConversationStatus::Open->value)
-                ->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now()))
-                ->when($data['phone_number_id'] ?? null, fn ($q, $id) => $q->where('phone_number_id', $id));
-
-            return $this->access->scopeChats($q, $membership);
-        };
+        $c = $counts->counts($this->membership(), $data['phone_number_id'] ?? null);
 
         return response()->json(['data' => [
-            'needs_reply' => $base()->where('reply_state', ReplyState::NEEDS_REPLY)->count(),
-            'needs_reply_mine' => $base()->where('reply_state', ReplyState::NEEDS_REPLY)->where('assigned_membership_id', $membership->id)->count(),
-            'after_hours' => $base()->where('reply_state', ReplyState::NEEDS_REPLY)->where('after_hours', true)->count(),
-            'unassigned' => $base()->whereNull('assigned_membership_id')->count(),
+            'needs_reply' => $c['needs_reply'],
+            'needs_reply_mine' => $c['needs_reply_mine'],
+            'after_hours' => $c['after_hours'],
+            'unassigned' => $c['unassigned'],
         ]]);
     }
 

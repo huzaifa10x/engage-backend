@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace App\Domain\Automation;
 
+use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\BusinessHours;
+use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Follow-up rules (WhatsApp Engagement Plan v4 §IV), tenants.settings.followups, all editable:
@@ -110,22 +113,52 @@ final class FollowUps
         $scheduler = app(Scheduler::class);
         $number = $conversation->phone_number_id;
         $episode = $since->toIso8601String();
-        $key = fn (string $kind) => "{$kind}:{$conversation->id}:{$since->getTimestamp()}";
+        // One action per rule and wait. The key also carries the rule's setting, so a changed setting
+        // schedules again (FollowUpController cancels the pending ones); a rule that already ran or was
+        // skipped for this wait never runs twice.
+        $prefix = fn (string $kind) => "{$kind}:{$conversation->id}:{$since->getTimestamp()}";
+        $decided = fn (string $kind) => DB::table('scheduled_actions')->where('tenant_id', $tenant->id)
+            ->where('dedupe_key', 'like', $prefix($kind).'%')->whereIn('status', ['pending', 'done', 'skipped'])->exists();
         $after = fn (int $minutes) => BusinessHours::addSeconds($tenant, $number, $since, $minutes * 60);
 
-        if ($can['team'] && $s['reply_alert']['enabled']) {
-            $scheduler->schedule('reply_alert', $after($s['reply_alert']['minutes']), $key('reply_alert'), $conversation, payload: ['episode' => $episode, 'minutes' => $s['reply_alert']['minutes']], priority: 50);
+        if ($can['team'] && $s['reply_alert']['enabled'] && ! $decided('reply_alert')) {
+            $scheduler->schedule('reply_alert', $after($s['reply_alert']['minutes']), $prefix('reply_alert').':'.$s['reply_alert']['minutes'], $conversation, payload: ['episode' => $episode, 'minutes' => $s['reply_alert']['minutes']], priority: 50);
         }
-        if ($can['escalation'] && $s['escalation']['enabled']) {
-            $scheduler->schedule('reply_escalation', $after($s['escalation']['minutes']), $key('reply_escalation'), $conversation, payload: ['episode' => $episode, 'minutes' => $s['escalation']['minutes']], priority: 50);
+        if ($can['escalation'] && $s['escalation']['enabled'] && ! $decided('reply_escalation')) {
+            $scheduler->schedule('reply_escalation', $after($s['escalation']['minutes']), $prefix('reply_escalation').':'.$s['escalation']['minutes'], $conversation, payload: ['episode' => $episode, 'minutes' => $s['escalation']['minutes']], priority: 50);
         }
-        if ($can['team'] && $s['window_alert']['enabled'] && $windowEnds !== null) {
+        if ($can['team'] && $s['window_alert']['enabled'] && $windowEnds !== null && ! $decided('window_alert')) {
             $due = $windowEnds->copy()->subMinutes($s['window_alert']['minutes_before']);
-            $scheduler->schedule('window_alert', $due->max(now()), $key('window_alert'), $conversation, payload: ['episode' => $episode], priority: 40);
+            $scheduler->schedule('window_alert', $due->max(now()), $prefix('window_alert').':'.$s['window_alert']['minutes_before'], $conversation, payload: ['episode' => $episode], priority: 40);
         }
-        if ($can['round_robin'] && $s['unassigned']['enabled'] && $conversation->assigned_membership_id === null) {
-            $scheduler->schedule('unassigned_assign', $after($s['unassigned']['minutes']), $key('unassigned_assign'), $conversation, payload: ['episode' => $episode], priority: 45);
+        if ($can['round_robin'] && $s['unassigned']['enabled'] && $conversation->assigned_membership_id === null && ! $decided('unassigned_assign')) {
+            $scheduler->schedule('unassigned_assign', $after($s['unassigned']['minutes']), $prefix('unassigned_assign').':'.$s['unassigned']['minutes'], $conversation, payload: ['episode' => $episode], priority: 45);
         }
+    }
+
+    /**
+     * Safety net (every few minutes): every chat that needs a reply has the team-side rules of its
+     * current wait — also waits that started without them: a snooze that ended, rules switched on or
+     * changed while the chat was already waiting, or a missed schedule. Idempotent. Only waits whose
+     * 24-hour window is still open: after that no alert can help.
+     */
+    public static function sweep(): int
+    {
+        $tenant = app(TenantContext::class)->tenantOrNull();
+        if ($tenant === null) {
+            return 0;
+        }
+        $n = 0;
+        Conversation::query()->where('status', ConversationStatus::Open->value)->where('reply_state', ReplyState::NEEDS_REPLY)
+            ->whereNotNull('needs_reply_since')->where('needs_reply_since', '>=', now()->subHours((int) config('engage.messaging.window_hours', 24)))
+            ->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now()))
+            ->lazyById(200)->each(function (Conversation $c) use (&$n): void {
+                $since = Carbon::parse($c->getAttribute('needs_reply_since'));
+                self::waitStarted($c, $since, $c->window_expires_at ?? $since->copy()->addHours((int) config('engage.messaging.window_hours', 24)));
+                $n++;
+            });
+
+        return $n;
     }
 
     /** A person answered: the team-side rules for the wait are done. */

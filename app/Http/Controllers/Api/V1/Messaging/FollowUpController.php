@@ -98,6 +98,11 @@ final class FollowUpController extends Controller
         $tenant->forceFill(['settings' => $settings])->save();
         $audit->record('tenant.followups_updated', $tenant, before: $before, after: $next);
 
+        // Chats already waiting follow the new rules at once: their pending team alerts are replaced.
+        DB::table('scheduled_actions')->where('tenant_id', $tenant->id)->where('status', 'pending')->whereIn('kind', FollowUps::TEAM_KINDS)
+            ->update(['status' => 'cancelled', 'result' => 'settings_changed', 'decided_at' => now(), 'updated_at' => now()]);
+        FollowUps::sweep();
+
         return $this->show();
     }
 

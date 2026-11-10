@@ -436,6 +436,8 @@ final class WebsiteTrackingTest extends TestCase
         $this->assertSame('Google Ads', $r->json('data.0.contact.acquisition.source.name'));
         $this->assertSame('winter_sale', $r->json('data.0.contact.acquisition.source.campaign'));
         $this->assertTrue($r->json('data.0.contact.acquisition.returning'));
+        // The inbox chip says what the contact was, then the touch that brought them back.
+        $this->assertSame('Before tracking · Latest: Google Ads', $r->json('data.0.contact.acquisition.returning_label'));
         $this->assertNull($r->json('data.0.contact.acquisition.source.latest'));
         $this->assertSame(1, count($this->getJson('/api/v1/growth/leads?source=google_ads')->json('data')), 'filtered by the touch it is shown with');
         $this->assertSame(0, count($this->getJson('/api/v1/growth/leads?status=before')->json('data')));

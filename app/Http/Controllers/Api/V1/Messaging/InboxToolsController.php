@@ -14,6 +14,7 @@ use App\Domain\Messaging\Models\ConversationNote;
 use App\Domain\Messaging\Models\MemberNotification;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\BusinessHours;
+use App\Domain\Messaging\Services\InboxCounts;
 use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
@@ -269,7 +270,12 @@ final class InboxToolsController extends Controller
 
     // ── Dashboard numbers ──────────────────────────────────────────────────────────────────
 
-    public function dashboard(Request $request): JsonResponse
+    /**
+     * Dashboard › Today's work: the same counts as the Inbox tabs (InboxCounts), so "Needs reply"
+     * on the Dashboard is always the number on the Inbox tab. Message figures are kept apart:
+     * today's conversation traffic, and campaign messages this month.
+     */
+    public function dashboard(Request $request, InboxCounts $counts): JsonResponse
     {
         $membership = $this->context->membership()?->loadMissing('role') ?? abort(403);
         // The number chosen in the top bar (CN-02): every figure is for that number only.
@@ -278,22 +284,32 @@ final class InboxToolsController extends Controller
         $today = now()->setTimezone($tenant->timezone ?: 'UTC')->startOfDay()->utc();
         $month = now()->setTimezone($tenant->timezone ?: 'UTC')->startOfMonth()->utc();
 
-        // Counts follow chat visibility: agents count only the chats assigned to them.
-        $conversations = fn () => $this->access->scopeChats(Conversation::query()->whereNotNull('last_message_at'), $membership)
-            ->when($number, fn ($q, string $id) => $q->where('phone_number_id', $id));
+        $c = $counts->counts($membership, $number);
+        // Messages follow chat visibility: agents count only the chats assigned to them.
         $messages = fn () => ($this->access->seesAllChats($membership)
             ? $this->access->scope(Message::query(), $membership, 'phone_number_id')
             : Message::query()->whereIn('conversation_id', $this->access->scopeChats(Conversation::query(), $membership)->select('id')))
             ->when($number, fn ($q, string $id) => $q->where('phone_number_id', $id));
+        $conversations = fn () => $this->access->scopeChats(Conversation::query()->whereNotNull('last_message_at'), $membership)
+            ->when($number, fn ($q, string $id) => $q->where('phone_number_id', $id));
 
         return response()->json(['data' => [
-            'conversations_today' => $conversations()->where('last_inbound_at', '>=', $today)->count(),
+            // Today's work (the Inbox's own counts).
+            'needs_reply' => $c['needs_reply'],
+            'needs_reply_unassigned' => $c['needs_reply_unassigned'],
+            'needs_reply_mine' => $c['needs_reply_mine'],
+            'after_hours' => $c['after_hours'],
+            'older_no_reply' => $c['older_no_reply'],
+            // Earlier names, kept with the same meaning as above for older clients.
+            'waiting_for_reply' => $c['needs_reply'],
+            'unassigned' => $c['needs_reply_unassigned'],
+            'mine' => $c['needs_reply_mine'],
             'open' => $conversations()->where('status', ConversationStatus::Open->value)->count(),
-            'unassigned' => $conversations()->where('status', ConversationStatus::Open->value)->whereNull('assigned_membership_id')->count(),
-            'waiting_for_reply' => $conversations()->where('status', ConversationStatus::Open->value)->where('last_message_direction', Message::INBOUND)->count(),
-            'mine' => $conversations()->where('status', ConversationStatus::Open->value)->where('assigned_membership_id', $membership->id)->count(),
-            'messages_sent_today' => $messages()->where('direction', Message::OUTBOUND)->where('created_at', '>=', $today)->count(),
+            // Traffic today, and campaigns separately.
+            'conversations_today' => $conversations()->where('last_inbound_at', '>=', $today)->count(),
+            'messages_sent_today' => $messages()->where('direction', Message::OUTBOUND)->whereNull('campaign_id')->where('created_at', '>=', $today)->count(),
             'messages_received_today' => $messages()->where('direction', Message::INBOUND)->where('created_at', '>=', $today)->count(),
+            'campaign_messages_today' => $messages()->whereNotNull('campaign_id')->where('created_at', '>=', $today)->count(),
             'campaign_messages_this_month' => $messages()->whereNotNull('campaign_id')->where('created_at', '>=', $month)->count(),
         ]]);
     }

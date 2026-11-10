@@ -353,6 +353,7 @@ final class MetaAdLeadsTest extends TestCase
             ->assertJsonPath('data.acquisition.status', 'meta')
             ->assertJsonPath('data.acquisition.label', 'Meta ad')
             ->assertJsonPath('data.acquisition.returning', true)
+            ->assertJsonPath('data.acquisition.returning_label', 'Before tracking · Latest: Meta ad')
             ->assertJsonPath('data.acquisition.source.name', 'Meta ad')
             ->assertJsonPath('data.acquisition.original.label', 'Existing contact (from before tracking started)');
     }

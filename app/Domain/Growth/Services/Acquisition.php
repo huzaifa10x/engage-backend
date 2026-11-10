@@ -80,6 +80,11 @@ final class Acquisition
         };
 
         $out = ['status' => $status, 'label' => $chip, 'returning' => $returning];
+        // Inbox chip of a returning contact: what they were, then the paid touch that brought them back
+        // ("Before tracking · Latest: Google Ads"). Leads keep showing the ad itself (label).
+        if ($returning) {
+            $out['returning_label'] = ($before ? 'Before tracking' : 'Existing contact').' · Latest: '.$shown['label'];
+        }
         if ($summary || $details) {
             $out['source'] = self::summary($shown, $returning ? null : $latest);
         }

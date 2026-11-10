@@ -9,6 +9,7 @@ use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Enums\OnboardingType;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -67,6 +68,24 @@ class PhoneNumber extends Model
             'attention_since' => 'datetime',
             'attention_detail' => 'array',
         ];
+    }
+
+    /** Meta's display form, always with a leading "+" (some numbers come back as "-971 …" or "971 …"). */
+    public static function displayFormat(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $v = trim($value);
+        $v = (string) preg_replace('/^[\s\-–—+]+/u', '', $v);
+
+        return $v === '' ? null : (ctype_digit($v[0]) ? '+'.$v : $v);
+    }
+
+    /** @return Attribute<?string, ?string> */
+    protected function displayPhoneNumber(): Attribute
+    {
+        return Attribute::make(get: fn (?string $value) => self::displayFormat($value), set: fn (?string $value) => self::displayFormat($value));
     }
 
     /** @return BelongsTo<WabaAccount, $this> */

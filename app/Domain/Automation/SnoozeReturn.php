@@ -25,6 +25,8 @@ final class SnoozeReturn extends ActionHandler
             return 'cancelled:snooze_changed';
         }
         $conversation->forceFill(ReplyState::snoozeEnded($conversation))->save();
+        // A new wait: its follow-up alerts start now.
+        FollowUps::waitStarted($conversation, Carbon::parse($conversation->getAttribute('needs_reply_since')), $conversation->window_expires_at);
         $member = $conversation->assigned_membership_id !== null ? TenantMembership::query()->find($conversation->assigned_membership_id) : null;
         if ($member !== null) {
             $this->tools->notify($member, 'snooze_ended', 'A snoozed conversation is back in your inbox', $contact?->displayName(), "/inbox?c={$conversation->id}");

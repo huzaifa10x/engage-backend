@@ -221,4 +221,35 @@ final class FollowUpsTest extends TestCase
 
         $this->putJson('/api/v1/tenant/auto-reply', ['enabled' => true, 'reply_with' => 'chatbot', 'flows' => []])->assertStatus(422);
     }
+
+    public function test_chats_already_waiting_get_the_alerts_when_rules_change_or_a_snooze_ends(): void
+    {
+        $this->putJson('/api/v1/tenant/followups', ['reply_alert' => ['enabled' => false]])->assertOk();
+        $this->customer('Anyone there?');
+        $c = $this->conversation();
+        $this->tenantContext()->run($this->tenant, fn () => Conversation::query()->whereKey($c->id)->update(['assigned_membership_id' => $this->owner->id]));
+        $this->tick(15);
+        $this->assertNotContains('reply_overdue', $this->bell($this->owner), 'the rule was off when the wait started');
+
+        // Switched on while the chat is waiting: it applies to this chat too (it has waited longer than 10 min).
+        $this->putJson('/api/v1/tenant/followups', ['reply_alert' => ['enabled' => true, 'minutes' => 10]])->assertOk();
+        $this->tick(1);
+        $this->assertContains('reply_overdue', $this->bell($this->owner));
+        // The sweep never alerts twice for the same wait.
+        Artisan::call('engage:followups:sweep');
+        $this->tick(1);
+        $this->assertSame(1, count(array_filter($this->bell($this->owner), fn ($t) => $t === 'reply_overdue')));
+
+        // A snooze that ends starts a new wait, with its alerts.
+        $this->postJson("/api/v1/conversations/{$c->id}/snooze", ['until' => now()->addMinutes(30)->toIso8601String()])->assertSuccessful();
+        $this->tick(31);
+        $this->tick(11);
+        $this->assertSame(2, count(array_filter($this->bell($this->owner), fn ($t) => $t === 'reply_overdue')));
+
+        // The log shows what happened.
+        Artisan::call('engage:followups:log', ['search' => '971501234567']);
+        $out = Artisan::output();
+        $this->assertStringContainsString('reply_alert', $out);
+        $this->assertStringContainsString('reply_overdue', $out);
+    }
 }
