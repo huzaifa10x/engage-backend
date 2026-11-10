@@ -7,13 +7,16 @@ namespace App\Domain\Messaging\Models;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Tenancy\Concerns\BelongsToTenant;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Support\Database\PgTextArray;
+use App\Support\Phone\PhoneNumbers;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\ValidationException;
 
 /**
  * A WhatsApp user as seen by one workspace. Identified by phone (wa_id), BSUID, or both.
@@ -142,7 +145,29 @@ class Contact extends Model
         return $this->wa_id !== null ? ['to' => $this->wa_id] : ['recipient' => (string) $this->bsuid];
     }
 
-    /** Normalise a user-entered phone to Cloud API digits (no '+', no spaces). */
+    /**
+     * A number typed by a person, checked: the Cloud API digits, or a validation error on $field.
+     * Numbers without a country code are read in the workspace's country (Settings › Company).
+     */
+    public static function checkedPhone(string $phone, string $field = 'phone'): string
+    {
+        $result = PhoneNumbers::parse($phone, self::workspaceCountry());
+
+        return $result['digits'] ?? throw ValidationException::withMessages([$field => $result['error']]);
+    }
+
+    /** Like checkedPhone, without the error (null when the number is not valid). */
+    public static function validPhone(string $phone): ?string
+    {
+        return PhoneNumbers::normalize($phone, self::workspaceCountry());
+    }
+
+    private static function workspaceCountry(): ?string
+    {
+        return app(TenantContext::class)->tenantOrNull()?->country;
+    }
+
+    /** Normalise a phone to Cloud API digits (no '+', no spaces), without checking the country rules. */
     public static function normalizePhone(string $phone): ?string
     {
         $digits = preg_replace('/\D+/', '', $phone) ?? '';

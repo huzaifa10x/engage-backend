@@ -94,7 +94,7 @@ final class ContactImporter
         foreach (array_chunk($rows, 500, true) as $chunk) {
             $numbers = [];
             foreach ($chunk as $i => $line) {
-                $numbers[$i] = Contact::normalizePhone(trim((string) ($line[$columns['phone']] ?? '')));
+                $numbers[$i] = Contact::validPhone(trim((string) ($line[$columns['phone']] ?? '')));
             }
             $existing = Contact::query()->withTrashed()->whereIn('wa_id', array_values(array_filter($numbers)))->get()->keyBy('wa_id');
 
@@ -103,7 +103,7 @@ final class ContactImporter
                 if ($waId === null || isset($seen[$waId])) {
                     $result['skipped']++;
                     if (count($result['errors']) < 25) {
-                        $result['errors'][] = ['row' => $i + 2, 'message' => $waId === null ? 'Not a valid international phone number' : 'Duplicate number in this file'];
+                        $result['errors'][] = ['row' => $i + 2, 'message' => $waId === null ? 'Not a valid phone number (include the country code, e.g. +971501234567)' : 'Duplicate number in this file'];
                     }
 
                     continue;

@@ -31,6 +31,16 @@ final class AuthTest extends TestCase
         $this->withHeaders(self::SPA)->getJson('/api/v1/tenant')->assertStatus(403)->assertJsonPath('error.code', 'email_unverified');
     }
 
+    public function test_the_name_takes_letters_in_any_language_but_no_digits_or_symbols(): void
+    {
+        $base = ['email' => 'jane@example.com', 'password' => 'Secret123456', 'password_confirmation' => 'Secret123456', 'company_name' => 'Acme Trading 2'];
+        foreach (['John2', '<b>Jane</b>', '@@@', '   '] as $bad) {
+            $this->withHeaders(self::SPA)->postJson('/api/v1/auth/register', ['name' => $bad] + $base)->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['fields' => ['name']]]]);
+        }
+        $this->withHeaders(self::SPA)->postJson('/api/v1/auth/register', ['name' => "Sara Al-Mansoori O'Neil"] + $base)->assertCreated();
+        $this->withHeaders(self::SPA)->postJson('/api/v1/auth/register', ['name' => 'محمد علي'] + ['email' => 'm@example.com'] + $base)->assertCreated();
+    }
+
     public function test_login_rejects_bad_credentials_with_validation_envelope(): void
     {
         $this->withHeaders(self::SPA)->postJson('/api/v1/auth/login', ['email' => 'nobody@example.com', 'password' => 'wrong'])

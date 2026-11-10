@@ -8,6 +8,7 @@ use App\Application\Admin\ManagePlatformAdmins;
 use App\Domain\Identity\Enums\PlatformRole;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Http\Controllers\Controller;
+use App\Rules\PersonName;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -42,7 +43,7 @@ final class TeamController extends Controller
     public function store(Request $request, ManagePlatformAdmins $manage): RedirectResponse
     {
         $data = $request->validate([
-            'name' => ['required', 'string', 'max:120'],
+            'name' => ['required', 'string', 'max:120', new PersonName],
             'email' => ['required', 'email:rfc', 'max:190', Rule::unique('platform_admins', 'email')],
             'role' => ['required', Rule::enum(PlatformRole::class)],
             'password' => ['required', Password::min(12)->mixedCase()->numbers()],

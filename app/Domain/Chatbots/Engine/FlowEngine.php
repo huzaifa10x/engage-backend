@@ -679,7 +679,7 @@ final class FlowEngine
 
             return;
         }
-        $error = ($c['error_text'] ?? null) !== null ? $c['error_text'] : $run->settings['invalid_text'];
+        $error = ($c['error_text'] ?? null) !== null ? $c['error_text'] : self::retryText($node, $run->settings['invalid_text']);
         $this->sendText($rt, Placeholders::fill($error, $rt));
         $this->prompt($run, $node);
     }
@@ -1167,6 +1167,60 @@ final class FlowEngine
         return $run->defaultLang();
     }
 
+    /**
+     * The message after an answer that does not fit. A Question block that expects a kind of answer
+     * says which (unless the flow's own retry message was changed from the default).
+     *
+     * @param  array<string, mixed>  $node
+     */
+    public static function retryText(array $node, string $flowText): string
+    {
+        if ($node['type'] !== 'question' || $flowText !== FlowSettings::DEFAULTS['invalid_text']) {
+            return $flowText;
+        }
+        $c = $node['config'];
+        $range = match (true) {
+            ($c['min'] ?? null) !== null && ($c['max'] ?? null) !== null => ' between '.Placeholders::text($c['min']).' and '.Placeholders::text($c['max']),
+            ($c['min'] ?? null) !== null => ' of at least '.Placeholders::text($c['min']),
+            ($c['max'] ?? null) !== null => ' of at most '.Placeholders::text($c['max']),
+            default => '',
+        };
+
+        return match ($c['validate'] ?? 'any') {
+            'number' => "Sorry, please send a number{$range}.",
+            'email' => 'Sorry, that does not look like an email address. Please type it like name@example.com.',
+            'phone' => 'Sorry, please send a phone number with the country code, for example +971 50 123 4567.',
+            'date' => 'Sorry, please send a date, for example 25/12/2026.',
+            'future_date' => 'Sorry, please send a date after today, for example 25/12/2026.',
+            'workday' => 'Sorry, please send a date after today when we are open.',
+            'time' => 'Sorry, please send a time, for example 4:30 PM or 16:30.',
+            'text' => 'Sorry, please answer in words.',
+            default => $flowText,
+        };
+    }
+
+    /** "4:30 pm", "4pm", "16:30", "1630", "٤:٣٠ م" → "16:30"; null when it is not a time. */
+    public static function time(string $text): ?string
+    {
+        $t = mb_strtolower(trim(strtr($text, ['٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4', '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9', '٫' => ':', '.' => ':'])));
+        $t = (string) preg_replace(['/\s*(a\.?m\.?|ص|صباحا)$/u', '/\s*(p\.?m\.?|م|مساء)$/u'], [' am', ' pm'], $t);
+        if (preg_match('/^(\d{1,2})(?::?(\d{2}))?\s*(am|pm)?$/', $t, $m) !== 1) {
+            return null;
+        }
+        [$h, $min, $half] = [(int) $m[1], (int) ($m[2] ?? 0), $m[3] ?? ''];
+        if ($half === '' && ($m[2] ?? '') === '') {
+            return null; // a bare "5" is a number, not a time
+        }
+        if ($half !== '') {
+            if ($h < 1 || $h > 12) {
+                return null;
+            }
+            $h = $h % 12 + ($half === 'pm' ? 12 : 0);
+        }
+
+        return $h <= 23 && $min <= 59 ? sprintf('%02d:%02d', $h, $min) : null;
+    }
+
     /** @param array<string, mixed> $c */
     private function validate(array $c, string $text, BotRuntime $rt): ?string
     {
@@ -1187,7 +1241,9 @@ final class FlowEngine
         $today = now($rt->timezone())->startOfDay();
 
         return match ($c['validate']) {
-            'number' => is_numeric($n = str_replace([',', ' '], '', strtr($t, ['٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4', '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9']))) ? $n : null,
+            'number' => is_numeric($n = str_replace([',', ' '], '', strtr($t, ['٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4', '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9'])))
+                && (($c['min'] ?? null) === null || (float) $n >= (float) $c['min']) && (($c['max'] ?? null) === null || (float) $n <= (float) $c['max']) ? $n : null,
+            'time' => self::time($t),
             'email' => filter_var($t, FILTER_VALIDATE_EMAIL) !== false ? mb_strtolower($t) : null,
             'phone' => preg_match('/^\+?[\d\s().-]{6,20}$/', $t) === 1 ? $t : null,
             'date' => ($d = $date($t)) !== null ? $d->toDateString() : null,

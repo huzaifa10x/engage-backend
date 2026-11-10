@@ -26,7 +26,7 @@ final class ManageContacts
     /** @param array{phone: string, name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, tags?: ?array<int, string>, opted_in?: bool} $data */
     public function create(array $data): Contact
     {
-        $waId = Contact::normalizePhone($data['phone']) ?? throw ValidationException::withMessages(['phone' => 'Enter the number in international format, e.g. +971501234567.']);
+        $waId = Contact::checkedPhone($data['phone']);
 
         $existing = Contact::query()->withTrashed()->where('wa_id', $waId)->first();
         if ($existing !== null && ! $existing->trashed()) {

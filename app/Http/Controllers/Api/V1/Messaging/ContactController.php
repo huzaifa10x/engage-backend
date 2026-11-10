@@ -16,6 +16,7 @@ use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\ContactResource;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -26,13 +27,43 @@ final class ContactController extends Controller
 {
     public function index(Request $request, SegmentQuery $segments): AnonymousResourceCollection
     {
+        $contacts = $this->filtered($request, $segments)
+            ->with(['syncedFrom', 'stage'])
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->cursorPaginate((int) ($request->integer('per_page') ?: 50));
+
+        return ContactResource::collection($contacts);
+    }
+
+    /**
+     * Counts for the Contacts page: how many match the current filters, how many there are in all,
+     * and the sources contacts came from (for the Source filter).
+     */
+    public function count(Request $request, SegmentQuery $segments): JsonResponse
+    {
+        $sources = Contact::query()->selectRaw('source, count(*) as n')->groupBy('source')->orderByDesc('n')->get()
+            ->map(fn (Contact $c) => ['value' => (string) $c->getAttribute('source'), 'count' => (int) $c->getAttribute('n')])
+            ->filter(fn (array $s) => $s['value'] !== '')->values();
+
+        return response()->json(['data' => [
+            'matching' => $this->filtered($request, $segments)->count(),
+            'total' => Contact::query()->count(),
+            'sources' => $sources,
+        ]]);
+    }
+
+    /** @return Builder<Contact> */
+    private function filtered(Request $request, SegmentQuery $segments): Builder
+    {
         $data = $request->validate([
             'q' => ['nullable', 'string', 'max:100'],
             'consent' => ['nullable', Rule::enum(ConsentState::class)],
             'tag' => ['nullable', 'string', 'max:40'],
             'segment_id' => ['nullable', 'uuid'],
-            'synced_from' => ['nullable', 'uuid'],
-            'stage_id' => ['nullable', 'string', 'max:36'],  // a stage id, or "none" for contacts without a stage   // a phone number id: only contacts synced from that number
+            'synced_from' => ['nullable', 'uuid'],   // a phone number id: only contacts synced from that number
+            'source' => ['nullable', 'string', 'max:40'],  // how the contact was added: manual, import, inbound …
+            'stage_id' => ['nullable', 'string', 'max:36'],  // a stage id, or "none" for contacts without a stage
             'filter' => ['nullable'],                 // {match, rules} (JSON): conditions on any field, custom fields included
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
@@ -40,9 +71,10 @@ final class ContactController extends Controller
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
         $filter = $segments->filter($data['filter'] ?? null);
 
-        $contacts = Contact::query()->with(['syncedFrom', 'stage'])
+        return Contact::query()
             ->when($data['stage_id'] ?? null, fn ($q, string $id) => $id === 'none' ? $q->whereNull('stage_id') : $q->where('stage_id', $id))
             ->when($data['synced_from'] ?? null, fn ($q, string $id) => $q->where('synced_from_phone_number_id', $id))
+            ->when($data['source'] ?? null, fn ($q, string $source) => $q->where('source', $source))
             ->when($segment, fn ($q) => $segments->apply($q, $segment->match, $segment->rules))
             ->when($filter, fn ($q) => $segments->apply($q, $filter['match'], $filter['rules']))
             ->when($data['tag'] ?? null, fn ($q, string $tag) => $q->whereRaw('tags @> ARRAY[?]::text[]', [$tag]))
@@ -55,12 +87,7 @@ final class ContactController extends Controller
                     ->orWhere('email', 'ilike', "%{$term}%")
                     ->when($digits !== '', fn ($w) => $w->orWhere('wa_id', 'like', "%{$digits}%")));
             })
-            ->when($data['consent'] ?? null, fn ($q, string $c) => $q->where('consent_state', $c))
-            ->orderByDesc('created_at')
-            ->orderByDesc('id')
-            ->cursorPaginate((int) ($data['per_page'] ?? 50));
-
-        return ContactResource::collection($contacts);
+            ->when($data['consent'] ?? null, fn ($q, string $c) => $q->where('consent_state', $c));
     }
 
     public function store(Request $request, ManageContacts $contacts): JsonResponse

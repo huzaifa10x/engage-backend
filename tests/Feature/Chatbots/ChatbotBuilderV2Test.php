@@ -7,6 +7,7 @@ namespace Tests\Feature\Chatbots;
 use App\Application\Messaging\ManageContacts;
 use App\Domain\Access\SystemRole;
 use App\Domain\Chatbots\Engine\Expression;
+use App\Domain\Chatbots\Engine\FlowEngine;
 use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Chatbots\Services\ChatbotWorkspace;
@@ -547,5 +548,55 @@ final class ChatbotBuilderV2Test extends TestCase
         $attention = $this->getJson('/api/v1/chatbots')->assertOk()->json('data.0.attention');
         $this->assertCount(1, $attention);
         $this->assertStringContainsString('no longer exists', $attention[0]);
+    }
+
+    public function test_placeholders_nothing_fills_are_flagged_before_publishing(): void
+    {
+        $id = $this->flow('Typos', [
+            self::node('start', 'start', ['any_message' => true], ['next' => 'ask']),
+            self::node('ask', 'question', ['text' => 'Your name?', 'save_to' => 'var:name'], ['next' => 'person']),
+            self::node('person', 'handoff', ['text' => 'Thanks {{var.nmae}} ({{var.name}}), {{contact.first_name}} {{contact.vip_level}}']),
+        ], live: false);
+        $issues = collect($this->getJson("/api/v1/chatbots/{$id}")->assertOk()->json('data.issues'));
+        $vars = $issues->firstWhere('code', 'unknown_variable');
+        $this->assertSame('warning', $vars['level']);
+        $this->assertSame('person', $vars['node_id']);
+        $this->assertStringContainsString('{{var.nmae}}', $vars['message']);
+        $this->assertStringNotContainsString('{{var.name}}', $vars['message']);
+        $this->assertStringContainsString('{{contact.vip_level}}', $issues->firstWhere('code', 'unknown_field')['message']);
+
+        // The ready-made templates use only what they save.
+        foreach (FlowTemplates::KEYS as $key) {
+            $flow = $this->postJson('/api/v1/chatbots', ['name' => $key, 'template' => $key, 'config' => ['store_url' => 'https://sweetcrumbs.ae', 'booking_url' => 'https://rent.example.ae']])->assertCreated();
+            $this->assertSame([], array_values(array_filter($flow->json('data.issues'), fn ($i) => in_array($i['code'], ['unknown_variable', 'unknown_field'], true))), "template {$key}");
+        }
+    }
+
+    public function test_time_and_number_range_answers_with_a_typed_retry_message(): void
+    {
+        $this->flow('Booking', [
+            self::node('start', 'start', ['any_message' => true], ['next' => 'guests']),
+            self::node('guests', 'question', ['text' => 'How many guests?', 'save_to' => 'var:guests', 'validate' => 'number', 'min' => 1, 'max' => 12], ['next' => 'time']),
+            self::node('time', 'question', ['text' => 'What time?', 'save_to' => 'var:time', 'validate' => 'time'], ['next' => 'person']),
+            self::node('person', 'handoff', ['text' => '{{var.guests}} guests at {{var.time}}']),
+        ]);
+        $this->says('hi');
+        $this->says('40');
+        $this->assertSame('Sorry, please send a number between 1 and 12.', $this->received()[1]);
+        $this->says('4');
+        $this->says('soon');
+        $this->assertContains('Sorry, please send a time, for example 4:30 PM or 16:30.', $this->received());
+        $this->says('7:30 pm');
+        $this->assertSame('4 guests at 19:30', last($this->received()));
+    }
+
+    public function test_times_are_read_in_common_forms(): void
+    {
+        foreach (['4:30 pm' => '16:30', '4pm' => '16:00', '16:30' => '16:30', '1630' => '16:30', '12 am' => '00:00', '9.15 AM' => '09:15', '٤:٣٠ م' => '16:30'] as $in => $out) {
+            $this->assertSame($out, FlowEngine::time((string) $in), (string) $in);
+        }
+        foreach (['5', '25:00', '13 pm', 'soon', '4:75'] as $bad) {
+            $this->assertNull(FlowEngine::time($bad), $bad);
+        }
     }
 }

@@ -10,6 +10,7 @@ use App\Domain\Plans\Models\Plan;
 use App\Domain\Plans\Models\PlanVersionFeature;
 use App\Http\Controllers\Controller;
 use App\Notifications\SalesLeadNotification;
+use App\Rules\PersonName;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -84,7 +85,7 @@ final class PublicSiteController extends Controller
     {
         $data = $request->validate([
             // A trial sign-up starts with only an email address; every other form asks for a name.
-            'name' => ['required_unless:topic,trial', 'nullable', 'string', 'max:120'],
+            'name' => ['required_unless:topic,trial', 'nullable', 'string', 'max:120', new PersonName],
             'email' => ['required', 'email:rfc', 'max:190'],
             'company' => ['nullable', 'string', 'max:160'],
             'phone' => ['nullable', 'string', 'max:40'],

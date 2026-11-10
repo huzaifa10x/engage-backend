@@ -108,7 +108,7 @@ final class PublicApiController extends Controller
         if (! empty($data['contact_id'])) {
             $contact = Contact::query()->findOrFail($data['contact_id']);
         } else {
-            $waId = Contact::normalizePhone((string) $data['to']) ?? throw ValidationException::withMessages(['to' => 'Use the international format, for example +971501234567.']);
+            $waId = Contact::checkedPhone((string) $data['to'], 'to');
             $contact = Contact::query()->withTrashed()->where('wa_id', $waId)->first() ?? Contact::query()->create(['wa_id' => $waId, 'source' => 'api']);
             if ($contact->trashed()) {
                 $contact->restore();

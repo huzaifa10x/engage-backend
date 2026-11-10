@@ -13,7 +13,7 @@ final class NodeConfig
 {
     public const LIMITS = ['header' => 60, 'body' => 1024, 'text' => 4096, 'footer' => 60, 'button' => 20, 'row_title' => 24, 'row_description' => 72, 'buttons' => 3, 'rows' => 10];
 
-    public const VALIDATIONS = ['any', 'text', 'number', 'email', 'date', 'future_date', 'workday', 'phone', 'regex'];
+    public const VALIDATIONS = ['any', 'text', 'number', 'email', 'date', 'future_date', 'workday', 'time', 'phone', 'regex'];
 
     public const OPERATORS = ['equals', 'not_equals', 'contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'is_set', 'is_not_set', 'has_tag', 'not_has_tag', 'in_segment', 'not_in_segment'];
 
@@ -122,6 +122,9 @@ final class NodeConfig
                 'save_to' => self::saveTarget($c['save_to'] ?? null),
                 'validate' => in_array($c['validate'] ?? null, self::VALIDATIONS, true) ? $c['validate'] : 'any',
                 'pattern' => self::regex($c['pattern'] ?? null),
+                // Number answers: the allowed range (either end optional).
+                'min' => is_numeric($c['min'] ?? null) ? (float) $c['min'] : null,
+                'max' => is_numeric($c['max'] ?? null) ? (float) $c['max'] : null,
                 'error_text' => self::str($c['error_text'] ?? null, 300),
             ] + $input(),
             'ask_media' => [

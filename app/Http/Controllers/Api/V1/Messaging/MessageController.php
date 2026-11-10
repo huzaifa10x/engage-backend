@@ -21,7 +21,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 
 final class MessageController extends Controller
 {
@@ -70,8 +69,7 @@ final class MessageController extends Controller
         if (! empty($data['contact_id'])) {
             $contact = Contact::query()->findOrFail($data['contact_id']);
         } else {
-            $waId = Contact::normalizePhone((string) $data['to'])
-                ?? throw ValidationException::withMessages(['to' => 'Enter the number in international format, e.g. +971501234567.']);
+            $waId = Contact::checkedPhone((string) $data['to'], 'to');
             $contact = Contact::query()->withTrashed()->where('wa_id', $waId)->first() ?? Contact::query()->create(['wa_id' => $waId, 'source' => 'api']);
             if ($contact->trashed()) {
                 $contact->restore();

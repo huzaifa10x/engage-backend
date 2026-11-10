@@ -439,6 +439,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     */
     Route::middleware('can:'.Permission::ContactsView->value)->group(function () {
         Route::get('contacts', [ContactController::class, 'index'])->name('contacts.index');
+        Route::get('contacts/count', [ContactController::class, 'count'])->name('contacts.count');
         Route::get('contacts/{contact}', [ContactController::class, 'show'])->name('contacts.show');
     });
     Route::post('contacts', [ContactController::class, 'store'])->middleware('can:'.Permission::ContactsCreate->value)->name('contacts.store');

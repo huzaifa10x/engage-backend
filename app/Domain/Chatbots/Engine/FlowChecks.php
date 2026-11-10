@@ -60,6 +60,26 @@ final class FlowChecks
             }
         }
 
+        // Placeholders that nothing fills: they would be sent as empty text.
+        $saved = self::savedVariables($nodes);
+        foreach ($nodes as $id => $node) {
+            [$vars, $fields] = self::placeholders($node['config']);
+            // A sub-flow gets its variables from the flow that calls it.
+            $missing = $subflow ? [] : array_values(array_diff($vars, $saved));
+            if ($missing !== []) {
+                $list = implode(', ', array_map(fn (string $v) => '{{var.'.$v.'}}', $missing));
+                $add('warning', 'unknown_variable', $id, "{$title($id)} uses {$list}, which no block in this flow saves. It would be sent empty.",
+                    'Check the spelling against the “Save the answer as” names, or save it in an earlier block. Ignore this if the API or another flow sets it.');
+            }
+            $known = $deps['fields'] ?? null;
+            $badFields = is_array($known) ? array_values(array_filter($fields, fn (string $f) => ! isset($known[$f]))) : [];
+            if ($badFields !== []) {
+                $list = implode(', ', array_map(fn (string $f) => '{{contact.'.$f.'}}', $badFields));
+                $add('warning', 'unknown_field', $id, "{$title($id)} uses {$list}, but there is no such contact field. It would be sent empty.",
+                    'Use {{contact.name}}, {{contact.first_name}}, {{contact.phone}}, {{contact.email}}, or a custom field from Contacts → Segments, tags & fields.');
+            }
+        }
+
         // Reachability: no orphan blocks, and every block can still reach an exit.
         $edges = [];
         foreach ($nodes as $id => $node) {
@@ -180,6 +200,9 @@ final class FlowChecks
                 $target($c['save_to'], 'the answer');
                 if ($c['validate'] === 'regex' && $c['pattern'] === null) {
                     $err('missing_pattern', 'checks the answer with a pattern, but none is set.', 'Enter the pattern (regular expression), e.g. ^[A-Z]{2}\d{4}$');
+                }
+                if ($c['validate'] === 'number' && ($c['min'] ?? null) !== null && ($c['max'] ?? null) !== null && $c['min'] > $c['max']) {
+                    $err('bad_range', 'the smallest allowed number is bigger than the largest.', 'Swap the two numbers in the block settings.');
                 }
                 break;
             case 'ask_media':
@@ -329,6 +352,61 @@ final class FlowChecks
      * @param  array<string, list<string>>  $edges
      * @return array<string, true>
      */
+    /**
+     * Variable names any block saves: "var:<name>" targets, the names of the product, location and
+     * order blocks, and the ids of button, list and form blocks.
+     *
+     * @param  array<string, array<string, mixed>>  $nodes
+     * @return list<string>
+     */
+    private static function savedVariables(array $nodes): array
+    {
+        $names = ['last_input'];
+        foreach ($nodes as $node) {
+            array_walk_recursive($node['config'], function (mixed $v) use (&$names): void {
+                if (is_string($v) && preg_match('/^var:([A-Za-z0-9_]+)/', $v, $m) === 1) {
+                    $names[] = $m[1];
+                }
+            });
+            if (in_array($node['type'], ['product', 'location', 'order'], true) && is_string($node['config']['save_to'] ?? null)) {
+                $names[] = $node['config']['save_to'];
+            }
+            // The chosen button or row, and form answers, are kept under the block's id ({{var.service}}).
+            if (in_array($node['type'], ['buttons', 'list', 'form'], true)) {
+                $names[] = (string) $node['id'];
+            }
+        }
+
+        return array_values(array_unique($names));
+    }
+
+    /**
+     * The {{var.x}} names and custom {{contact.x}} fields a block's text uses.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array{0: list<string>, 1: list<string>}
+     */
+    private static function placeholders(array $config): array
+    {
+        $vars = [];
+        $fields = [];
+        array_walk_recursive($config, function (mixed $v) use (&$vars, &$fields): void {
+            if (! is_string($v) || ! str_contains($v, '{{')) {
+                return;
+            }
+            preg_match_all('/\{\{\s*(var|contact)\.([A-Za-z0-9_]+)/', $v, $m, PREG_SET_ORDER);
+            foreach ($m as [, $head, $name]) {
+                if ($head === 'var') {
+                    $vars[] = $name;
+                } elseif (! in_array($name, ['name', 'first_name', 'email', 'phone', 'language'], true)) {
+                    $fields[] = $name;
+                }
+            }
+        });
+
+        return [array_values(array_unique($vars)), array_values(array_unique($fields))];
+    }
+
     private static function walk(array $from, array $edges): array
     {
         $seen = array_fill_keys($from, true);

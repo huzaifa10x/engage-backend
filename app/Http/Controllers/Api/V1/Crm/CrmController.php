@@ -256,7 +256,7 @@ final class CrmController extends Controller
         $data = $request->validate([
             'segment_id' => ['nullable', 'uuid'], 'tag' => ['nullable', 'string', 'max:40'],
             'consent' => ['nullable', Rule::in(['unknown', 'opted_in', 'opted_out'])], 'filter' => ['nullable'],
-            'q' => ['nullable', 'string', 'max:100'], 'synced_from' => ['nullable', 'uuid'],
+            'q' => ['nullable', 'string', 'max:100'], 'synced_from' => ['nullable', 'uuid'], 'source' => ['nullable', 'string', 'max:40'],
             'added_from' => ['nullable', 'date'], 'added_to' => ['nullable', 'date', 'after_or_equal:added_from'],
         ]);
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
@@ -269,6 +269,7 @@ final class CrmController extends Controller
             ->when($data['consent'] ?? null, fn (Builder $q, string $c) => $q->where('consent_state', $c))
             ->when($data['tag'] ?? null, fn (Builder $q, string $tag) => $q->whereRaw('tags @> ARRAY[?]::text[]', [$tag]))
             ->when($data['synced_from'] ?? null, fn (Builder $q, string $id) => $q->where('synced_from_phone_number_id', $id))
+            ->when($data['source'] ?? null, fn (Builder $q, string $source) => $q->where('source', $source))
             // Whole days in the workspace's time zone.
             ->when($data['added_from'] ?? null, fn (Builder $q, string $d) => $q->where('created_at', '>=', Carbon::parse($d, $zone)->startOfDay()->utc()))
             ->when($data['added_to'] ?? null, fn (Builder $q, string $d) => $q->where('created_at', '<=', Carbon::parse($d, $zone)->endOfDay()->utc()))

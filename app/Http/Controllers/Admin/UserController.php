@@ -11,6 +11,7 @@ use App\Domain\Audit\Models\AuditLog;
 use App\Domain\Identity\Models\User;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Http\Controllers\Controller;
+use App\Rules\PersonName;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -130,7 +131,7 @@ final class UserController extends Controller
     public function update(Request $request, User $user, ManageUserAccounts $accounts): RedirectResponse
     {
         $data = $request->validate([
-            'name' => ['required', 'string', 'max:120'],
+            'name' => ['required', 'string', 'max:120', new PersonName],
             'email' => ['required', 'string', 'email', 'max:190'],
             'timezone' => ['nullable', 'string', 'timezone:all'],
             'email_verified' => ['required', 'boolean'],
