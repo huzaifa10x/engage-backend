@@ -104,4 +104,53 @@ final class InvitationAcceptTest extends TestCase
 
         $this->tenantContext()->bypass(fn () => $this->assertNull(Invitation::query()->sole()->accepted_at));
     }
+
+    public function test_an_invited_person_without_an_account_signs_up_with_name_password_and_terms_only(): void
+    {
+        $token = $this->invite('New.Agent@example.com');
+        $this->withHeaders(self::SPA)->getJson("/api/v1/invitations/{$token}")->assertOk()->assertJsonPath('data.has_account', false);
+
+        $form = ['name' => 'Sara Al-Mansoori', 'password' => 'Secret123456', 'accept_terms' => true];
+        $this->withHeaders(self::SPA)->postJson("/api/v1/invitations/{$token}/register", ['accept_terms' => false] + $form)->assertStatus(422)
+            ->assertJsonPath('error.details.fields.accept_terms.0', 'Accept the Terms of Service and Privacy Policy to continue.');
+        $this->withHeaders(self::SPA)->postJson("/api/v1/invitations/{$token}/register", ['name' => 'Sara2'] + $form)->assertStatus(422);
+        $this->withHeaders(self::SPA)->postJson("/api/v1/invitations/{$token}/register", ['password' => 'short'] + $form)->assertStatus(422);
+
+        $this->withHeaders(self::SPA)->postJson("/api/v1/invitations/{$token}/register", $form)->assertCreated()
+            ->assertJsonPath('data.user.email', 'new.agent@example.com')
+            ->assertJsonPath('data.user.email_verified', true)
+            ->assertJsonCount(1, 'data.memberships')
+            ->assertJsonPath('data.memberships.0.tenant.name', 'Glow Clinic')
+            ->assertJsonPath('data.memberships.0.role.name', 'Agent');
+
+        // Signed in and inside the workspace straight away: no workspace of their own, no emailed code.
+        $this->withHeaders(self::SPA)->getJson('/api/v1/tenant')->assertOk()->assertJsonPath('data.name', 'Glow Clinic');
+        $user = User::query()->where('email', 'new.agent@example.com')->sole();
+        $this->assertNotNull($user->terms_accepted_at);
+        $this->assertSame(1, $this->tenantContext()->bypass(fn () => DB::table('tenants')->count()));
+        $this->tenantContext()->bypass(fn () => $this->assertNotNull(Invitation::query()->sole()->accepted_at));
+
+        // The link is used up.
+        $this->app['auth']->forgetGuards();
+        $this->postJson("/api/v1/invitations/{$token}/register", $form)->assertStatus(410)->assertJsonPath('error.details.reason', 'accepted');
+    }
+
+    public function test_someone_who_already_has_an_account_is_sent_to_sign_in(): void
+    {
+        $token = $this->invite('existing@example.com');
+        User::factory()->create(['email' => 'existing@example.com']);
+
+        $this->getJson("/api/v1/invitations/{$token}")->assertOk()->assertJsonPath('data.has_account', true);
+        $this->withHeaders(self::SPA)->postJson("/api/v1/invitations/{$token}/register", ['name' => 'Someone Else', 'password' => 'Secret123456', 'accept_terms' => true])
+            ->assertStatus(410)->assertJsonPath('error.details.reason', 'account_exists');
+    }
+
+    public function test_expired_or_revoked_links_cannot_sign_up(): void
+    {
+        $token = $this->invite('late@example.com');
+        $this->setInvitation(['expires_at' => now()->subMinute()]);
+        $this->withHeaders(self::SPA)->postJson("/api/v1/invitations/{$token}/register", ['name' => 'Late Person', 'password' => 'Secret123456', 'accept_terms' => true])
+            ->assertStatus(410)->assertJsonPath('error.details.reason', 'expired');
+        $this->assertFalse(User::query()->where('email', 'late@example.com')->exists());
+    }
 }

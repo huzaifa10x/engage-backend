@@ -41,6 +41,8 @@ final class RegisterWorkspace
                     'email' => $input['email'],
                     'password' => $input['password'],
                 ]);
+                // The sign-up page says "By continuing you agree to the Terms of Service and Privacy Policy".
+                $user->forceFill(['terms_accepted_at' => now()])->save();
 
                 $tenant = Tenant::query()->create([
                     'name' => $input['company_name'],

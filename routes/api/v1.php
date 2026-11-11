@@ -58,6 +58,9 @@ use Illuminate\Support\Facades\Route;
 // The invitation page, before signing in: workspace, role, masked invited email, whether it is still valid.
 Route::get('invitations/{token}', [InvitationController::class, 'show'])
     ->where('token', '[A-Za-z0-9]{64}')->middleware('throttle:30,1')->name('invitations.show');
+// Invited, no account yet: the short sign-up (name, password, terms) that joins that workspace.
+Route::post('invitations/{token}/register', [InvitationController::class, 'register'])
+    ->where('token', '[A-Za-z0-9]{64}')->middleware('throttle:auth')->name('invitations.register');
 
 Route::prefix('public')->name('public.')->group(function () {
     Route::get('plans', [PublicSiteController::class, 'plans'])->middleware('throttle:120,1')->name('plans');

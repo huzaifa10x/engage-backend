@@ -7,7 +7,7 @@ namespace App\Domain\Tenancy\Exceptions;
 use App\Support\Api\ErrorCode;
 use App\Support\Exceptions\DomainException;
 
-/** details.reason: not_found | accepted | revoked | expired | email_mismatch */
+/** details.reason: not_found | accepted | revoked | expired | email_mismatch | account_exists */
 final class InvitationInvalid extends DomainException
 {
     private const MESSAGES = [
@@ -16,6 +16,7 @@ final class InvitationInvalid extends DomainException
         'revoked' => 'This invitation was cancelled by the workspace. Ask them to send a new one.',
         'expired' => 'This invitation has expired. Ask the workspace to send a new one.',
         'email_mismatch' => 'This invitation was sent to a different email address. Sign in with the invited email to accept it.',
+        'account_exists' => 'You already have an account with this email address. Sign in to accept the invitation.',
     ];
 
     /** @param array<string, mixed> $details */

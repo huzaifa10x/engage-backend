@@ -44,6 +44,11 @@ final class InvitationStatus
                 'expires_at' => $invitation->expires_at->toIso8601String(),
                 // Only for a signed-in viewer: whether this account is the invited one.
                 'for_you' => $viewer !== null ? self::sameEmail($invitation->email, (string) $viewer->email) : null,
+                // Signed out: whether the invited address already has an account (sign in) or not (the
+                // short invitation sign-up). Only the holder of the emailed link can ask.
+                'has_account' => $viewer === null && $status === 'pending'
+                    ? User::query()->whereRaw('lower(email) = ?', [mb_strtolower(trim($invitation->email))])->exists()
+                    : null,
             ];
         });
     }

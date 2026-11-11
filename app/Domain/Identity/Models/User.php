@@ -49,6 +49,7 @@ class User extends Authenticatable
             'disabled_at' => 'datetime',
             'review_account_at' => 'datetime',
             'sessions_revoked_at' => 'datetime',
+            'terms_accepted_at' => 'datetime',
             'password' => 'hashed',
         ];
     }
