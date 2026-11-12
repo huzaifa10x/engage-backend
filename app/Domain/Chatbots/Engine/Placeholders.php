@@ -14,17 +14,23 @@ namespace App\Domain\Chatbots\Engine;
  */
 final class Placeholders
 {
-    /** @param (callable(string): string)|null $escape applied to every inserted value (JSON bodies, URLs) */
-    public static function fill(?string $text, BotRuntime $rt, bool $secrets = false, ?callable $escape = null): string
+    /**
+     * @param  (callable(string): string)|null  $escape  applied to every inserted value (JSON bodies, URLs)
+     * @param  bool  $human  customer-facing text: a saved date (2026-11-18) is shown as “Wed 18 Nov 2026”
+     */
+    public static function fill(?string $text, BotRuntime $rt, bool $secrets = false, ?callable $escape = null, bool $human = false): string
     {
         if ($text === null || $text === '') {
             return '';
         }
 
         $pattern = '/\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/';
-        $replace = function (string $line) use ($rt, $secrets, $escape, $pattern): string {
-            return (string) preg_replace_callback($pattern, function (array $m) use ($rt, $secrets, $escape): string {
+        $replace = function (string $line) use ($rt, $secrets, $escape, $pattern, $human): string {
+            return (string) preg_replace_callback($pattern, function (array $m) use ($rt, $secrets, $escape, $human): string {
                 $value = self::resolve($m[1], $rt, $secrets);
+                if ($human) {
+                    $value = self::humanDate($value);
+                }
 
                 return $escape !== null ? $escape($value) : $value;
             }, $line);
@@ -46,6 +52,32 @@ final class Placeholders
         return implode("\n", $out);
     }
 
+    /** “2026-11-18” → “Wed 18 Nov 2026”; anything else unchanged. */
+    public static function humanDate(string $value): string
+    {
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value, $m) !== 1 || ! checkdate((int) $m[2], (int) $m[3], (int) $m[1])) {
+            return $value;
+        }
+
+        return date('D j M Y', (int) gmmktime(12, 0, 0, (int) $m[2], (int) $m[3], (int) $m[1]));
+    }
+
+    /**
+     * Where the customer came from, from verified attribution only: the Meta ad referral on a
+     * message in this session, else the contact's paid touch recorded by the Growth Hub.
+     *
+     * @return array{source: ?string, campaign: ?string}
+     */
+    public static function attribution(BotRuntime $rt): array
+    {
+        $s = $rt->state['vars']['_source'] ?? null;
+        if (is_array($s) && isset($s['source'])) {
+            return ['source' => (string) $s['source'], 'campaign' => isset($s['campaign']) ? (string) $s['campaign'] : null];
+        }
+
+        return ['source' => $rt->contact['lead_source'] ?? null, 'campaign' => $rt->contact['campaign'] ?? null];
+    }
+
     public static function resolve(string $path, BotRuntime $rt, bool $secrets = false): string
     {
         return self::text(self::raw($path, $rt, $secrets));
@@ -62,6 +94,8 @@ final class Placeholders
             'contact' => match ($rest) {
                 'name', 'first_name', 'email', 'phone' => $rt->contact[$rest] ?? null,
                 'language' => $rt->state['vars']['_lang'] ?? null,
+                'lead_source' => self::attribution($rt)['source'],
+                'campaign' => self::attribution($rt)['campaign'],
                 default => $rt->contact['fields'][$rest] ?? null,
             },
             'var' => data_get($rt->state['vars'], $rest),

@@ -15,7 +15,7 @@ final class NodeConfig
 
     public const VALIDATIONS = ['any', 'text', 'number', 'email', 'date', 'future_date', 'workday', 'time', 'phone', 'regex'];
 
-    public const OPERATORS = ['equals', 'not_equals', 'contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'is_set', 'is_not_set', 'has_tag', 'not_has_tag', 'in_segment', 'not_in_segment'];
+    public const OPERATORS = ['equals', 'not_equals', 'in', 'contains', 'not_contains', 'gt', 'gte', 'lt', 'lte', 'is_set', 'is_not_set', 'has_tag', 'not_has_tag', 'in_segment', 'not_in_segment'];
 
     /** What happens to an answer that matches no option: ask again then hand to a person (default), ask again then follow the "No match" branch, or stay silent. */
     public const NO_MATCH = ['handoff', 'branch', 'off'];
@@ -40,6 +40,8 @@ final class NodeConfig
             'retries' => isset($c['retries']) && $c['retries'] !== '' ? max(0, min(5, (int) $c['retries'])) : null,
             'timeout_minutes' => isset($c['timeout_minutes']) && (int) $c['timeout_minutes'] > 0 ? max(1, min(10080, (int) $c['timeout_minutes'])) : null,
         ];
+        // Blocks that send free text: the approved template sent instead when the 24-hour window has closed.
+        $fallback = fn () => ['fallback_template' => FlowSettings::template($c['fallback_template'] ?? null)];
 
         $config = match ($type) {
             'start' => [
@@ -60,7 +62,7 @@ final class NodeConfig
                 'reentry' => in_array($c['reentry'] ?? null, ['always', 'once', 'cooldown'], true) ? $c['reentry'] : 'always',
                 'cooldown_hours' => max(1, min(720, (int) ($c['cooldown_hours'] ?? 24))),
             ],
-            'message' => ['text' => $text(NodeConfig::LIMITS['text'])],
+            'message' => ['text' => $text(NodeConfig::LIMITS['text'])] + $fallback(),
             'media' => [
                 'kind' => in_array($c['kind'] ?? null, ['image', 'video', 'document', 'audio'], true) ? $c['kind'] : 'image',
                 'media_id' => self::uuid($c['media_id'] ?? null),
@@ -68,20 +70,25 @@ final class NodeConfig
                 'link' => self::https($c['link'] ?? null),
                 'caption' => self::str($c['caption'] ?? null, 1024),
                 'filename' => self::str($c['filename'] ?? null, 120),
-            ],
+            ] + $fallback(),
             'buttons' => [
                 'header' => self::str($c['header'] ?? null, 60),
                 'text' => $text(1024),
                 'footer' => self::str($c['footer'] ?? null, 60),
                 'buttons' => self::choices($c['buttons'] ?? [], 3, 20, false),
-            ] + $input(),
+                // The tapped option's title is also written here (a contact field, name/email or a variable).
+                'save_to' => self::saveTarget($c['save_to'] ?? null),
+                'error_text' => self::str($c['error_text'] ?? null, 300),
+            ] + $input() + $fallback(),
             'list' => [
                 'header' => self::str($c['header'] ?? null, 60),
                 'text' => $text(1024),
                 'footer' => self::str($c['footer'] ?? null, 60),
                 'button_label' => self::str($c['button_label'] ?? null, 20) ?: 'Choose',
                 'sections' => self::sections($c),
-            ] + $input(),
+                'save_to' => self::saveTarget($c['save_to'] ?? null),
+                'error_text' => self::str($c['error_text'] ?? null, 300),
+            ] + $input() + $fallback(),
             'product' => [
                 'source' => 'manual',
                 'text' => $text(1024),
@@ -92,7 +99,7 @@ final class NodeConfig
                 'all_label' => self::str($c['all_label'] ?? null, 20),
                 'all_url' => self::link($c['all_url'] ?? null),
                 'save_to' => self::varName($c['save_to'] ?? 'product') ?? 'product',
-            ] + $input(),
+            ] + $input() + $fallback(),
             'template' => [
                 'name' => self::str($c['name'] ?? null, 512),
                 'language' => self::str($c['language'] ?? null, 15),
@@ -106,7 +113,7 @@ final class NodeConfig
                 'footer' => self::str($c['footer'] ?? null, 60),
                 'cta' => self::str($c['cta'] ?? null, 20) ?: 'Open',
                 'url' => self::str($c['url'] ?? null, 1000),
-            ],
+            ] + $fallback(),
             'form' => [
                 'header' => self::str($c['header'] ?? null, 60),
                 'text' => $text(1024),
@@ -116,7 +123,7 @@ final class NodeConfig
                 'screen' => self::str($c['screen'] ?? null, 60),
                 'draft' => (bool) ($c['draft'] ?? false),
                 'fields' => array_values(array_filter(self::pairs($c['fields'] ?? [], 'key', 'to', 20, 80, 80), fn (array $p) => self::saveTarget($p['to']) !== null)),
-            ] + $input(),
+            ] + $input() + $fallback(),
             'question' => [
                 'text' => $text(1024),
                 'save_to' => self::saveTarget($c['save_to'] ?? null),
@@ -125,8 +132,10 @@ final class NodeConfig
                 // Number answers: the allowed range (either end optional).
                 'min' => is_numeric($c['min'] ?? null) ? (float) $c['min'] : null,
                 'max' => is_numeric($c['max'] ?? null) ? (float) $c['max'] : null,
+                // Date answers: how many days ahead are allowed (a booking window); null = no limit.
+                'window_days' => isset($c['window_days']) && (int) $c['window_days'] > 0 ? min(3650, (int) $c['window_days']) : null,
                 'error_text' => self::str($c['error_text'] ?? null, 300),
-            ] + $input(),
+            ] + $input() + $fallback(),
             'ask_media' => [
                 'text' => $text(1024),
                 'accept' => in_array($c['accept'] ?? null, ['image', 'document', 'any'], true) ? $c['accept'] : 'image',
@@ -134,17 +143,17 @@ final class NodeConfig
                 'skip_label' => self::str($c['skip_label'] ?? null, 20) ?: 'Skip',
                 'save_to' => self::saveTarget($c['save_to'] ?? 'var:photo') ?? 'var:photo',
                 'error_text' => self::str($c['error_text'] ?? null, 300),
-            ] + $input(),
+            ] + $input() + $fallback(),
             'location' => [
                 'text' => $text(1024),
                 'save_to' => self::varName($c['save_to'] ?? 'location') ?? 'location',
                 'error_text' => self::str($c['error_text'] ?? null, 300),
-            ] + $input(),
+            ] + $input() + $fallback(),
             'rating' => [
                 'text' => $text(1024),
                 'button_label' => self::str($c['button_label'] ?? null, 20) ?: 'Rate us',
                 'save_to' => self::saveTarget($c['save_to'] ?? 'var:rating') ?? 'var:rating',
-            ] + $input(),
+            ] + $input() + $fallback(),
             'condition' => [
                 'match' => ($c['match'] ?? 'all') === 'any' ? 'any' : 'all',
                 'rules' => self::rules($c['rules'] ?? []),
@@ -195,6 +204,9 @@ final class NodeConfig
                 'timeout' => max(1, min(10, (int) ($c['timeout'] ?? 5))),
                 'retries' => max(0, min(2, (int) ($c['retries'] ?? 1))),
                 'save' => array_values(array_filter(self::pairs($c['save'] ?? [], 'path', 'to', 10, 200, 80), fn (array $p) => self::saveTarget($p['to']) !== null)),
+                // The answer the Test chat uses instead of calling (nothing is sent from a test).
+                'sample_status' => isset($c['sample_status']) && is_numeric($c['sample_status']) ? max(100, min(599, (int) $c['sample_status'])) : null,
+                'sample_body' => self::str($c['sample_body'] ?? null, 5000),
             ],
             'order' => [
                 'order_number' => self::str($c['order_number'] ?? null, 200) ?? '{{last_input}}',
@@ -212,10 +224,13 @@ final class NodeConfig
                 'text' => $text(1024),
                 'offline_text' => self::str($c['offline_text'] ?? null, 1024),
                 'note' => (bool) ($c['note'] ?? true),
+                // A label for reporting (“Qualified lead”), recorded with the handoff event.
+                'outcome' => self::str($c['outcome'] ?? null, 60),
             ] + $assign(),
             'end' => [
                 'text' => $text(1024),
                 'action' => in_array($c['action'] ?? null, ['none', 'close', 'assign'], true) ? $c['action'] : 'none',
+                'outcome' => self::str($c['outcome'] ?? null, 60),
             ] + $assign(),
             default => [],
         };
@@ -423,7 +438,7 @@ final class NodeConfig
             }
             $field = (string) ($r['field'] ?? '');
             $op = (string) ($r['op'] ?? '');
-            $validField = in_array($field, ['name', 'email', 'phone', 'tag', 'consent', 'segment', 'last_input', 'language'], true)
+            $validField = in_array($field, ['name', 'email', 'phone', 'tag', 'consent', 'segment', 'last_input', 'language', 'lead_source', 'campaign'], true)
                 || preg_match('/^(field|var|business):[A-Za-z0-9_.]{1,64}$/', $field) === 1;
             if ($validField && in_array($op, self::OPERATORS, true)) {
                 $out[] = ['field' => $field, 'op' => $op, 'value' => self::str($r['value'] ?? null, 200)];

@@ -12,18 +12,29 @@ use App\Domain\Chatbots\Services\OrderLookup;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Crm\Services\SegmentQuery;
+use App\Domain\Messaging\Exceptions\MessagingException;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Messaging\Services\InboxTools;
+use App\Domain\Templates\Services\TemplateMessage;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Infrastructure\Secrets\SecretStore;
 use Throwable;
 
 /**
  * The builder's Test chat: runs the real engine on the draft, against a real contact's data
  * when one is chosen ("preview as contact"). Nothing is sent on WhatsApp and nothing is written:
- * field and tag changes stay in this test session. API-call blocks do call their URL.
+ * field and tag changes stay in this test session.
+ *
+ * Integrations are dry runs by default: API and Google Sheets blocks are not sent; the transcript
+ * shows what would have been sent and the step's sample answer (or the chosen failure) is used.
+ * Real calls happen only with integrations = "live", which the controller allows for people who
+ * may publish, and records in the audit log.
+ *
+ * Options: number_id (whose business hours and templates apply), integrations (mock | live),
+ * api_mode (success | error | timeout, for mocked calls), window (open | closed).
  */
 final class TestRuntime extends BotRuntime
 {
@@ -34,7 +45,7 @@ final class TestRuntime extends BotRuntime
      * @param  array<string, mixed>  $state
      * @param  array<string, mixed>  $contact
      */
-    public function __construct(array $state, array $contact, private readonly string $botName = 'Chatbot')
+    public function __construct(array $state, array $contact, private readonly string $botName = 'Chatbot', private readonly array $options = [])
     {
         $this->state = $state + [
             'current_node' => null, 'awaiting_input' => false, 'retry_count' => 0, 'vars' => [], 'status' => 'active',
@@ -48,7 +59,7 @@ final class TestRuntime extends BotRuntime
     {
         return $contact !== null ? LiveRuntime::snapshot($contact) : [
             'id' => null, 'name' => 'Test Customer', 'first_name' => 'Test', 'email' => null, 'phone' => '+971500000000',
-            'fields' => [], 'tags' => [], 'consent' => 'unknown',
+            'fields' => [], 'tags' => [], 'consent' => 'unknown', 'lead_source' => null, 'campaign' => null,
         ];
     }
 
@@ -57,12 +68,63 @@ final class TestRuntime extends BotRuntime
         return true;
     }
 
+    public function windowClosed(): bool
+    {
+        return ($this->state['vars']['_test_window'] ?? ($this->options['window'] ?? 'open')) === 'closed';
+    }
+
+    /** A customer message opens the window; a wait of 24 hours or more closes it. */
+    public function setWindow(bool $open): void
+    {
+        $this->state['vars']['_test_window'] = $open ? 'open' : 'closed';
+    }
+
+    public function liveCalls(): bool
+    {
+        return ($this->options['integrations'] ?? 'mock') === 'live';
+    }
+
+    public function apiMode(): string
+    {
+        return in_array($this->options['api_mode'] ?? null, ['error', 'timeout'], true) ? $this->options['api_mode'] : 'success';
+    }
+
     public function send(array $data): ?string
     {
+        $template = ($data['type'] ?? null) === 'template';
+        // The 24-hour window of this test conversation (set in the test settings, opened again by every
+        // customer message, closed by a wait of a day or more): free text fails like it would live.
+        if (! $template && $this->windowClosed()) {
+            throw new BotSendFailed('WhatsApp only delivers approved templates outside the 24-hour window.', 'window_closed');
+        }
+        if ($template) {
+            $this->checkTemplate($data['template'] ?? []);
+        }
         $this->state['steps']++;
         $this->transcript[] = ['kind' => 'bot', 'message' => $data];
 
         return null;
+    }
+
+    /**
+     * The same check a live send makes (TemplateMessage::prepare): the template exists on the number's
+     * WhatsApp account, is approved and its variables fit. Nothing is sent.
+     *
+     * @param  array<string, mixed>  $template
+     */
+    private function checkTemplate(array $template): void
+    {
+        $number = isset($this->options['number_id']) ? PhoneNumber::query()->find($this->options['number_id']) : null;
+        if ($number === null) {
+            $this->note('(Test) No WhatsApp number chosen, so the template “'.($template['name'] ?? '').'” was not checked.');
+
+            return;
+        }
+        try {
+            app(TemplateMessage::class)->prepare($number, $template, null);
+        } catch (MessagingException $e) {
+            throw new BotSendFailed($e->getMessage(), 'template_unavailable');
+        }
     }
 
     public function updateContact(array $changes): void
@@ -75,6 +137,10 @@ final class TestRuntime extends BotRuntime
             if (array_key_exists($key, $changes)) {
                 $this->contact[$key] = $changes[$key];
             }
+        }
+        // As LiveRuntime::snapshot() does after a save, so “Thanks {{contact.first_name}}” matches live.
+        if (array_key_exists('name', $changes) && is_string($changes['name']) && trim($changes['name']) !== '') {
+            $this->contact['first_name'] = explode(' ', trim($changes['name']))[0];
         }
         if (isset($changes['tags'])) {
             $this->contact['tags'] = $changes['tags'];
@@ -104,7 +170,8 @@ final class TestRuntime extends BotRuntime
 
     public function businessOpen(): bool
     {
-        return InboxTools::isOpen(app(TenantContext::class)->tenantOrNull());
+        // The number's own hours, as LiveRuntime does for the conversation's number.
+        return InboxTools::isOpen(app(TenantContext::class)->tenantOrNull(), null, $this->options['number_id'] ?? null);
     }
 
     public function openDays(): array

@@ -1,0 +1,1426 @@
+{
+ "_comment": "Property enquiries (buy or rent): the Flow Builder template with its default answers, converted by EX.toEngine (the format NodeConfig::clean keeps). API and Sheets URLs point at test hosts.",
+ "settings": {
+  "gave_up_hours": 72
+ },
+ "graph": {
+  "nodes": [
+   {
+    "id": "start",
+    "type": "start",
+    "title": "Start",
+    "x": 40,
+    "y": 40,
+    "config": {},
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_hours"
+     }
+    ],
+    "section": "re_s_welcome"
+   },
+   {
+    "id": "re_hours",
+    "type": "hours",
+    "title": "Are we open?",
+    "x": 340,
+    "y": 40,
+    "config": {
+     "mode": "business",
+     "days": [
+      "mon",
+      "tue",
+      "wed",
+      "thu",
+      "fri"
+     ],
+     "from": "09:00",
+     "to": "18:00",
+     "closed_dates": []
+    },
+    "outputs": [
+     {
+      "id": "open",
+      "to": "re_welcome"
+     },
+     {
+      "id": "closed",
+      "to": "re_ah_msg"
+     }
+    ],
+    "section": "re_s_welcome"
+   },
+   {
+    "id": "re_ah_msg",
+    "type": "message",
+    "title": "After-hours note",
+    "x": 640,
+    "y": 230,
+    "config": {
+     "text": "We’re closed right now, but I can take your details and an agent will reply when we open.",
+     "fallback_template": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_welcome"
+     }
+    ],
+    "section": "re_s_welcome"
+   },
+   {
+    "id": "re_welcome",
+    "type": "buttons",
+    "title": "Buy or rent",
+    "x": 640,
+    "y": 40,
+    "config": {
+     "header": null,
+     "text": "Hi {{contact.first_name}} 👋 Are you looking to buy or rent?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "w_buy",
+       "title": "Buy"
+      },
+      {
+       "id": "w_rent",
+       "title": "Rent"
+      },
+      {
+       "id": "w_agent",
+       "title": "Talk to an agent"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "var:intent",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "w_buy",
+      "to": "re_tag_buy"
+     },
+     {
+      "id": "w_rent",
+      "to": "re_tag_rent"
+     },
+     {
+      "id": "w_agent",
+      "to": "re_h_sales"
+     }
+    ],
+    "section": "re_s_welcome"
+   },
+   {
+    "id": "re_tag_buy",
+    "type": "tag",
+    "title": "Tag buyer",
+    "x": 940,
+    "y": 40,
+    "config": {
+     "add": [
+      "buyer"
+     ],
+     "remove": [],
+     "assign": "none",
+     "member_id": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_known"
+     }
+    ],
+    "section": "re_s_welcome"
+   },
+   {
+    "id": "re_tag_rent",
+    "type": "tag",
+    "title": "Tag renter",
+    "x": 940,
+    "y": 230,
+    "config": {
+     "add": [
+      "renter"
+     ],
+     "remove": [],
+     "assign": "none",
+     "member_id": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_known"
+     }
+    ],
+    "section": "re_s_welcome"
+   },
+   {
+    "id": "re_known",
+    "type": "condition",
+    "title": "Known contact?",
+    "x": 1240,
+    "y": 40,
+    "config": {
+     "match": "all",
+     "rules": [
+      {
+       "field": "name",
+       "op": "is_set",
+       "value": ""
+      }
+     ]
+    },
+    "outputs": [
+     {
+      "id": "yes",
+      "to": "re_area"
+     },
+     {
+      "id": "no",
+      "to": "re_name"
+     }
+    ],
+    "section": "re_s_qualify"
+   },
+   {
+    "id": "re_name",
+    "type": "question",
+    "title": "Name",
+    "x": 1540,
+    "y": 230,
+    "config": {
+     "text": "Who should our agent ask for?",
+     "save_to": "name",
+     "validate": "text",
+     "pattern": null,
+     "min": null,
+     "max": null,
+     "window_days": null,
+     "error_text": null,
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_area"
+     }
+    ],
+    "section": "re_s_qualify"
+   },
+   {
+    "id": "re_area",
+    "type": "list",
+    "title": "Area",
+    "x": 1540,
+    "y": 40,
+    "config": {
+     "header": null,
+     "text": "Which area are you interested in?",
+     "footer": null,
+     "button_label": "Choose area",
+     "sections": [
+      {
+       "title": null,
+       "rows": [
+        {
+         "id": "re_area_0",
+         "title": "Dubai Marina",
+         "description": null
+        },
+        {
+         "id": "re_area_1",
+         "title": "JVC",
+         "description": null
+        },
+        {
+         "id": "re_area_2",
+         "title": "Business Bay",
+         "description": null
+        },
+        {
+         "id": "re_area_3",
+         "title": "Downtown",
+         "description": null
+        },
+        {
+         "id": "re_area_4",
+         "title": "Palm Jumeirah",
+         "description": null
+        },
+        {
+         "id": "re_area_x0",
+         "title": "Other",
+         "description": null
+        }
+       ]
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "field:area",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "re_area_0",
+      "to": "re_type"
+     },
+     {
+      "id": "re_area_1",
+      "to": "re_type"
+     },
+     {
+      "id": "re_area_2",
+      "to": "re_type"
+     },
+     {
+      "id": "re_area_3",
+      "to": "re_type"
+     },
+     {
+      "id": "re_area_4",
+      "to": "re_type"
+     },
+     {
+      "id": "re_area_x0",
+      "to": "re_area_other"
+     }
+    ],
+    "section": "re_s_qualify",
+    "setup": true
+   },
+   {
+    "id": "re_area_other",
+    "type": "question",
+    "title": "Other area",
+    "x": 1840,
+    "y": 230,
+    "config": {
+     "text": "Which area? Type its name.",
+     "save_to": "field:area",
+     "validate": "text",
+     "pattern": null,
+     "min": null,
+     "max": null,
+     "window_days": null,
+     "error_text": null,
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_type"
+     }
+    ],
+    "section": "re_s_qualify"
+   },
+   {
+    "id": "re_type",
+    "type": "buttons",
+    "title": "Property type",
+    "x": 1840,
+    "y": 40,
+    "config": {
+     "header": null,
+     "text": "What type of property?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "ty_apt",
+       "title": "Apartment"
+      },
+      {
+       "id": "ty_villa",
+       "title": "Villa"
+      },
+      {
+       "id": "ty_town",
+       "title": "Townhouse"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "field:property_type",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "ty_apt",
+      "to": "re_beds"
+     },
+     {
+      "id": "ty_villa",
+      "to": "re_beds"
+     },
+     {
+      "id": "ty_town",
+      "to": "re_beds"
+     }
+    ],
+    "section": "re_s_qualify"
+   },
+   {
+    "id": "re_beds",
+    "type": "list",
+    "title": "Bedrooms",
+    "x": 2140,
+    "y": 40,
+    "config": {
+     "header": null,
+     "text": "How many bedrooms?",
+     "footer": null,
+     "button_label": "Choose",
+     "sections": [
+      {
+       "title": null,
+       "rows": [
+        {
+         "id": "bd0",
+         "title": "Studio",
+         "description": null
+        },
+        {
+         "id": "bd1",
+         "title": "1 bedroom",
+         "description": null
+        },
+        {
+         "id": "bd2",
+         "title": "2 bedrooms",
+         "description": null
+        },
+        {
+         "id": "bd3",
+         "title": "3 bedrooms",
+         "description": null
+        },
+        {
+         "id": "bd4",
+         "title": "4+ bedrooms",
+         "description": null
+        }
+       ]
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "var:bedrooms",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "bd0",
+      "to": "re_intent"
+     },
+     {
+      "id": "bd1",
+      "to": "re_intent"
+     },
+     {
+      "id": "bd2",
+      "to": "re_intent"
+     },
+     {
+      "id": "bd3",
+      "to": "re_intent"
+     },
+     {
+      "id": "bd4",
+      "to": "re_intent"
+     }
+    ],
+    "section": "re_s_qualify"
+   },
+   {
+    "id": "re_intent",
+    "type": "condition",
+    "title": "Buying?",
+    "x": 2440,
+    "y": 40,
+    "config": {
+     "match": "all",
+     "rules": [
+      {
+       "field": "var:intent",
+       "op": "equals",
+       "value": "Buy"
+      }
+     ]
+    },
+    "outputs": [
+     {
+      "id": "yes",
+      "to": "re_budget_buy"
+     },
+     {
+      "id": "no",
+      "to": "re_budget_rent"
+     }
+    ],
+    "section": "re_s_qualify"
+   },
+   {
+    "id": "re_budget_buy",
+    "type": "question",
+    "title": "Purchase budget",
+    "x": 40,
+    "y": 510,
+    "config": {
+     "text": "What’s your budget in AED? For example 1,800,000.",
+     "save_to": "field:budget",
+     "validate": "number",
+     "pattern": null,
+     "min": 300000,
+     "max": null,
+     "window_days": null,
+     "error_text": null,
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_finance"
+     }
+    ],
+    "section": "re_s_buy"
+   },
+   {
+    "id": "re_finance",
+    "type": "buttons",
+    "title": "Cash or mortgage",
+    "x": 340,
+    "y": 510,
+    "config": {
+     "header": null,
+     "text": "How will you pay?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "f_cash",
+       "title": "Cash"
+      },
+      {
+       "id": "f_mort",
+       "title": "Mortgage"
+      },
+      {
+       "id": "f_ns",
+       "title": "Not sure yet"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "var:finance",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "f_cash",
+      "to": "re_ready"
+     },
+     {
+      "id": "f_mort",
+      "to": "re_preapp"
+     },
+     {
+      "id": "f_ns",
+      "to": "re_preapp"
+     }
+    ],
+    "section": "re_s_buy"
+   },
+   {
+    "id": "re_preapp",
+    "type": "buttons",
+    "title": "Mortgage pre-approval",
+    "x": 640,
+    "y": 700,
+    "config": {
+     "header": null,
+     "text": "Do you have mortgage pre-approval?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "pa_y",
+       "title": "Yes"
+      },
+      {
+       "id": "pa_n",
+       "title": "No"
+      },
+      {
+       "id": "pa_p",
+       "title": "In progress"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "var:preapproval",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "pa_y",
+      "to": "re_ready"
+     },
+     {
+      "id": "pa_n",
+      "to": "re_ready"
+     },
+     {
+      "id": "pa_p",
+      "to": "re_ready"
+     }
+    ],
+    "section": "re_s_buy"
+   },
+   {
+    "id": "re_ready",
+    "type": "buttons",
+    "title": "Ready or off-plan",
+    "x": 640,
+    "y": 510,
+    "config": {
+     "header": null,
+     "text": "Ready to move in, or off-plan?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "rd_r",
+       "title": "Ready"
+      },
+      {
+       "id": "rd_o",
+       "title": "Off-plan"
+      },
+      {
+       "id": "rd_e",
+       "title": "Either"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "var:completion",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "rd_r",
+      "to": "re_premium"
+     },
+     {
+      "id": "rd_o",
+      "to": "re_premium"
+     },
+     {
+      "id": "rd_e",
+      "to": "re_premium"
+     }
+    ],
+    "section": "re_s_buy"
+   },
+   {
+    "id": "re_premium",
+    "type": "condition",
+    "title": "Premium budget?",
+    "x": 940,
+    "y": 510,
+    "config": {
+     "match": "all",
+     "rules": [
+      {
+       "field": "field:budget",
+       "op": "gt",
+       "value": "2000000"
+      }
+     ]
+    },
+    "outputs": [
+     {
+      "id": "yes",
+      "to": "re_tag_premium"
+     },
+     {
+      "id": "no",
+      "to": "re_source"
+     }
+    ],
+    "section": "re_s_buy",
+    "setup": true
+   },
+   {
+    "id": "re_tag_premium",
+    "type": "tag",
+    "title": "Tag premium",
+    "x": 1240,
+    "y": 510,
+    "config": {
+     "add": [
+      "premium"
+     ],
+     "remove": [],
+     "assign": "none",
+     "member_id": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_note_mgr"
+     }
+    ],
+    "section": "re_s_buy"
+   },
+   {
+    "id": "re_note_mgr",
+    "type": "note",
+    "title": "Note for the manager",
+    "x": 1540,
+    "y": 510,
+    "config": {
+     "text": "Premium buyer: budget AED {{contact.budget}}, {{var.completion}}."
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_source"
+     }
+    ],
+    "section": "re_s_buy"
+   },
+   {
+    "id": "re_budget_rent",
+    "type": "question",
+    "title": "Yearly rent budget",
+    "x": 40,
+    "y": 700,
+    "config": {
+     "text": "What’s your yearly budget in AED?",
+     "save_to": "field:budget",
+     "validate": "number",
+     "pattern": null,
+     "min": 20000,
+     "max": 2000000,
+     "window_days": null,
+     "error_text": null,
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_cheques"
+     }
+    ],
+    "section": "re_s_rent"
+   },
+   {
+    "id": "re_cheques",
+    "type": "buttons",
+    "title": "Cheques",
+    "x": 340,
+    "y": 700,
+    "config": {
+     "header": null,
+     "text": "How many cheques would you like to pay in?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "ch1",
+       "title": "1 cheque"
+      },
+      {
+       "id": "ch2",
+       "title": "2 cheques"
+      },
+      {
+       "id": "ch4",
+       "title": "4 cheques"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "var:cheques",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "ch1",
+      "to": "re_move"
+     },
+     {
+      "id": "ch2",
+      "to": "re_move"
+     },
+     {
+      "id": "ch4",
+      "to": "re_move"
+     }
+    ],
+    "section": "re_s_rent"
+   },
+   {
+    "id": "re_move",
+    "type": "question",
+    "title": "Move-in date",
+    "x": 640,
+    "y": 890,
+    "config": {
+     "text": "When would you like to move in? Day/month, e.g. 01/02.",
+     "save_to": "field:move_in",
+     "validate": "future_date",
+     "pattern": null,
+     "min": null,
+     "max": null,
+     "window_days": 120,
+     "error_text": null,
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_furnish"
+     }
+    ],
+    "section": "re_s_rent"
+   },
+   {
+    "id": "re_furnish",
+    "type": "buttons",
+    "title": "Furnished?",
+    "x": 940,
+    "y": 700,
+    "config": {
+     "header": null,
+     "text": "Furnished or unfurnished?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "fu_f",
+       "title": "Furnished"
+      },
+      {
+       "id": "fu_u",
+       "title": "Unfurnished"
+      },
+      {
+       "id": "fu_e",
+       "title": "Either"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "var:furnished",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "fu_f",
+      "to": "re_source"
+     },
+     {
+      "id": "fu_u",
+      "to": "re_source"
+     },
+     {
+      "id": "fu_e",
+      "to": "re_source"
+     }
+    ],
+    "section": "re_s_rent"
+   },
+   {
+    "id": "re_source",
+    "type": "condition",
+    "title": "Came from a Meta ad?",
+    "x": 1840,
+    "y": 510,
+    "config": {
+     "match": "all",
+     "rules": [
+      {
+       "field": "lead_source",
+       "op": "equals",
+       "value": "meta_ad"
+      }
+     ]
+    },
+    "outputs": [
+     {
+      "id": "yes",
+      "to": "re_tag_meta"
+     },
+     {
+      "id": "no",
+      "to": "re_tag_org"
+     }
+    ],
+    "section": "re_s_match"
+   },
+   {
+    "id": "re_tag_meta",
+    "type": "tag",
+    "title": "Tag Meta lead",
+    "x": 2140,
+    "y": 510,
+    "config": {
+     "add": [
+      "meta-lead"
+     ],
+     "remove": [],
+     "assign": "none",
+     "member_id": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_crm"
+     }
+    ],
+    "section": "re_s_match"
+   },
+   {
+    "id": "re_tag_org",
+    "type": "tag",
+    "title": "Tag organic lead",
+    "x": 2140,
+    "y": 700,
+    "config": {
+     "add": [
+      "organic-lead"
+     ],
+     "remove": [],
+     "assign": "none",
+     "member_id": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_crm"
+     }
+    ],
+    "section": "re_s_match"
+   },
+   {
+    "id": "re_crm",
+    "type": "http",
+    "title": "Send the lead to the CRM",
+    "x": 2440,
+    "y": 510,
+    "config": {
+     "method": "POST",
+     "url": "https://api.example.com/leads",
+     "headers": [],
+     "body": "{\"phone\":\"{{contact.phone}}\",\"area\":\"{{contact.area}}\",\"budget\":\"{{contact.budget}}\"}",
+     "timeout": 5,
+     "retries": 1,
+     "save": [
+      {
+       "path": "lead.id",
+       "to": "var:crm_id"
+      }
+     ],
+     "sample_status": 200,
+     "sample_body": "{\"lead\":{\"id\":\"L-20481\"}}"
+    },
+    "outputs": [
+     {
+      "id": "success",
+      "to": "re_stage"
+     },
+     {
+      "id": "error",
+      "to": "re_crm_fail"
+     }
+    ],
+    "section": "re_s_match"
+   },
+   {
+    "id": "re_crm_fail",
+    "type": "note",
+    "title": "CRM failed note",
+    "x": 40,
+    "y": 1360,
+    "config": {
+     "text": "The CRM didn’t accept this lead; it’s kept in the inbox. Add it manually."
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_stage"
+     }
+    ],
+    "section": "re_s_match"
+   },
+   {
+    "id": "re_stage",
+    "type": "setfield",
+    "title": "Stage: Qualified",
+    "x": 40,
+    "y": 1170,
+    "config": {
+     "target": "field:stage",
+     "value": "Qualified"
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_sheet"
+     }
+    ],
+    "section": "re_s_match"
+   },
+   {
+    "id": "re_sheet",
+    "type": "sheets",
+    "title": "Log in Google Sheets",
+    "x": 340,
+    "y": 1170,
+    "config": {
+     "webapp_url": "https://script.google.com/macros/s/TEST/exec",
+     "sheet": "Leads",
+     "columns": [
+      {
+       "name": "Name",
+       "value": "{{contact.name}}"
+      },
+      {
+       "name": "Area",
+       "value": "{{contact.area}}"
+      },
+      {
+       "name": "Budget",
+       "value": "{{contact.budget}}"
+      }
+     ]
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_viewing"
+     }
+    ],
+    "section": "re_s_match"
+   },
+   {
+    "id": "re_viewing",
+    "type": "buttons",
+    "title": "Book a viewing?",
+    "x": 640,
+    "y": 1170,
+    "config": {
+     "header": null,
+     "text": "Would you like to book a viewing?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "v_yes",
+       "title": "Yes, book a viewing"
+      },
+      {
+       "id": "v_list",
+       "title": "Send listings first"
+      },
+      {
+       "id": "v_no",
+       "title": "Not now"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": 60,
+     "fallback_template": null,
+     "save_to": "var:viewing",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "v_yes",
+      "to": "re_vdate"
+     },
+     {
+      "id": "v_list",
+      "to": "re_listings"
+     },
+     {
+      "id": "v_no",
+      "to": "re_later"
+     },
+     {
+      "id": "timeout",
+      "to": "re_later"
+     }
+    ],
+    "section": "re_s_view"
+   },
+   {
+    "id": "re_vdate",
+    "type": "question",
+    "title": "Viewing day",
+    "x": 940,
+    "y": 1170,
+    "config": {
+     "text": "Which day suits you? Day/month, e.g. 21/11.",
+     "save_to": "var:viewing_date",
+     "validate": "future_date",
+     "pattern": null,
+     "min": null,
+     "max": null,
+     "window_days": 30,
+     "error_text": null,
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_vtime"
+     }
+    ],
+    "section": "re_s_view"
+   },
+   {
+    "id": "re_vtime",
+    "type": "buttons",
+    "title": "Viewing time",
+    "x": 1240,
+    "y": 1170,
+    "config": {
+     "header": null,
+     "text": "Morning, afternoon or evening?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "vt1",
+       "title": "Morning"
+      },
+      {
+       "id": "vt2",
+       "title": "Afternoon"
+      },
+      {
+       "id": "vt3",
+       "title": "Evening"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": null,
+     "save_to": "var:viewing_time",
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "vt1",
+      "to": "re_route"
+     },
+     {
+      "id": "vt2",
+      "to": "re_route"
+     },
+     {
+      "id": "vt3",
+      "to": "re_route"
+     }
+    ],
+    "section": "re_s_view"
+   },
+   {
+    "id": "re_listings",
+    "type": "url",
+    "title": "Matching listings",
+    "x": 940,
+    "y": 1360,
+    "config": {
+     "text": "Here are listings in {{contact.area}} that match what you told us.",
+     "cta": "See listings",
+     "url": "https://example.ae/listings",
+     "fallback_template": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_route"
+     }
+    ],
+    "section": "re_s_view"
+   },
+   {
+    "id": "re_route",
+    "type": "condition",
+    "title": "Premium buyer?",
+    "x": 1540,
+    "y": 1170,
+    "config": {
+     "match": "all",
+     "rules": [
+      {
+       "field": "tag",
+       "op": "has_tag",
+       "value": "premium"
+      }
+     ]
+    },
+    "outputs": [
+     {
+      "id": "yes",
+      "to": "re_h_mgr"
+     },
+     {
+      "id": "no",
+      "to": "re_route2"
+     }
+    ],
+    "section": "re_s_hand"
+   },
+   {
+    "id": "re_route2",
+    "type": "condition",
+    "title": "Buyer or tenant?",
+    "x": 1840,
+    "y": 1360,
+    "config": {
+     "match": "all",
+     "rules": [
+      {
+       "field": "var:intent",
+       "op": "equals",
+       "value": "Buy"
+      }
+     ]
+    },
+    "outputs": [
+     {
+      "id": "yes",
+      "to": "re_h_sales"
+     },
+     {
+      "id": "no",
+      "to": "re_h_leasing"
+     }
+    ],
+    "section": "re_s_hand"
+   },
+   {
+    "id": "re_h_sales",
+    "type": "handoff",
+    "title": "Hand to Sales",
+    "x": 2140,
+    "y": 1170,
+    "config": {
+     "text": "Thanks! One of our sales agents will message you here shortly.",
+     "offline_text": null,
+     "note": true,
+     "assign": "none",
+     "member_id": null,
+     "outcome": "Qualified lead"
+    },
+    "outputs": [],
+    "section": "re_s_hand",
+    "setup": true
+   },
+   {
+    "id": "re_h_leasing",
+    "type": "handoff",
+    "title": "Hand to Leasing",
+    "x": 2140,
+    "y": 1360,
+    "config": {
+     "text": "Thanks! One of our leasing agents will message you here shortly.",
+     "offline_text": null,
+     "note": true,
+     "assign": "none",
+     "member_id": null,
+     "outcome": "Qualified lead"
+    },
+    "outputs": [],
+    "section": "re_s_hand",
+    "setup": true
+   },
+   {
+    "id": "re_h_mgr",
+    "type": "handoff",
+    "title": "Hand to a manager",
+    "x": 1840,
+    "y": 1170,
+    "config": {
+     "text": "Thanks! Our sales manager will contact you personally.",
+     "offline_text": null,
+     "note": true,
+     "assign": "none",
+     "member_id": null,
+     "outcome": "Premium lead"
+    },
+    "outputs": [],
+    "section": "re_s_hand"
+   },
+   {
+    "id": "re_later",
+    "type": "message",
+    "title": "No problem",
+    "x": 940,
+    "y": 1550,
+    "config": {
+     "text": "No problem! I’ll check back in a couple of days with new listings.",
+     "fallback_template": null
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_wait"
+     }
+    ],
+    "section": "re_s_nurture"
+   },
+   {
+    "id": "re_wait",
+    "type": "delay",
+    "title": "Wait 2 days",
+    "x": 1240,
+    "y": 1360,
+    "config": {
+     "mode": "duration",
+     "minutes": 2880
+    },
+    "outputs": [
+     {
+      "id": "next",
+      "to": "re_follow"
+     }
+    ],
+    "section": "re_s_nurture"
+   },
+   {
+    "id": "re_follow",
+    "type": "buttons",
+    "title": "Follow-up",
+    "x": 1540,
+    "y": 1360,
+    "config": {
+     "header": null,
+     "text": "Hi {{contact.first_name}}, new listings came in. Want an agent to call you?",
+     "footer": null,
+     "buttons": [
+      {
+       "id": "fo_y",
+       "title": "Yes please"
+      },
+      {
+       "id": "fo_n",
+       "title": "No thanks"
+      }
+     ],
+     "no_match": "handoff",
+     "retries": null,
+     "timeout_minutes": null,
+     "fallback_template": {
+      "name": "property_followup",
+      "language": "en",
+      "body": []
+     },
+     "save_to": null,
+     "error_text": null
+    },
+    "outputs": [
+     {
+      "id": "fo_y",
+      "to": "re_route2"
+     },
+     {
+      "id": "fo_n",
+      "to": "re_end"
+     }
+    ],
+    "section": "re_s_nurture"
+   },
+   {
+    "id": "re_end",
+    "type": "end",
+    "title": "End: nurture",
+    "x": 1840,
+    "y": 1550,
+    "config": {
+     "text": "Thanks! We’ll keep you posted.",
+     "action": "none",
+     "assign": "none",
+     "member_id": null,
+     "outcome": "Nurture"
+    },
+    "outputs": [],
+    "section": "re_s_nurture"
+   }
+  ],
+  "sections": [
+   {
+    "id": "re_s_welcome",
+    "name": "Welcome"
+   },
+   {
+    "id": "re_s_qualify",
+    "name": "Qualify"
+   },
+   {
+    "id": "re_s_buy",
+    "name": "Buying"
+   },
+   {
+    "id": "re_s_rent",
+    "name": "Renting"
+   },
+   {
+    "id": "re_s_match",
+    "name": "Match & CRM"
+   },
+   {
+    "id": "re_s_view",
+    "name": "Viewing"
+   },
+   {
+    "id": "re_s_hand",
+    "name": "Handover"
+   },
+   {
+    "id": "re_s_nurture",
+    "name": "Follow-up"
+   }
+  ]
+ }
+}

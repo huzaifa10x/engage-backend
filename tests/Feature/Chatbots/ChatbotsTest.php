@@ -12,6 +12,7 @@ use App\Domain\Developer\Services\UrlGuard;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Models\ConversationNote;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -489,7 +490,7 @@ final class ChatbotsTest extends TestCase
         $this->assertCount(1, $this->sent);
     }
 
-    public function test_a_closed_window_stops_the_bot_instead_of_failing_silently(): void
+    public function test_a_closed_window_hands_the_chat_to_the_team_instead_of_failing_silently(): void
     {
         $graph = ['nodes' => [
             ['id' => 'start', 'type' => 'start', 'config' => ['any_message' => true], 'outputs' => [['id' => 'next', 'to' => 'wait']]],
@@ -505,9 +506,15 @@ final class ChatbotsTest extends TestCase
         $this->travel(31)->minutes();
         $this->artisan('engage:chatbots:tick')->assertSuccessful();
 
+        // Decision (Flow Builder production gaps): no template to re-open the window, so a person takes
+        // over. Nothing is sent by the bot; the team gets a note saying why.
         $this->assertSame([], $this->sent);
-        $this->assertSame('stopped', $this->botSession()->status);
+        $this->assertSame('handed_off', $this->botSession()->status);
         $this->assertSame('window_closed', $this->botSession()->ended_reason);
+        $this->assertSame('handed_off', $this->conversation()->bot_state);
+        $this->assertNotSame('bot', $this->conversation()->handler);
+        $note = $this->inTenant(fn () => ConversationNote::query()->latest('created_at')->value('body'));
+        $this->assertStringContainsString('24-hour window had closed', (string) $note);
     }
 
     public function test_the_publish_gate_blocks_dead_ends_orphans_and_flows_without_a_person(): void

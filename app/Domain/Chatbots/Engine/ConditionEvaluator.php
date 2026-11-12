@@ -50,6 +50,8 @@ final class ConditionEvaluator
             $rule['field'] === 'consent' => $rt->contact['consent'],
             $rule['field'] === 'last_input' => $rt->state['vars']['last_input'] ?? null,
             $rule['field'] === 'language' => $rt->state['vars']['_lang'] ?? null,
+            $rule['field'] === 'lead_source' => Placeholders::attribution($rt)['source'],
+            $rule['field'] === 'campaign' => Placeholders::attribution($rt)['campaign'],
             str_starts_with($rule['field'], 'business:') => $rt->business()[substr($rule['field'], 9)] ?? null,
             str_starts_with($rule['field'], 'field:') => $rt->contact['fields'][substr($rule['field'], 6)] ?? null,
             str_starts_with($rule['field'], 'var:') => data_get($rt->state['vars'], substr($rule['field'], 4)),
@@ -64,6 +66,8 @@ final class ConditionEvaluator
             'is_not_set' => $text === '',
             'equals' => $number($text) !== null && $number($want) !== null ? $number($text) === $number($want) : $text === $want,
             'not_equals' => ! ($number($text) !== null && $number($want) !== null ? $number($text) === $number($want) : $text === $want),
+            // One of a comma-separated list ("JVC, Dubai Marina").
+            'in' => $text !== '' && in_array($text, array_map('trim', explode(',', $want)), true),
             'contains' => $want !== '' && str_contains($text, $want),
             'not_contains' => $want === '' || ! str_contains($text, $want),
             'gt', 'lt' => $text !== '' && $this->compare($text, $want, $number) * ($op === 'gt' ? 1 : -1) > 0,

@@ -95,7 +95,7 @@ final class FlowSettings
     }
 
     /** @return ?array{name: string, language: string, body: list<string>} */
-    private static function template(mixed $t): ?array
+    public static function template(mixed $t): ?array
     {
         if (! is_array($t) || ! is_string($t['name'] ?? null) || ! is_string($t['language'] ?? null) || trim($t['name']) === '') {
             return null;

@@ -132,8 +132,8 @@ final class FlowChecks
             }
             foreach ($waits as [$minutes, $next, $why]) {
                 foreach (self::freeFormAfter($graph, $next) as $sendId) {
-                    if ($minutes >= 1440 && $reopen) {
-                        $add('warning', 'window_risk', $sendId, "{$title($sendId)} runs after {$why} of a day or more. If the 24-hour window has closed, your re-opening template is sent first and this step runs when the customer answers.", 'Use a Template block here if the message must arrive without waiting for a reply.');
+                    if ($minutes >= 1440 && ($reopen || is_array($nodes[$sendId]['config']['fallback_template'] ?? null))) {
+                        $add('warning', 'window_risk', $sendId, "{$title($sendId)} runs after {$why} of a day or more. If the 24-hour window has closed, its fallback template (or the flow's re-opening template) is sent first and this step runs when the customer answers.", 'Use a Template block here if the message must arrive without waiting for a reply.');
                     } elseif ($minutes >= 1440) {
                         $add('error', 'needs_template', $sendId, "{$title($sendId)} runs after {$why} of a day or more, when WhatsApp only delivers approved templates.", 'Replace it with a Template block, or shorten the wait to under 24 hours.');
                     } elseif ($minutes >= 120) {
@@ -173,6 +173,16 @@ final class FlowChecks
                 $err('deleted_field', 'saves to the custom field “'.substr($t, 6).'”, which no longer exists.', 'Choose another field, or create it again in Contacts → Segments, tags & fields.');
             }
         };
+        // A step's own 24-hour fallback template must exist and be approved, like a Template block.
+        $fallback = $c['fallback_template'] ?? null;
+        if (is_array($fallback) && isset($deps['templates'])) {
+            $status = $deps['templates'][$fallback['name'].'|'.$fallback['language']] ?? null;
+            if ($status === null) {
+                $err('missing_template', "falls back to the template “{$fallback['name']}” ({$fallback['language']}), which does not exist on this number's WhatsApp account.", 'Choose another fallback template, or sync templates in Templates.');
+            } elseif ($status !== 'APPROVED') {
+                $err('template_status', "falls back to the template “{$fallback['name']}”, which is ".strtolower(str_replace('_', ' ', $status)).'.', 'Choose an approved fallback template.');
+            }
+        }
         $needsText = in_array($node['type'], ['message', 'buttons', 'list', 'question', 'product', 'url', 'form', 'ask_media', 'location', 'rating', 'note'], true);
         if ($needsText && trim((string) ($c['text'] ?? '')) === '') {
             $err('missing_text', $node['type'] === 'note' ? 'the note is empty.' : 'the message text is empty.', 'Type the message in the block settings.');
@@ -186,6 +196,9 @@ final class FlowChecks
                 if ($c['buttons'] === []) {
                     $err('no_buttons', 'has no buttons.', 'Add at least one button (up to 3).');
                 }
+                if (($c['save_to'] ?? null) !== null) {
+                    $target($c['save_to'], 'the chosen option');
+                }
                 break;
             case 'list':
                 $rows = array_sum(array_map(fn ($s) => count($s['rows']), $c['sections']));
@@ -194,6 +207,9 @@ final class FlowChecks
                 }
                 if (count($c['sections']) > 1 && array_filter($c['sections'], fn ($s) => $s['title'] === null)) {
                     $err('section_title', 'a list with several sections needs a title on each section.', 'Give every section a short title (up to 24 characters).');
+                }
+                if (($c['save_to'] ?? null) !== null) {
+                    $target($c['save_to'], 'the chosen option');
                 }
                 break;
             case 'question':
@@ -446,8 +462,9 @@ final class FlowChecks
             if ($sendsText) {
                 $found[] = (string) $id;
             }
-            // An answer from the customer opens a new window: stop looking past input blocks.
-            if (in_array($node['type'], FlowGraph::INPUT, true) || in_array($node['type'], ['handoff', 'end', 'template'], true)) {
+            // An answer from the customer opens a new window: stop looking past input blocks, and past a
+            // step with its own fallback template (it waits for the customer's answer before going on).
+            if (in_array($node['type'], FlowGraph::INPUT, true) || in_array($node['type'], ['handoff', 'end', 'template'], true) || is_array($node['config']['fallback_template'] ?? null)) {
                 continue;
             }
             foreach ($node['outputs'] as $out) {

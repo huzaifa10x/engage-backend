@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Chatbots\Engine;
 
+use App\Domain\Growth\Services\MetaReferral;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -33,6 +34,11 @@ final class FlowEngine
     /** How long a template with a "Not delivered" branch waits for WhatsApp's delivery report. */
     private const DELIVERY_WAIT_MINUTES = 3;
 
+    /** Why the last answer was refused (not_a_date, impossible, us_order, too_far, …) and its detail, for the retry message. */
+    private ?string $why = null;
+
+    private mixed $whyDetail = null;
+
     public function __construct(private readonly HttpBlock $http) {}
 
     /**
@@ -44,6 +50,7 @@ final class FlowEngine
     {
         $run = new FlowRun($graph, $settings, $rt);
         $rt->state['vars']['_lang'] = $this->language($run, $first);
+        $this->attribute($rt, $first);
         $start = $graph->start();
         if ($start === null) {
             $this->finish($rt, 'stopped', 'no_start');
@@ -67,6 +74,7 @@ final class FlowEngine
         }
         $this->guard($run, function () use ($run, $rt, $settings, $input): void {
             $rt->state['vars']['last_input'] = $input->text !== null ? mb_substr($input->text, 0, 1000) : null;
+            $this->attribute($rt, $input);
             $words = $input->normalized();
 
             // The window had closed and a template re-opened it: run the step that could not be sent.
@@ -120,7 +128,7 @@ final class FlowEngine
 
             // A voice note, sticker or emoji where the block reads text or taps: say so, do not count it.
             if ($input->isNonText() && ! $this->accepts($node, $input)) {
-                $this->sendText($rt, Placeholders::fill($settings['non_text_text'], $rt));
+                $this->sendText($rt, $this->say($settings['non_text_text'], $rt));
 
                 return;
             }
@@ -195,7 +203,7 @@ final class FlowEngine
     public function remind(array $settings, BotRuntime $rt, ?FlowGraph $graph = null): void
     {
         $run = new FlowRun($graph ?? FlowGraph::from(null), $settings, $rt);
-        $this->guard($run, fn () => $this->sendText($rt, Placeholders::fill($settings['reminder_text'], $rt)));
+        $this->guard($run, fn () => $this->sendText($rt, $this->say($settings['reminder_text'], $rt)));
     }
 
     // ── Running ──────────────────────────────────────────────────────────────────────────────
@@ -303,7 +311,7 @@ final class FlowEngine
                 return 'next';
 
             case 'message':
-                $this->sendText($rt, Placeholders::fill($c['text'], $rt));
+                $this->sendText($rt, $this->say($c['text'], $rt));
 
                 return 'next';
 
@@ -379,14 +387,14 @@ final class FlowEngine
                 $rt->optIn();
                 $rt->note('The customer is opted in to messages, marketing included.');
                 if ($c['text'] !== null) {
-                    $this->sendText($rt, Placeholders::fill($c['text'], $rt));
+                    $this->sendText($rt, $this->say($c['text'], $rt));
                 }
 
                 return 'next';
 
             case 'optout':
                 if ($c['text'] !== null) {
-                    $this->sendText($rt, Placeholders::fill($c['text'], $rt));
+                    $this->sendText($rt, $this->say($c['text'], $rt));
                 }
                 $rt->optOut($c['scope']);
                 $rt->note($c['scope'] === 'all' ? 'The customer is opted out of all messages.' : 'The customer is opted out of marketing messages.');
@@ -435,7 +443,7 @@ final class FlowEngine
                 return $this->enterSubflow($run, $node);
 
             case 'note':
-                $rt->internalNote(Placeholders::fill($c['text'], $rt));
+                $rt->internalNote($this->say($c['text'], $rt));
 
                 return 'next';
 
@@ -446,7 +454,7 @@ final class FlowEngine
 
             case 'end':
                 if ($c['text'] !== null) {
-                    $this->sendText($rt, Placeholders::fill($c['text'], $rt));
+                    $this->sendText($rt, $this->say($c['text'], $rt));
                 }
                 // The end of a subflow returns to the flow that called it.
                 if (($rt->state['vars']['_stack'] ?? []) !== []) {
@@ -456,7 +464,7 @@ final class FlowEngine
                     $who = $rt->assign($c['assign'] === 'none' ? 'auto' : $c['assign'], $c['member_id'], 'The chatbot finished and assigned a conversation to you');
                     $rt->note($who !== null ? "Assigned to {$who}." : 'Nobody could be assigned.');
                 }
-                $rt->event($node['id'], 'complete');
+                $rt->event($node['id'], 'complete', $c['outcome'] ?? null);
                 $this->finish($rt, 'completed', 'end');
                 if ($c['action'] === 'close') {
                     $rt->closeConversation();
@@ -479,8 +487,8 @@ final class FlowEngine
                 'name' => $c['name'],
                 'language' => $c['language'],
                 'variables' => [
-                    'header' => array_map(fn ($v) => Placeholders::fill($v, $rt), $c['header']),
-                    'body' => array_map(fn ($v) => Placeholders::fill($v, $rt), $c['body']),
+                    'header' => array_map(fn ($v) => $this->say($v, $rt), $c['header']),
+                    'body' => array_map(fn ($v) => $this->say($v, $rt), $c['body']),
                 ],
             ]]);
         } catch (BotSendFailed $e) {
@@ -679,8 +687,8 @@ final class FlowEngine
 
             return;
         }
-        $error = ($c['error_text'] ?? null) !== null ? $c['error_text'] : self::retryText($node, $run->settings['invalid_text']);
-        $this->sendText($rt, Placeholders::fill($error, $rt));
+        $error = ($c['error_text'] ?? null) !== null ? $c['error_text'] : self::retryText($node, $run->settings['invalid_text'], $this->why, $this->whyDetail);
+        $this->sendText($rt, $this->say($error, $rt));
         $this->prompt($run, $node);
     }
 
@@ -693,12 +701,14 @@ final class FlowEngine
             if ($handoff !== null) {
                 $run->graph = $graph;
                 $rt->note("Handing off: the customer {$why}.");
+                // The handover step's note tells the team why, not only the test transcript.
+                $rt->state['vars']['_handoff_reason'] = $why;
                 $this->run($run, $handoff['id']);
 
                 return;
             }
         }
-        $this->sendText($rt, Placeholders::fill($run->settings['escalate_text'], $rt));
+        $this->sendText($rt, $this->say($run->settings['escalate_text'], $rt));
         $this->handoff($run, ['id' => (string) ($rt->state['current_node'] ?? 'start'), 'type' => 'handoff', 'title' => 'Talk to a person', 'config' => [
             'text' => null, 'offline_text' => null, 'note' => true, 'assign' => 'none', 'member_id' => null,
         ]], $why);
@@ -709,16 +719,18 @@ final class FlowEngine
     {
         $rt = $run->rt;
         $c = $node['config'];
+        $why ??= $rt->state['vars']['_handoff_reason'] ?? null;
+        unset($rt->state['vars']['_handoff_reason']);
         $text = ! $rt->businessOpen() && ($c['offline_text'] ?? null) !== null ? $c['offline_text'] : $c['text'];
         if ($text !== null) {
-            $this->sendText($rt, Placeholders::fill($text, $rt));
+            $this->sendText($rt, $this->say($text, $rt));
         }
         $who = $rt->assign($c['assign'] === 'none' ? 'route' : $c['assign'], $c['member_id'], 'A customer asked to talk to a person');
         if ($c['note'] ?? true) {
             $rt->internalNote($this->summary($run, $who, $why));
         }
         $rt->note('Handed off to a person'.($who !== null ? " ({$who})" : '').'. The bot is paused for this conversation.');
-        $rt->event($node['id'], 'handoff');
+        $rt->event($node['id'], 'handoff', $c['outcome'] ?? null);
         $this->finish($rt, 'handed_off', 'handoff');
     }
 
@@ -734,6 +746,12 @@ final class FlowEngine
         }
         $answers = [];
         foreach ((array) $rt->state['vars'] as $key => $value) {
+            // A menu's choice kept under the block's id is left out when the block also saved it to a variable (listed under that name).
+            $menu = $run->graph->node((string) $key) ?? $run->main->node((string) $key);
+            $savedAs = in_array($menu['type'] ?? null, ['buttons', 'list'], true) ? ($menu['config']['save_to'] ?? null) : null;
+            if (is_string($savedAs) && str_starts_with($savedAs, 'var:') && $savedAs !== 'var:'.$key) {
+                continue;
+            }
             if (is_string($key) && ! str_starts_with($key, '_') && ! in_array($key, ['last_input', 'http_status', 'started_from_ad'], true) && $value !== null && $value !== '' && count($answers) < 15) {
                 $answers[] = '• '.$label($key).': '.mb_substr(Placeholders::text($value), 0, 200);
             }
@@ -756,7 +774,7 @@ final class FlowEngine
     {
         $rt = $run->rt;
         $c = $node['config'];
-        $text = Placeholders::fill($c['text'] ?? null, $rt);
+        $text = $this->say($c['text'] ?? null, $rt);
         $id = fn (string $choice) => "bot:{$node['id']}:{$choice}";
 
         $history = (array) ($rt->state['vars']['_history'] ?? []);
@@ -851,12 +869,12 @@ final class FlowEngine
      */
     private function interactive(array $c, BotRuntime $rt, array $content): array
     {
-        $text = Placeholders::fill($c['text'] ?? null, $rt);
+        $text = $this->say($c['text'] ?? null, $rt);
 
         return ['type' => 'interactive', 'body' => $text, 'content' => array_filter($content + [
-            'header' => ($c['header'] ?? null) !== null ? ['type' => 'text', 'text' => mb_substr(Placeholders::fill($c['header'], $rt), 0, 60)] : null,
+            'header' => ($c['header'] ?? null) !== null ? ['type' => 'text', 'text' => mb_substr($this->say($c['header'], $rt), 0, 60)] : null,
             'body' => ['text' => mb_substr($text, 0, 1024)],
-            'footer' => ($c['footer'] ?? null) !== null ? ['text' => mb_substr(Placeholders::fill($c['footer'], $rt), 0, 60)] : null,
+            'footer' => ($c['footer'] ?? null) !== null ? ['text' => mb_substr($this->say($c['footer'], $rt), 0, 60)] : null,
         ])];
     }
 
@@ -869,7 +887,7 @@ final class FlowEngine
     {
         $c = $node['config'];
         if ($c['text'] !== null) {
-            $this->sendText($rt, Placeholders::fill($c['text'], $rt));
+            $this->sendText($rt, $this->say($c['text'], $rt));
         }
         foreach ($c['items'] as $p) {
             $body = '*'.$p['name'].'*'.($p['price'] !== null ? "\n".$p['price'] : '').($p['description'] !== null ? "\n".$p['description'] : '');
@@ -962,6 +980,9 @@ final class FlowEngine
                         || ($words !== '' && in_array($words, array_map($this->plain(...), [$choice['title'], ...($titles[$choice['id']] ?? [])]), true));
                     if ($match) {
                         $rt->state['vars'][$node['id']] = $choice['title'];
+                        if (($c['save_to'] ?? null) !== null) {
+                            $this->save($rt, (string) $c['save_to'], $choice['title'], $node['id']);
+                        }
 
                         return $choice['id'];
                     }
@@ -1173,12 +1194,24 @@ final class FlowEngine
      *
      * @param  array<string, mixed>  $node
      */
-    public static function retryText(array $node, string $flowText): string
+    public static function retryText(array $node, string $flowText, ?string $why = null, mixed $detail = null): string
     {
         if ($node['type'] !== 'question' || $flowText !== FlowSettings::DEFAULTS['invalid_text']) {
             return $flowText;
         }
         $c = $node['config'];
+        if (in_array($c['validate'] ?? 'any', ['date', 'future_date', 'workday'], true)) {
+            $specific = match ($why) {
+                'us_order' => 'Sorry, please write the day first, for example 18/11.',
+                'impossible' => 'Sorry, that date doesn’t exist. Please check the day and month.',
+                'too_far' => 'Sorry, please choose a date within the next '.(int) $detail.' days.',
+                'closed_day' => 'Sorry, we’re closed that day. Please send a date after today when we are open.',
+                default => null,
+            };
+            if ($specific !== null) {
+                return $specific;
+            }
+        }
         $range = match (true) {
             ($c['min'] ?? null) !== null && ($c['max'] ?? null) !== null => ' between '.Placeholders::text($c['min']).' and '.Placeholders::text($c['max']),
             ($c['min'] ?? null) !== null => ' of at least '.Placeholders::text($c['min']),
@@ -1225,34 +1258,184 @@ final class FlowEngine
     private function validate(array $c, string $text, BotRuntime $rt): ?string
     {
         $t = trim($text);
+        $this->why = null;
+        $this->whyDetail = null;
         if ($t === '') {
             return null;
         }
-        $date = function (string $t) use ($rt): ?Carbon {
-            $t = strtr($t, ['٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4', '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9']);
-            // 15/10/2026 and 15-10-2026 are day first (as written in the UAE).
-            if (preg_match('#^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$#', $t, $m) === 1) {
-                $t = sprintf('%04d-%02d-%02d', strlen($m[3]) === 2 ? 2000 + (int) $m[3] : (int) $m[3], (int) $m[2], (int) $m[1]);
-            }
-            $ts = strtotime($t, now($rt->timezone())->getTimestamp());
-
-            return $ts !== false ? Carbon::createFromTimestamp($ts, $rt->timezone())->startOfDay() : null;
-        };
-        $today = now($rt->timezone())->startOfDay();
 
         return match ($c['validate']) {
-            'number' => is_numeric($n = str_replace([',', ' '], '', strtr($t, ['٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4', '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9'])))
-                && (($c['min'] ?? null) === null || (float) $n >= (float) $c['min']) && (($c['max'] ?? null) === null || (float) $n <= (float) $c['max']) ? $n : null,
+            'number' => $this->numberAnswer($c, $t),
+            'date', 'future_date', 'workday' => $this->dateAnswer($c, $t, $rt),
             'time' => self::time($t),
             'email' => filter_var($t, FILTER_VALIDATE_EMAIL) !== false ? mb_strtolower($t) : null,
             'phone' => preg_match('/^\+?[\d\s().-]{6,20}$/', $t) === 1 ? $t : null,
-            'date' => ($d = $date($t)) !== null ? $d->toDateString() : null,
-            'future_date' => ($d = $date($t)) !== null && $d->gt($today) ? $d->toDateString() : null,
-            'workday' => ($d = $date($t)) !== null && $d->gt($today) && in_array(strtolower($d->format('D')), $rt->openDays(), true) ? $d->toDateString() : null,
             'text' => preg_match('/\p{L}/u', $t) === 1 ? mb_substr($t, 0, 1000) : null,
             'regex' => $c['pattern'] !== null && @preg_match('/'.str_replace('/', '\/', $c['pattern']).'/u', $t) === 1 ? mb_substr($t, 0, 1000) : null,
             default => mb_substr($t, 0, 1000),
         };
+    }
+
+    private const ARABIC_DIGITS = ['٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4', '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9'];
+
+    private const MONTHS = ['jan' => 1, 'feb' => 2, 'mar' => 3, 'apr' => 4, 'may' => 5, 'jun' => 6, 'jul' => 7, 'aug' => 8, 'sep' => 9, 'oct' => 10, 'nov' => 11, 'dec' => 12];
+
+    /**
+     * A number as customers type it in the UAE: digits with commas or spaces, Arabic digits, an optional
+     * AED / dhs / د.إ, and the shorthands k (thousand) and m / mn / million: "1,800,000", "AED 950k",
+     * "1.2m". Returns the plain number ("1200000") or null.
+     */
+    public static function number(string $text): ?string
+    {
+        $s = mb_strtolower(trim(strtr($text, self::ARABIC_DIGITS)));
+        $s = trim((string) preg_replace(['/^(aed|dhs?|د\.إ)\s*/u', '/\s*(aed|dhs?|د\.إ)$/u'], '', $s));
+        if (preg_match('/^(-?\d[\d,\s]*(?:\.\d+)?)\s*(k|thousand|m|mn|million)?$/u', $s, $m) !== 1) {
+            return null;
+        }
+        $n = str_replace([',', ' '], '', $m[1]);
+        if (! is_numeric($n)) {
+            return null;
+        }
+        $times = match ($m[2] ?? '') {
+            'k', 'thousand' => 1_000,
+            'm', 'mn', 'million' => 1_000_000,
+            default => 1,
+        };
+        if ($times === 1) {
+            return $n;
+        }
+        $value = round((float) $n * $times, 2);
+
+        return floor($value) === $value ? (string) (int) $value : (string) $value;
+    }
+
+    /** @param array<string, mixed> $c */
+    private function numberAnswer(array $c, string $t): ?string
+    {
+        $n = self::number($t);
+        if ($n === null) {
+            $this->why = 'not_a_number';
+
+            return null;
+        }
+        if (($c['min'] ?? null) !== null && (float) $n < (float) $c['min']) {
+            $this->why = 'below';
+
+            return null;
+        }
+        if (($c['max'] ?? null) !== null && (float) $n > (float) $c['max']) {
+            $this->why = 'above';
+
+            return null;
+        }
+
+        return $n;
+    }
+
+    /**
+     * Dates as written in the UAE, day first: 18/11, 18/11/2026, 18-11-26, 18.11.2026, "18 Nov",
+     * "Nov 18", "18 November 2026", 2026-11-18, "today", "tomorrow" (Arabic digits too). A day and
+     * month without a year that has already passed this year means next year. Refused, with a
+     * reason: dates that don't exist (31/4, 29/2 in a non-leap year), the month first (11/18), and
+     * anything else (no free-form guessing).
+     *
+     * @return array{0: ?string, 1: ?string} [Y-m-d, null] or [null, reason]
+     */
+    public static function parseDate(string $text, Carbon $today): array
+    {
+        $t = mb_strtolower(trim(strtr($text, self::ARABIC_DIGITS)));
+        if ($t === 'today') {
+            return [$today->toDateString(), null];
+        }
+        if ($t === 'tomorrow') {
+            return [$today->copy()->addDay()->toDateString(), null];
+        }
+        $month = fn (string $name): ?int => self::MONTHS[substr($name, 0, 3)] ?? null;
+        $y = null;
+        if (preg_match('#^(\d{4})-(\d{1,2})-(\d{1,2})$#', $t, $m) === 1) {
+            [$y, $mo, $d] = [(int) $m[1], (int) $m[2], (int) $m[3]];
+        } elseif (preg_match('#^(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2}|\d{4}))?$#', $t, $m) === 1) {
+            [$d, $mo] = [(int) $m[1], (int) $m[2]];
+            if (($m[3] ?? '') !== '') {
+                $y = strlen($m[3]) === 2 ? 2000 + (int) $m[3] : (int) $m[3];
+            }
+        } elseif (preg_match('/^(\d{1,2})(?:st|nd|rd|th)?\s*([a-z]{3,9})\.?(?:,?\s+(\d{4}))?$/', $t, $m) === 1 && $month($m[2]) !== null) {
+            [$d, $mo] = [(int) $m[1], (int) $month($m[2])];
+            $y = ($m[3] ?? '') !== '' ? (int) $m[3] : null;
+        } elseif (preg_match('/^([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?$/', $t, $m) === 1 && $month($m[1]) !== null) {
+            [$d, $mo] = [(int) $m[2], (int) $month($m[1])];
+            $y = ($m[3] ?? '') !== '' ? (int) $m[3] : null;
+        } else {
+            return [null, 'not_a_date'];
+        }
+        if ($mo > 12 && $d <= 12) {
+            return [null, 'us_order'];
+        }
+        if ($y === null) {
+            $y = (int) $today->year;
+            if (checkdate($mo, $d, $y) && sprintf('%04d-%02d-%02d', $y, $mo, $d) < $today->toDateString()) {
+                $y++;
+            }
+        }
+        if (! checkdate($mo, $d, $y)) {
+            return [null, 'impossible'];
+        }
+
+        return [sprintf('%04d-%02d-%02d', $y, $mo, $d), null];
+    }
+
+    /** @param array<string, mixed> $c */
+    private function dateAnswer(array $c, string $t, BotRuntime $rt): ?string
+    {
+        $today = now($rt->timezone())->startOfDay();
+        [$iso, $why] = self::parseDate($t, $today);
+        if ($iso === null) {
+            $this->why = $why;
+
+            return null;
+        }
+        $day = Carbon::parse($iso, $rt->timezone())->startOfDay();
+        if ($c['validate'] !== 'date' && $day->lte($today)) {
+            $this->why = 'not_future';
+
+            return null;
+        }
+        if ($c['validate'] === 'workday' && ! in_array(strtolower($day->format('D')), $rt->openDays(), true)) {
+            $this->why = 'closed_day';
+
+            return null;
+        }
+        if (($c['window_days'] ?? null) !== null && $day->gt($today->copy()->addDays((int) $c['window_days']))) {
+            $this->why = 'too_far';
+            $this->whyDetail = (int) $c['window_days'];
+
+            return null;
+        }
+
+        return $iso;
+    }
+
+    /** Customer-facing text: placeholders filled, saved dates shown as “Wed 18 Nov 2026”. */
+    private function say(?string $text, BotRuntime $rt): string
+    {
+        return Placeholders::fill($text, $rt, human: true);
+    }
+
+    /**
+     * Records where this customer came from, but only from verified attribution: the Meta
+     * Click-to-WhatsApp referral on a message Meta sent us (signed webhook). Evidence the Growth Hub
+     * recorded on the contact is read by LiveRuntime::snapshot().
+     */
+    private function attribute(BotRuntime $rt, ?BotInput $input): void
+    {
+        if ($input === null || ! $input->fromAd) {
+            return;
+        }
+        $ref = MetaReferral::parse($input->content['referral'] ?? null);
+        if ($ref === null) {
+            return;
+        }
+        $rt->state['vars']['_source'] = ['source' => 'meta_ad', 'campaign' => $ref['headline'] ?? null, 'evidence' => 'meta_referral'];
     }
 
     /** @param array<string, mixed> $c */
@@ -1324,7 +1507,7 @@ final class FlowEngine
      */
     private function media(array $c, BotRuntime $rt): array
     {
-        $caption = $c['kind'] !== 'audio' ? (Placeholders::fill($c['caption'], $rt) ?: null) : null;
+        $caption = $c['kind'] !== 'audio' ? ($this->say($c['caption'], $rt) ?: null) : null;
         if ($c['media_id'] !== null) {
             return array_filter(['type' => $c['kind'], 'media_id' => $c['media_id'], 'body' => $caption, 'content' => array_filter([
                 'filename' => $c['kind'] === 'document' ? ($c['filename'] ?? $c['media_name']) : null,
@@ -1367,19 +1550,21 @@ final class FlowEngine
         } catch (BotSendFailed $e) {
             $node = (string) $rt->state['current_node'];
             $rt->event($node, 'error', $e->reason);
-            $template = $run->settings['reopen_template'] ?? null;
+            // The step's own fallback template first, then the flow's re-opening template.
+            $template = $run->graph->node($node)['config']['fallback_template'] ?? null;
+            $template = is_array($template) ? $template : ($run->settings['reopen_template'] ?? null);
             if ($e->reason === 'window_closed' && is_array($template) && ! isset($rt->state['vars']['_reopened'])) {
                 try {
                     $rt->send(['type' => 'template', 'template' => [
                         'name' => $template['name'], 'language' => $template['language'],
-                        'variables' => ['body' => array_map(fn ($v) => Placeholders::fill($v, $rt), $template['body'])],
+                        'variables' => ['body' => array_map(fn ($v) => $this->say($v, $rt), $template['body'])],
                     ]]);
                     $rt->state['vars']['_reopen'] = $node;
                     $rt->state['vars']['_reopened'] = true;
                     $rt->state['status'] = 'active';
                     $rt->state['awaiting_input'] = true;
                     $rt->state['timeout_at'] = null;
-                    $rt->note('The 24-hour window had closed: sent the re-opening template. The step runs again when the customer answers.');
+                    $rt->note('The 24-hour window had closed: sent the approved template “'.$template['name'].'”. The step runs again when the customer answers.');
 
                     return;
                 } catch (BotPreempted) {
@@ -1390,9 +1575,37 @@ final class FlowEngine
                     $e = $again;
                 }
             }
+            $this->cannotContinue($run, $e);
+        }
+    }
+
+    /**
+     * The bot can't message this customer any more. When a person still can (window closed with no
+     * template, a template that isn't available, a failed send), the chat goes to the team without any
+     * further bot message, with a note saying why. When nobody may message them (opted out, the number
+     * is unavailable), the bot stops and leaves the note.
+     */
+    private function cannotContinue(FlowRun $run, BotSendFailed $e): void
+    {
+        $rt = $run->rt;
+        $node = (string) ($rt->state['current_node'] ?? 'start');
+        if (in_array($e->reason, ['opted_out', 'number_unavailable'], true)) {
+            $rt->internalNote('🤖 '.$rt->botName().' stopped: '.$e->getMessage());
             $rt->note('Stopped: '.$e->getMessage());
             $this->finish($rt, 'stopped', $e->reason);
+
+            return;
         }
+        $why = match ($e->reason) {
+            'window_closed' => 'couldn’t be messaged: the 24-hour window had closed and no approved template was available',
+            'template_unavailable' => 'couldn’t be messaged: the template isn’t approved or is paused',
+            default => 'couldn’t be messaged: '.$e->getMessage(),
+        };
+        $who = $rt->assign('route', null, 'A chatbot could not continue a conversation');
+        $rt->internalNote($this->summary($run, $who, $why));
+        $rt->note('Handed off to a person: the customer '.$why.'.');
+        $rt->event($node, 'handoff', $e->reason);
+        $this->finish($rt, 'handed_off', $e->reason);
     }
 
     /** Button titles compared without emoji, punctuation and case: "🧁 Our Cakes" = "our cakes". */

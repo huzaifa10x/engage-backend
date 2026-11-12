@@ -124,7 +124,7 @@ final class FlowGraph
 
     /**
      * @param  array<string, mixed>|null  $graph
-     * @return array{nodes: list<array<string, mixed>>}
+     * @return array{nodes: list<array<string, mixed>>, sections?: list<array{id: string, name: string}>}
      */
     public static function normalize(?array $graph): array
     {
@@ -162,7 +162,11 @@ final class FlowGraph
                 'y' => (int) max(0, min(40000, (float) ($raw['y'] ?? 0))),
                 'config' => $config,
                 'outputs' => array_map(fn (array $o) => $o + ['to' => $targets[$o['id']] ?? null], self::outputs($type, $config)),
-            ];
+            ] + array_filter([
+                // Builder-only: the section the step is shown in, and the template wizard's “Set up by you” mark.
+                'section' => is_string($raw['section'] ?? null) && preg_match('/^[A-Za-z0-9_-]{1,64}$/', $raw['section']) === 1 ? $raw['section'] : null,
+                'setup' => ($raw['setup'] ?? false) === true ? true : null,
+            ], fn ($v) => $v !== null);
         }
 
         // A branch may only point at a node that exists (and never at the start node).
@@ -177,7 +181,24 @@ final class FlowGraph
         }
         unset($node, $out);
 
-        return ['nodes' => $nodes];
+        // Builder-only sections (collapsible groups of steps); the engine ignores them. A step's section
+        // must be one of them.
+        $sections = [];
+        foreach (array_slice(array_values((array) ($graph['sections'] ?? [])), 0, 30) as $sec) {
+            $sid = is_array($sec) ? (string) ($sec['id'] ?? '') : '';
+            $name = is_array($sec) ? NodeConfig::str($sec['name'] ?? null, 60) : null;
+            if (preg_match('/^[A-Za-z0-9_-]{1,64}$/', $sid) === 1 && $name !== null && ! isset($sections[$sid])) {
+                $sections[$sid] = ['id' => $sid, 'name' => $name];
+            }
+        }
+        foreach ($nodes as &$node) {
+            if (isset($node['section']) && ! isset($sections[$node['section']])) {
+                unset($node['section']);
+            }
+        }
+        unset($node);
+
+        return $sections === [] ? ['nodes' => $nodes] : ['nodes' => $nodes, 'sections' => array_values($sections)];
     }
 
     /**

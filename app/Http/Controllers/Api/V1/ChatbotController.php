@@ -181,6 +181,7 @@ final class ChatbotController extends Controller
             'phone_number_id' => ['sometimes', 'nullable', 'uuid'],
             'draft' => ['sometimes', 'array'],
             'draft.nodes' => ['sometimes', 'array', 'max:'.FlowGraph::MAX_NODES],
+            'draft.sections' => ['sometimes', 'array', 'max:30'],
             'settings' => ['sometimes', 'array'],
             'folder' => ['sometimes', 'nullable', 'string', 'max:60'],
             'editors' => ['sometimes', 'nullable', 'array', 'max:50'],
@@ -606,8 +607,12 @@ final class ChatbotController extends Controller
 
     /**
      * Test chat: the draft runs on the real engine, with the data of a chosen contact if any.
-     * Nothing is sent on WhatsApp and nothing is saved on the contact; API-call blocks do call out.
+     * Nothing is sent on WhatsApp and nothing is saved on the contact. API and Google Sheets blocks
+     * are dry runs (their sample answer, or the failure chosen in `api_mode`) unless `integrations`
+     * is "live", which needs the publish permission and is recorded in the audit log.
      * `action`: "timeout" makes the current step's "No reply" timer run out now.
+     * `number_id`: whose business hours and WhatsApp templates apply. `window`: "closed" makes free
+     * text fail as outside the 24-hour window. `source`: test as a lead from that paid source.
      */
     public function test(Request $request, ChatbotFlow $flow, FlowEngine $engine): JsonResponse
     {
@@ -619,7 +624,17 @@ final class ChatbotController extends Controller
             'type' => ['nullable', Rule::in(['text', 'image', 'document', 'audio', 'location', 'sticker'])],
             'action' => ['nullable', Rule::in(['timeout'])],
             'language' => ['nullable', 'string', 'regex:/^[a-z]{2}(-[A-Z]{2})?$/'],
+            'number_id' => ['nullable', 'uuid'],
+            'integrations' => ['nullable', Rule::in(['mock', 'live'])],
+            'api_mode' => ['nullable', Rule::in(['success', 'error', 'timeout'])],
+            'window' => ['nullable', Rule::in(['open', 'closed'])],
+            'source' => ['nullable', Rule::in(['meta_ad', 'google_ads', 'paid_other'])],
         ]);
+        $live = ($data['integrations'] ?? 'mock') === 'live';
+        if ($live) {
+            // Real API / Sheets calls from a test can change real systems: publishers only, and audited.
+            $this->context->authorize(Permission::ChatbotsPublish);
+        }
         $graph = FlowGraph::from($flow->draft);
         $settings = FlowSettings::normalize($flow->settings);
         $key = fn (string $id) => "chatbot-test:{$this->context->id()}:{$flow->id}:{$id}";
@@ -627,7 +642,13 @@ final class ChatbotController extends Controller
         $saved = isset($data['test_id']) ? Cache::get($key($data['test_id'])) : null;
         $testId = is_array($saved) ? (string) $data['test_id'] : Str::random(24);
         $contact = is_array($saved) ? $saved['contact'] : TestRuntime::contactFor(isset($data['contact_id']) ? Contact::query()->find($data['contact_id']) : null);
-        $rt = new TestRuntime(is_array($saved) ? $saved['state'] : [], $contact, $flow->name);
+        $numberId = $data['number_id'] ?? $flow->phone_number_id;
+        $rt = new TestRuntime(is_array($saved) ? $saved['state'] : [], $contact, $flow->name, [
+            'number_id' => $numberId, 'integrations' => $live ? 'live' : 'mock', 'api_mode' => $data['api_mode'] ?? 'success', 'window' => $data['window'] ?? 'open',
+        ]);
+        if ($live) {
+            $this->audit->record('chatbot.test_live_calls', $flow, meta: ['test_id' => $testId]);
+        }
         $type = $data['type'] ?? 'text';
         $content = match ($type) {
             'location' => ['latitude' => 25.2048, 'longitude' => 55.2708, 'name' => 'Test location', 'address' => 'Dubai'],
@@ -641,17 +662,26 @@ final class ChatbotController extends Controller
                 throw ValidationException::withMessages(['flow' => 'Add a Start block first.']);
             }
             $first = isset($data['language']) && $data['language'] === 'ar' ? new BotInput('مرحبا') : null;
+            if (isset($data['source'])) {
+                $rt->state['vars']['_source'] = ['source' => $data['source'], 'campaign' => null, 'evidence' => 'test'];
+            }
             $engine->begin($graph, $settings, $rt, $first);
             if (isset($data['language']) && in_array($data['language'], $settings['languages'], true)) {
                 $rt->state['vars']['_lang'] = $data['language'];
             }
         } elseif (in_array($rt->state['status'], ChatbotSession::RUNNING, true)) {
             if ($rt->state['status'] === 'waiting') {
-                // No one waits minutes in a test: continue after the Wait straight away.
+                // No one waits minutes in a test: continue after the Wait straight away. A wait of a
+                // day or more closes the 24-hour window, as it would live.
+                $wait = $graph->node($rt->state['current_node']);
+                if (($wait['type'] ?? null) === 'delay' && ($wait['config']['mode'] ?? 'duration') === 'duration' && (int) $wait['config']['minutes'] >= 1440) {
+                    $rt->setWindow(false);
+                }
                 $engine->resume($graph, $settings, $rt);
             } elseif (($data['action'] ?? null) === 'timeout') {
                 $engine->timeout($graph, $settings, $rt);
             } else {
+                $rt->setWindow(true); // a customer message opens a new 24-hour window
                 $engine->inbound($graph, $settings, $rt, $input);
             }
         } else {

@@ -15,6 +15,7 @@ use App\Domain\Chatbots\Services\ChatbotWorkspace;
 use App\Domain\Chatbots\Services\OrderLookup;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\SegmentQuery;
+use App\Domain\Growth\Services\Acquisition;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Exceptions\MessagingException;
@@ -84,7 +85,28 @@ final class LiveRuntime extends BotRuntime
             'fields' => (array) ($contact->custom_fields ?? []),
             'tags' => (array) ($contact->tags ?? []),
             'consent' => $contact->consent_state->value,
-        ];
+        ] + self::leadSource($contact);
+    }
+
+    /**
+     * The paid source the Growth Hub proved for this contact (latest paid touch, else the original):
+     * meta_ad, google_ads or paid_other, with its campaign (UTM campaign or the Meta ad headline).
+     * Organic and unproven sources give null, so flows never route on a guess.
+     *
+     * @return array{lead_source: ?string, campaign: ?string}
+     */
+    public static function leadSource(Contact $contact): array
+    {
+        foreach (['acquisition_latest', 'acquisition_original'] as $column) {
+            $touch = $contact->getAttribute($column);
+            if (is_array($touch) && Acquisition::paid($touch)) {
+                $campaign = ($touch['campaign'] ?? null) ?: ($touch['headline'] ?? null);
+
+                return ['lead_source' => (string) $touch['source'], 'campaign' => is_string($campaign) && $campaign !== '' ? $campaign : null];
+            }
+        }
+
+        return ['lead_source' => null, 'campaign' => null];
     }
 
     public function send(array $data): string

@@ -87,9 +87,20 @@ abstract class BotRuntime
     /** A line for the Test chat ("Saved “Gold” to Membership tier"); ignored in live conversations. */
     public function note(string $text): void {}
 
-    /** Live API calls are made for real in both modes; the Test chat labels them. */
     public function isTest(): bool
     {
         return false;
+    }
+
+    /** Whether API and Google Sheets blocks really call out. Always in live chats; in the Test chat only when explicitly allowed. */
+    public function liveCalls(): bool
+    {
+        return ! $this->isTest();
+    }
+
+    /** For dry-run calls: success, error or timeout. */
+    public function apiMode(): string
+    {
+        return 'success';
     }
 }
