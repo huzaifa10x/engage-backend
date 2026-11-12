@@ -98,7 +98,11 @@ final class AccountEmailController extends Controller
 
         $status = Password::broker()->reset($data + ['password_confirmation' => $request->input('password_confirmation')], function (User $user, string $password): void {
             // Opening a link sent to the address also proves the address.
-            $user->forceFill(['password' => $password, 'remember_token' => Str::random(60), 'email_verified_at' => $user->getAttribute('email_verified_at') ?? now()])->save();
+            // A new password also ends every remembered device: each must enter a code again.
+            $user->forceFill([
+                'password' => $password, 'remember_token' => Str::random(60), 'login_trust_reset_at' => now(),
+                'email_verified_at' => $user->getAttribute('email_verified_at') ?? now(),
+            ])->save();
             event(new PasswordReset($user));
         });
 

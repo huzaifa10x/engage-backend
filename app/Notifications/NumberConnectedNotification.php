@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Notifications;
 
+use App\Notifications\Contracts\HasEmailCategory;
 use App\Support\Queue\QueueName;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -11,7 +12,7 @@ use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
 /** 4. WhatsApp number connected: confirmation to the workspace owners. */
-final class NumberConnectedNotification extends Notification implements ShouldQueue
+final class NumberConnectedNotification extends Notification implements HasEmailCategory, ShouldQueue
 {
     use Queueable;
 
@@ -19,6 +20,11 @@ final class NumberConnectedNotification extends Notification implements ShouldQu
     {
         $this->onQueue(QueueName::Notifications->value);
         $this->afterCommit();
+    }
+
+    public function emailCategory(): string
+    {
+        return 'whatsapp_numbers';
     }
 
     /** @return list<string> */

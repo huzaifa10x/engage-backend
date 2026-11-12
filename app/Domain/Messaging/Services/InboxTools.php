@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Services;
 
+use App\Application\Notifications\EmailPreferences;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\Permission;
 use App\Domain\Messaging\Enums\ConversationStatus;
@@ -182,7 +183,7 @@ final class InboxTools
             ]);
             $user = $email ? $member->user()->first() : null;
             if ($user !== null) {
-                $user->notify(new InboxAlertNotification($title, $body !== null ? mb_substr($body, 0, 300) : null, config('engage.frontend_url').$url));
+                $user->notify(new InboxAlertNotification($title, $body !== null ? mb_substr($body, 0, 300) : null, config('engage.frontend_url').$url, EmailPreferences::forInboxType($type)));
             }
         } catch (Throwable $e) {
             Log::warning('Member notification failed', ['member' => $member->id, 'error' => $e->getMessage()]);

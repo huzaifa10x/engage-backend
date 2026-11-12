@@ -13,7 +13,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * The 24-hour sign-in window, enforced on the server: a browser session is valid for the window
- * since its last one-time code. After that it is signed out (401) and the next sign-in asks for
+ * since its last one-time code (30 days on a device the person chose to remember). After that it is signed out (401) and the next sign-in asks for
  * a new code. Token-authenticated requests (no browser session) are not affected.
  */
 final class EnsureFreshLogin
@@ -43,7 +43,15 @@ final class EnsureFreshLogin
             return $next($request);
         }
 
-        if ((int) $at <= now()->subHours(LoginVerification::windowHours())->timestamp) {
+        // A remembered device: valid until 30 days after its code. Otherwise the 24-hour window.
+        $until = $session->get(LoginVerification::SESSION_UNTIL);
+        $expired = is_numeric($until) ? (int) $until <= now()->timestamp : (int) $at <= now()->subHours(LoginVerification::windowHours())->timestamp;
+        // "Forget remembered devices" (or a password reset) also ends the sessions those devices had open.
+        $reset = $user->getAttribute('login_trust_reset_at');
+        if (is_numeric($until) && $reset instanceof \DateTimeInterface && (int) $at <= $reset->getTimestamp()) {
+            $expired = true;
+        }
+        if ($expired) {
             Auth::guard('web')->logout();
             $session->invalidate();
             $session->regenerateToken();

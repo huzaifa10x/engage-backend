@@ -38,6 +38,7 @@ final class LoginRequest extends FormRequest
             'email' => ['required', 'string', 'email'],
             'password' => ['required', 'string'],
             'remember' => ['sometimes', 'boolean'],
+            'remember_device' => ['sometimes', 'boolean'],
         ];
     }
 

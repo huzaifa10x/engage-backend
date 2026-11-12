@@ -22,12 +22,17 @@ use Symfony\Component\HttpFoundation\Cookie;
  *  • trust: a browser that entered a code holds a random token (httpOnly cookie) for 24 hours;
  *    only its hash is stored. Within the window that browser signs in with the password alone.
  *    Any other browser, and this one after the window, is asked for a code again.
+ *  • remember this device: ticked at sign-in, the same trust lasts 30 days instead of 24 hours.
+ *    A password reset, "Sign out everywhere" (support) and "Forget remembered devices" end it.
  */
 final class LoginVerification
 {
     public const COOKIE = 'engage_trusted';
 
     public const SESSION_STAMP = 'auth.login_verified_at';
+
+    /** Until when this session's sign-in stays valid (a remembered device: 30 days from its code). */
+    public const SESSION_UNTIL = 'auth.login_verified_until';
 
     public const CODE_MINUTES = 10;
 
@@ -41,27 +46,72 @@ final class LoginVerification
         return max(1, (int) config('engage.login_otp.window_hours', 24));
     }
 
-    /** When this browser last entered a code for this user, if that is still inside the window. */
-    public function trustedSince(Request $request, User $user): ?Carbon
+    public static function rememberDays(): int
+    {
+        return max(1, (int) config('engage.login_otp.remember_days', 30));
+    }
+
+    /**
+     * When this browser last entered a code for this user and until when that counts, if it still does.
+     *
+     * @return ?array{at: int, until: int, remembered: bool}
+     */
+    public function trusted(Request $request, User $user): ?array
     {
         $token = $request->cookie(self::COOKIE);
         if (! is_string($token) || $token === '') {
             return null;
         }
-        $at = Cache::get($this->trustKey($user, $token));
+        $stored = Cache::get($this->trustKey($user, $token));
+        // Before "remember this device", the entry was the time alone (24-hour window). Some cache
+        // stores hand numbers back as strings.
+        if (is_numeric($stored)) {
+            $stored = ['at' => (int) $stored, 'until' => (int) $stored + self::windowHours() * 3600, 'remembered' => false];
+        }
+        if (! is_array($stored) || ! is_numeric($stored['at'] ?? null) || ! is_numeric($stored['until'] ?? null)) {
+            return null;
+        }
+        $at = (int) $stored['at'];
+        $until = (int) $stored['until'];
+        if ($until <= now()->timestamp) {
+            return null;
+        }
+        // Remembered devices end with a password reset, "Sign out everywhere" or "Forget remembered devices".
+        foreach (['login_trust_reset_at', 'sessions_revoked_at'] as $column) {
+            $reset = $user->getAttribute($column);
+            if ($reset instanceof \DateTimeInterface && $at <= $reset->getTimestamp()) {
+                return null;
+            }
+        }
 
-        // Some cache stores hand numbers back as strings.
-        return is_numeric($at) && (int) $at > now()->subHours(self::windowHours())->timestamp ? Carbon::createFromTimestamp((int) $at) : null;
+        return ['at' => $at, 'until' => $until, 'remembered' => (bool) ($stored['remembered'] ?? false)];
     }
 
-    /** Marks this browser as verified now and returns the cookie that proves it for the window. */
-    public function trust(User $user): Cookie
+    /**
+     * Marks this browser as verified now and returns the cookie that proves it: for the 24-hour
+     * window, or for 30 days when the person ticked "Remember this device".
+     */
+    public function trust(User $user, bool $remember = false): Cookie
     {
         $token = Str::random(64);
-        $minutes = self::windowHours() * 60;
-        Cache::put($this->trustKey($user, $token), now()->timestamp, now()->addMinutes($minutes));
+        $minutes = $remember ? self::rememberDays() * 1440 : self::windowHours() * 60;
+        $until = now()->addMinutes($minutes);
+        Cache::put($this->trustKey($user, $token), ['at' => now()->timestamp, 'until' => $until->timestamp, 'remembered' => $remember], $until);
 
         return cookie(self::COOKIE, $token, $minutes, '/', null, (bool) config('session.secure'), true, false, 'lax');
+    }
+
+    /** Puts the verified sign-in on the session: since when, and until when it stays valid. */
+    public static function stamp(Request $request, int $at, ?int $until = null): void
+    {
+        $request->session()->put(self::SESSION_STAMP, $at);
+        $until !== null ? $request->session()->put(self::SESSION_UNTIL, $until) : $request->session()->forget(self::SESSION_UNTIL);
+    }
+
+    /** "Forget remembered devices": every browser must enter a code at its next sign-in. */
+    public function forgetDevices(User $user): void
+    {
+        $user->forceFill(['login_trust_reset_at' => now()])->save();
     }
 
     /**

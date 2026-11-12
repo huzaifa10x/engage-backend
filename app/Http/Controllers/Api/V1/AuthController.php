@@ -76,30 +76,38 @@ final class AuthController extends Controller
 
             return response()->json(['data' => ['two_factor_required' => true]], 202);
         }
-        $trustedSince = LoginVerification::enabled() ? $verification->trustedSince($request, $user) : now();
+        $trusted = LoginVerification::enabled() ? $verification->trusted($request, $user) : ['at' => now()->timestamp, 'until' => null];
 
-        if ($trustedSince === null) {
+        if ($trusted === null) {
             // Password correct, but not signed in yet: park the sign-in until the code is entered.
             Auth::guard('web')->logout();
             $request->session()->regenerate();
-            $request->session()->put(self::PENDING, ['id' => $user->id, 'remember' => $remember, 'at' => now()->timestamp]);
+            $request->session()->put(self::PENDING, [
+                'id' => $user->id, 'remember' => $remember, 'remember_device' => $request->boolean('remember_device'), 'at' => now()->timestamp,
+            ]);
 
             return $this->sendLoginCode($user, $verification);
         }
 
         $request->session()->regenerate();
-        $request->session()->put(LoginVerification::SESSION_STAMP, $trustedSince->timestamp);
+        LoginVerification::stamp($request, $trusted['at'], $trusted['until']);
         $user->forceFill(['last_login_at' => now()])->saveQuietly();
 
         return $me->payload($user, $user->last_active_tenant_id);
     }
 
-    /** Step 2: the emailed code. Signs the user in and trusts this browser for 24 hours. */
+    /**
+     * Step 2: the emailed code. Signs the user in and trusts this browser for 24 hours, or for
+     * 30 days when "Remember this device" was ticked (at step 1, or sent again with the code).
+     */
     public function loginVerify(Request $request, MeController $me, LoginVerification $verification): JsonResponse
     {
         $this->ensureStateful($request);
         $user = $this->pendingUser($request);
-        $data = $request->validate(['code' => ['required', 'string', 'regex:/^\s*\d[\d\s-]{4,10}\d\s*$/']], ['code.regex' => 'Enter the 6-digit code from the email.']);
+        $data = $request->validate(
+            ['code' => ['required', 'string', 'regex:/^\s*\d[\d\s-]{4,10}\d\s*$/'], 'remember_device' => ['sometimes', 'boolean']],
+            ['code.regex' => 'Enter the 6-digit code from the email.'],
+        );
 
         foreach (['login-otp-verify:'.$user->id => 10, 'login-otp-verify-ip:'.$request->ip() => 30] as $key => $max) {
             if (RateLimiter::tooManyAttempts($key, $max)) {
@@ -119,13 +127,18 @@ final class AuthController extends Controller
         RateLimiter::clear('login-otp-verify:'.$user->id);
 
         $pending = (array) $request->session()->pull(self::PENDING);
+        $rememberDevice = $request->has('remember_device') ? $request->boolean('remember_device') : (bool) ($pending['remember_device'] ?? false);
         Auth::guard('web')->login($user, (bool) ($pending['remember'] ?? false));
         $request->session()->regenerate();
-        $request->session()->put(LoginVerification::SESSION_STAMP, now()->timestamp);
+        $cookie = $verification->trust($user, $rememberDevice);
+        LoginVerification::stamp($request, now()->timestamp, $rememberDevice ? now()->addDays(LoginVerification::rememberDays())->timestamp : null);
         // A code read from the inbox also proves the address belongs to them.
         $user->forceFill(['last_login_at' => now(), 'email_verified_at' => $user->getAttribute('email_verified_at') ?? now()])->saveQuietly();
+        if ($rememberDevice) {
+            app(AuditLogger::class)->record('user.device_remembered', $user, meta: ['days' => LoginVerification::rememberDays()]);
+        }
 
-        return $me->payload($user, $user->last_active_tenant_id)->withCookie($verification->trust($user));
+        return $me->payload($user, $user->last_active_tenant_id)->withCookie($cookie);
     }
 
     /** Step 2 with two-factor sign-in: a code from the authenticator app, or a recovery code. */

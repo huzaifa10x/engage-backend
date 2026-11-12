@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Notifications;
 
+use App\Notifications\Contracts\HasEmailCategory;
 use App\Support\Queue\QueueName;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -11,7 +12,7 @@ use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
 /** 6. Template rejected by Meta, with the reason and what to do next. */
-final class TemplateRejectedNotification extends Notification implements ShouldQueue
+final class TemplateRejectedNotification extends Notification implements HasEmailCategory, ShouldQueue
 {
     use Queueable;
 
@@ -19,6 +20,11 @@ final class TemplateRejectedNotification extends Notification implements ShouldQ
     {
         $this->onQueue(QueueName::Notifications->value);
         $this->afterCommit();
+    }
+
+    public function emailCategory(): string
+    {
+        return 'templates';
     }
 
     /** @return list<string> */

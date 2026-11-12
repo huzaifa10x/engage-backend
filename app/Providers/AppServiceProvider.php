@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Application\Notifications\EmailPreferences;
 use App\Domain\Access\Models\Role;
 use App\Domain\Billing\Models\Subscription;
 use App\Domain\Campaigns\Models\Campaign;
@@ -36,6 +37,7 @@ use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\Request;
+use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
@@ -63,6 +65,8 @@ class AppServiceProvider extends ServiceProvider
 
         // Customer webhooks: message.* events follow the same event that updates the inbox.
         Event::listen(MessageStored::class, EmitMessageWebhooks::class);
+        // Settings › Email notifications: a switched-off category is not emailed to that person.
+        Event::listen(NotificationSending::class, [EmailPreferences::class, 'handle']);
 
         // Meta refused a call for lack of access: check, once per account every few minutes, whether the customer removed us.
         Event::listen(MetaAccessRejected::class, function (MetaAccessRejected $event): void {

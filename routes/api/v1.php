@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\Crm\StageController;
 use App\Http\Controllers\Api\V1\DeveloperController;
+use App\Http\Controllers\Api\V1\EmailPreferenceController;
 use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\Growth\LeadController;
 use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
@@ -40,6 +41,7 @@ use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
 use App\Http\Controllers\Api\V1\Templates\TemplateController;
 use App\Http\Controllers\Api\V1\TenantController;
+use App\Http\Controllers\Api\V1\TrustedDeviceController;
 use App\Http\Controllers\Api\V1\TwoFactorController;
 use App\Http\Controllers\Api\V1\WhatsApp\AccountController as WhatsAppAccountController;
 use App\Http\Controllers\Api\V1\WhatsApp\PhoneNumberController;
@@ -99,6 +101,11 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, 'tenant:optional', '
     Route::post('auth/two-factor/replace', [TwoFactorController::class, 'replace'])->middleware('throttle:10,1')->name('auth.two-factor.replace');
     Route::post('auth/two-factor/recovery-codes', [TwoFactorController::class, 'recoveryCodes'])->name('auth.two-factor.recovery-codes');
     Route::delete('auth/two-factor', [TwoFactorController::class, 'destroy'])->name('auth.two-factor.destroy');
+    // Remember this device (30 days without a sign-in code) and the person's own email choices.
+    Route::get('auth/remembered-devices', [TrustedDeviceController::class, 'show'])->name('auth.remembered-devices');
+    Route::delete('auth/remembered-devices', [TrustedDeviceController::class, 'destroy'])->middleware('throttle:10,1')->name('auth.remembered-devices.forget');
+    Route::get('me/email-preferences', [EmailPreferenceController::class, 'show'])->name('me.email-preferences');
+    Route::put('me/email-preferences', [EmailPreferenceController::class, 'update'])->middleware('throttle:30,1')->name('me.email-preferences.update');
     Route::put('me/active-tenant', [ActiveTenantController::class, 'update'])->name('me.active-tenant');
     Route::post('invitations/{token}/accept', [InvitationController::class, 'accept'])
         ->where('token', '[A-Za-z0-9]{64}')

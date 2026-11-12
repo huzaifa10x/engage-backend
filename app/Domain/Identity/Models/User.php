@@ -50,6 +50,8 @@ class User extends Authenticatable
             'review_account_at' => 'datetime',
             'sessions_revoked_at' => 'datetime',
             'terms_accepted_at' => 'datetime',
+            'login_trust_reset_at' => 'datetime',
+            'email_preferences' => 'array',
             'password' => 'hashed',
         ];
     }

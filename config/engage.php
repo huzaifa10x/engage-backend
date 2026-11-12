@@ -40,12 +40,15 @@ return [
     /*
     | Sign-in security for workspace users: after the password, a one-time code is emailed.
     | A browser that has entered a code is trusted for `window_hours`; after that the next
-    | sign-in asks for a code again and any session still open is signed out.
+    | sign-in asks for a code again and any session still open is signed out. A browser where the
+    | person ticked "Remember this device" is trusted for `remember_days` instead.
     | LOGIN_OTP_ENABLED=false switches the code step off (emergency use: mail outage).
     */
     'login_otp' => [
         'enabled' => (bool) env('LOGIN_OTP_ENABLED', true),
         'window_hours' => (int) env('LOGIN_OTP_WINDOW_HOURS', 24),
+        // "Remember this device" at sign-in: no code on that browser for this many days.
+        'remember_days' => (int) env('LOGIN_REMEMBER_DAYS', 30),
     ],
 
     // Demo and contact requests from the public website are emailed here.

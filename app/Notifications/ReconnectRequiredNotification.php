@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Notifications;
 
+use App\Notifications\Contracts\HasEmailCategory;
 use App\Support\Queue\QueueName;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -11,7 +12,7 @@ use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
 /** 5. Reconnect required: a number stopped working and needs action from the customer. */
-final class ReconnectRequiredNotification extends Notification implements ShouldQueue
+final class ReconnectRequiredNotification extends Notification implements HasEmailCategory, ShouldQueue
 {
     use Queueable;
 
@@ -19,6 +20,11 @@ final class ReconnectRequiredNotification extends Notification implements Should
     {
         $this->onQueue(QueueName::Notifications->value);
         $this->afterCommit();
+    }
+
+    public function emailCategory(): string
+    {
+        return 'whatsapp_numbers';
     }
 
     /** @return list<string> */
