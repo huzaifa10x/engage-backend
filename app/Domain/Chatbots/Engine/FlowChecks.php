@@ -423,6 +423,11 @@ final class FlowChecks
         return [array_values(array_unique($vars)), array_values(array_unique($fields))];
     }
 
+    /**
+     * @param  list<string>  $from
+     * @param  array<string, list<string>>  $edges
+     * @return array<string, true>
+     */
     private static function walk(array $from, array $edges): array
     {
         $seen = array_fill_keys($from, true);

@@ -49,6 +49,7 @@ final class TestRuntime extends BotRuntime
     /**
      * @param  array<string, mixed>  $state
      * @param  array<string, mixed>  $contact
+     * @param  array<string, mixed>  $options
      */
     public function __construct(array $state, array $contact, private readonly string $botName = 'Chatbot', private readonly array $options = [])
     {

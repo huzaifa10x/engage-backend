@@ -796,7 +796,8 @@ final class ChatbotController extends Controller
         if (isset($data['test_endpoints'])) {
             $this->context->authorize(Permission::IntegrationsManage);
             $changes['test_endpoints'] = ChatbotWorkspace::cleanTestEndpoints($data['test_endpoints']);
-            if (collect($data['test_endpoints'])->contains(fn ($v) => ChatbotWorkspace::cleanTestEndpoints([$v]) === [])) {
+            $invalid = array_filter((array) $data['test_endpoints'], fn (mixed $v): bool => ChatbotWorkspace::cleanTestEndpoints([$v]) === []);
+            if ($invalid !== []) {
                 throw ValidationException::withMessages(['test_endpoints' => 'Each test endpoint must be an https address with a host name, like https://sandbox.example.com/ (no IP address, port, login or query).']);
             }
         }
