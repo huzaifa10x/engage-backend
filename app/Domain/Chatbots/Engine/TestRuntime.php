@@ -30,16 +30,21 @@ use Throwable;
  *
  * Integrations are dry runs by default: API and Google Sheets blocks are not sent; the transcript
  * shows what would have been sent and the step's sample answer (or the chosen failure) is used.
- * Real calls happen only with integrations = "live", which the controller allows for people who
- * may publish, and records in the audit log.
+ * Real calls happen only with integrations = "live" (people who may publish and manage
+ * integrations, after confirming, with a reason), and only to the workspace's test endpoints:
+ * any other address stays a dry run. Every real call is listed in $liveCalls for the audit log.
  *
  * Options: number_id (whose business hours and templates apply), integrations (mock | live),
+ * test_endpoints (URL prefixes live calls may reach), max_live_calls (per request),
  * api_mode (success | error | timeout, for mocked calls), window (open | closed).
  */
 final class TestRuntime extends BotRuntime
 {
     /** @var list<array<string, mixed>> what the customer would see, and notes about what happened */
     public array $transcript = [];
+
+    /** @var list<array<string, mixed>> real calls made in this request (method, host, path, node, status) */
+    public array $liveCalls = [];
 
     /**
      * @param  array<string, mixed>  $state
@@ -82,6 +87,27 @@ final class TestRuntime extends BotRuntime
     public function liveCalls(): bool
     {
         return ($this->options['integrations'] ?? 'mock') === 'live';
+    }
+
+    public function mayCallLive(string $url): bool
+    {
+        if (count($this->liveCalls) >= (int) ($this->options['max_live_calls'] ?? 5)) {
+            $this->note('(Test) Not sent: the limit of live calls for one message was reached.');
+
+            return false;
+        }
+        if (! ChatbotWorkspace::isTestEndpoint($url, (array) ($this->options['test_endpoints'] ?? []))) {
+            $this->note('(Test) Not sent for real: '.parse_url($url, PHP_URL_HOST).' is not one of the workspace\'s test endpoints, so the sample answer is used.');
+
+            return false;
+        }
+
+        return true;
+    }
+
+    public function liveCallMade(array $call): void
+    {
+        $this->liveCalls[] = $call;
     }
 
     public function apiMode(): string

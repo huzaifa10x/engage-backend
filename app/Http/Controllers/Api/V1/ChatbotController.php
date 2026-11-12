@@ -47,6 +47,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -609,7 +610,10 @@ final class ChatbotController extends Controller
      * Test chat: the draft runs on the real engine, with the data of a chosen contact if any.
      * Nothing is sent on WhatsApp and nothing is saved on the contact. API and Google Sheets blocks
      * are dry runs (their sample answer, or the failure chosen in `api_mode`) unless `integrations`
-     * is "live", which needs the publish permission and is recorded in the audit log.
+     * is "live". Live needs: the publish AND manage-integrations permissions, `confirm_live: true`
+     * and a `live_reason` on every request, and test endpoints set for the workspace; only those
+     * URL prefixes are really called (anything else stays a dry run), at most 5 per message and 30
+     * per person per hour. The start and every real call are recorded in the audit log.
      * `action`: "timeout" makes the current step's "No reply" timer run out now.
      * `number_id`: whose business hours and WhatsApp templates apply. `window`: "closed" makes free
      * text fail as outside the 24-hour window. `source`: test as a lead from that paid source.
@@ -626,14 +630,29 @@ final class ChatbotController extends Controller
             'language' => ['nullable', 'string', 'regex:/^[a-z]{2}(-[A-Z]{2})?$/'],
             'number_id' => ['nullable', 'uuid'],
             'integrations' => ['nullable', Rule::in(['mock', 'live'])],
+            'confirm_live' => ['exclude_unless:integrations,live', 'required', 'accepted'],
+            'live_reason' => ['exclude_unless:integrations,live', 'required', 'string', 'min:5', 'max:200'],
             'api_mode' => ['nullable', Rule::in(['success', 'error', 'timeout'])],
             'window' => ['nullable', Rule::in(['open', 'closed'])],
             'source' => ['nullable', Rule::in(['meta_ad', 'google_ads', 'paid_other'])],
         ]);
         $live = ($data['integrations'] ?? 'mock') === 'live';
+        $endpoints = [];
         if ($live) {
-            // Real API / Sheets calls from a test can change real systems: publishers only, and audited.
+            // Real API / Sheets calls from a test can change real systems. Publishing alone is not
+            // enough: the person must also manage integrations, confirm, give a reason, and the calls
+            // may only reach the endpoints the workspace has marked as safe for testing.
             $this->context->authorize(Permission::ChatbotsPublish);
+            $this->context->authorize(Permission::IntegrationsManage);
+            $endpoints = ChatbotWorkspace::testEndpoints($this->context->tenant());
+            if ($endpoints === []) {
+                throw ValidationException::withMessages(['integrations' => 'Add test endpoints in Chatbot settings before testing with live integrations.']);
+            }
+            $limiter = 'chatbot-live-test:'.$this->context->id().':'.($this->context->userId() ?? 'none');
+            if (RateLimiter::tooManyAttempts($limiter, 30)) {
+                throw ValidationException::withMessages(['integrations' => 'Too many live tests this hour. Test with sample answers, or try again later.']);
+            }
+            RateLimiter::hit($limiter, 3600);
         }
         $graph = FlowGraph::from($flow->draft);
         $settings = FlowSettings::normalize($flow->settings);
@@ -645,9 +664,10 @@ final class ChatbotController extends Controller
         $numberId = $data['number_id'] ?? $flow->phone_number_id;
         $rt = new TestRuntime(is_array($saved) ? $saved['state'] : [], $contact, $flow->name, [
             'number_id' => $numberId, 'integrations' => $live ? 'live' : 'mock', 'api_mode' => $data['api_mode'] ?? 'success', 'window' => $data['window'] ?? 'open',
+            'test_endpoints' => $endpoints, 'max_live_calls' => 5,
         ]);
         if ($live) {
-            $this->audit->record('chatbot.test_live_calls', $flow, meta: ['test_id' => $testId]);
+            $this->audit->record('chatbot.test_live_calls', $flow, meta: ['test_id' => $testId, 'reason' => $data['live_reason'], 'endpoints' => $endpoints]);
         }
         $type = $data['type'] ?? 'text';
         $content = match ($type) {
@@ -688,6 +708,9 @@ final class ChatbotController extends Controller
             $rt->note('The flow has ended. Start again to test once more.');
         }
 
+        foreach ($rt->liveCalls as $call) {
+            $this->audit->record('chatbot.test_live_call', $flow, meta: $call + ['test_id' => $testId, 'reason' => $data['live_reason'] ?? null]);
+        }
         Cache::put($key($testId), ['state' => $rt->state, 'contact' => $rt->contact], now()->addHours(2));
         $node = $graph->node($rt->state['current_node']);
 
@@ -750,6 +773,7 @@ final class ChatbotController extends Controller
             'variables' => (object) ChatbotWorkspace::variables($tenant),
             'suggestions' => ChatbotWorkspace::SUGGESTED,
             'approvals' => ChatbotWorkspace::approvals($tenant),
+            'test_endpoints' => ChatbotWorkspace::testEndpoints($tenant),
         ]]);
     }
 
@@ -758,6 +782,7 @@ final class ChatbotController extends Controller
         $data = $request->validate([
             'variables' => ['sometimes', 'array', 'max:'.ChatbotWorkspace::MAX_VARIABLES],
             'approvals' => ['sometimes', 'boolean'],
+            'test_endpoints' => ['sometimes', 'array', 'max:'.ChatbotWorkspace::MAX_TEST_ENDPOINTS],
         ]);
         $tenant = $this->context->tenant();
         $changes = [];
@@ -768,8 +793,15 @@ final class ChatbotController extends Controller
             $this->context->authorize(Permission::ChatbotsPublish);
             $changes['approvals'] = $data['approvals'];
         }
+        if (isset($data['test_endpoints'])) {
+            $this->context->authorize(Permission::IntegrationsManage);
+            $changes['test_endpoints'] = ChatbotWorkspace::cleanTestEndpoints($data['test_endpoints']);
+            if (collect($data['test_endpoints'])->contains(fn ($v) => ChatbotWorkspace::cleanTestEndpoints([$v]) === [])) {
+                throw ValidationException::withMessages(['test_endpoints' => 'Each test endpoint must be an https address with a host name, like https://sandbox.example.com/ (no IP address, port, login or query).']);
+            }
+        }
         ChatbotWorkspace::save($tenant, $changes);
-        $this->audit->record('chatbot.workspace_saved', null, meta: ['variables' => array_keys($changes['variables'] ?? []), 'approvals' => $changes['approvals'] ?? null]);
+        $this->audit->record('chatbot.workspace_saved', null, meta: ['variables' => array_keys($changes['variables'] ?? []), 'approvals' => $changes['approvals'] ?? null, 'test_endpoints' => $changes['test_endpoints'] ?? null]);
 
         return $this->workspace();
     }

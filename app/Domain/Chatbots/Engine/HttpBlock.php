@@ -26,8 +26,9 @@ final class HttpBlock
     /** @param array<string, mixed> $c */
     public function call(array $c, BotRuntime $rt, string $nodeId): bool
     {
-        // Secrets are only filled in for a call that is really made.
-        $live = $rt->liveCalls();
+        // Secrets are only filled in for a call that is really made. A test makes real calls only to
+        // the workspace's test endpoints (checked on the address without secrets).
+        $live = $rt->liveCalls() && $rt->mayCallLive(Placeholders::fill($c['url'], $rt, escape: fn (string $v) => rawurlencode($v)));
         $url = Placeholders::fill($c['url'], $rt, secrets: $live, escape: fn (string $v) => rawurlencode($v));
         if (! $this->sameHost((string) $c['url'], $url)) {
             return $this->fail($rt, $nodeId, 'blocked_url', 'placeholders may fill the path and query of the URL, not its address');
@@ -65,12 +66,14 @@ final class HttpBlock
             $response = $request->send($c['method'], $url);
         } catch (Throwable $e) {
             $rt->state['vars']['http_status'] = 0;
+            $rt->liveCallMade(['kind' => 'api', 'method' => $c['method'], 'host' => parse_url($url, PHP_URL_HOST), 'path' => parse_url($url, PHP_URL_PATH), 'node' => $nodeId, 'status' => 0]);
 
             return $this->fail($rt, $nodeId, 'unreachable', $e instanceof ConnectionException ? 'No answer in time' : 'The request failed');
         }
 
         $status = $response->status();
         $rt->state['vars']['http_status'] = $status;
+        $rt->liveCallMade(['kind' => 'api', 'method' => $c['method'], 'host' => parse_url($url, PHP_URL_HOST), 'path' => parse_url($url, PHP_URL_PATH), 'node' => $nodeId, 'status' => $status]);
         $raw = mb_strcut($response->body(), 0, self::MAX_RESPONSE_BYTES);
         $data = json_decode($raw, true);
         $data = is_array($data) ? $data : ['body' => mb_substr($raw, 0, 1000)];
@@ -159,7 +162,7 @@ final class HttpBlock
         foreach ($c['columns'] as $col) {
             $row[$col['name']] = Placeholders::fill($col['value'], $rt);
         }
-        if (! $rt->liveCalls()) {
+        if (! $rt->liveCalls() || ! $rt->mayCallLive($url)) {
             $rt->note('(Test) Not sent: would add a row to “'.$c['sheet'].'”: '.implode(' · ', array_map(fn ($k, $v) => "{$k}: {$v}", array_keys($row), $row)));
 
             return match ($rt->apiMode()) {
@@ -173,8 +176,11 @@ final class HttpBlock
             $response = Http::timeout(8)->connectTimeout(5)->withoutRedirecting()->acceptJson()
                 ->post($url, ['sheet' => $c['sheet'], 'row' => $row, 'submitted_at' => now()->toIso8601String()]);
         } catch (Throwable $e) {
+            $rt->liveCallMade(['kind' => 'sheets', 'method' => 'POST', 'host' => parse_url($url, PHP_URL_HOST), 'path' => parse_url($url, PHP_URL_PATH), 'node' => $nodeId, 'status' => 0]);
+
             return $this->fail($rt, $nodeId, 'unreachable', $e instanceof ValidationException ? 'the sheet link is not allowed' : 'Google Sheets did not answer in time');
         }
+        $rt->liveCallMade(['kind' => 'sheets', 'method' => 'POST', 'host' => parse_url($url, PHP_URL_HOST), 'path' => parse_url($url, PHP_URL_PATH), 'node' => $nodeId, 'status' => $response->status()]);
         $ok = $response->status() >= 200 && $response->status() < 400;
         if (! $ok) {
             return $this->fail($rt, $nodeId, 'http_'.$response->status(), 'Google Sheets answered '.$response->status());

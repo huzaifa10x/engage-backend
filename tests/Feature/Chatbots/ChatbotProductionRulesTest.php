@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Chatbots;
 
+use App\Domain\Access\Models\Role;
+use App\Domain\Access\Permission;
 use App\Domain\Access\SystemRole;
 use App\Domain\Chatbots\Models\ChatbotEvent;
 use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Models\ChatbotSession;
+use App\Domain\Chatbots\Services\ChatbotWorkspace;
 use App\Domain\Crm\Models\ContactField;
 use App\Domain\Developer\Services\UrlGuard;
 use App\Domain\Messaging\Models\Contact;
@@ -20,6 +23,7 @@ use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\RateLimiter;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
 
@@ -337,16 +341,62 @@ final class ChatbotProductionRulesTest extends TestCase
         $this->assertStringContainsString('The CRM is down', collect($t)->map(fn ($e) => $e['message']['body'] ?? '')->implode("\n"));
         $this->assertSame([], $this->outside);
 
+        $live = ['integrations' => 'live', 'confirm_live' => true, 'live_reason' => 'Check the sandbox CRM mapping'];
+
         // Real calls: refused to someone who can't publish …
         $viewer = $this->addMember($this->tenant, SystemRole::Viewer);
         $this->actingAsMember($viewer);
-        $this->postJson("/api/v1/chatbots/{$id}/test", ['integrations' => 'live'])->assertForbidden();
+        $this->postJson("/api/v1/chatbots/{$id}/test", $live)->assertForbidden();
+        // … and to a publisher who can't manage integrations (publishing alone is not enough).
+        $publisherRole = $this->tenantContext()->bypass(fn () => Role::query()->create([
+            'tenant_id' => $this->tenant->id, 'key' => 'flow_publisher', 'name' => 'Flow publisher', 'is_system' => false,
+            'permissions' => [Permission::ChatbotsView->value, Permission::ChatbotsManage->value, Permission::ChatbotsPublish->value],
+        ]));
+        $publisher = $this->addMember($this->tenant, SystemRole::Viewer);
+        $this->tenantContext()->bypass(fn () => $publisher->forceFill(['role_id' => $publisherRole->id])->save());
+        $this->actingAsMember($publisher);
+        $this->postJson("/api/v1/chatbots/{$id}/test", $live)->assertForbidden();
         $this->assertSame([], $this->outside);
-        // … allowed to a publisher, and recorded.
+
+        // An owner must confirm and give a reason …
         $this->actingAsMember($this->owner);
-        $this->postJson("/api/v1/chatbots/{$id}/test", ['integrations' => 'live'])->assertOk();
-        $this->assertCount(2, $this->outside, 'the API and the sheet were called because a publisher asked');
-        $this->assertTrue($this->inTenant(fn () => DB::table('audit_log')->where('action', 'chatbot.test_live_calls')->exists()));
+        $this->postJson("/api/v1/chatbots/{$id}/test", ['integrations' => 'live'])->assertUnprocessable()->assertJsonStructure(['error' => ['details' => ['fields' => ['confirm_live', 'live_reason']]]]);
+        // … and the workspace must have test endpoints.
+        $this->postJson("/api/v1/chatbots/{$id}/test", $live)->assertUnprocessable()->assertJsonStructure(['error' => ['details' => ['fields' => ['integrations']]]]);
+        $this->assertSame([], $this->outside);
+
+        // Test endpoints: https host names only; only people who manage integrations may set them.
+        $this->putJson('/api/v1/chatbots/workspace', ['test_endpoints' => ['http://10.0.0.5/hook']])->assertUnprocessable();
+        $this->putJson('/api/v1/chatbots/workspace', ['test_endpoints' => ['https://user:pw@api.example.com/']])->assertUnprocessable();
+        $this->actingAsMember($publisher);
+        $this->putJson('/api/v1/chatbots/workspace', ['test_endpoints' => ['https://api.example.com/']])->assertForbidden();
+        $this->actingAsMember($this->owner);
+        $this->putJson('/api/v1/chatbots/workspace', ['test_endpoints' => ['https://API.example.com/leads']])->assertOk()
+            ->assertJsonPath('data.test_endpoints', ['https://api.example.com/leads']);
+
+        // Only the listed endpoint is really called; the sheet (not listed) stays a dry run.
+        $t = $this->postJson("/api/v1/chatbots/{$id}/test", $live)->assertOk()->json('data.transcript');
+        $this->assertCount(1, $this->outside, 'only the test endpoint was called');
+        $this->assertStringContainsString('api.example.com/leads', (string) $this->outside[0]);
+        $texts = collect($t)->map(fn ($e) => $e['message']['body'] ?? $e['text'] ?? '')->implode("\n");
+        $this->assertStringContainsString('(Test) Not sent: would add a row to “Leads”', $texts);
+        $this->inTenant(function () {
+            $this->assertSame('Check the sandbox CRM mapping', json_decode((string) DB::table('audit_log')->where('action', 'chatbot.test_live_calls')->value('meta'), true)['reason']);
+            $call = json_decode((string) DB::table('audit_log')->where('action', 'chatbot.test_live_call')->sole()->meta, true);
+            $this->assertSame(['api', 'POST', 'api.example.com', '/leads', 'crm'], [$call['kind'], $call['method'], $call['host'], $call['path'], $call['node']]);
+        });
+
+        // A look-alike path is not the endpoint ("/leads-prod" is not under "/leads").
+        $this->assertFalse(ChatbotWorkspace::isTestEndpoint('https://api.example.com/leads-prod', ['https://api.example.com/leads']));
+        $this->assertTrue(ChatbotWorkspace::isTestEndpoint('https://api.example.com/leads/42', ['https://api.example.com/leads']));
+        $this->assertFalse(ChatbotWorkspace::isTestEndpoint('https://api.example.com.evil.io/leads', ['https://api.example.com/leads']));
+
+        // 30 live tests per person per hour.
+        $key = 'chatbot-live-test:'.$this->tenant->id.':'.$this->owner->user_id;
+        foreach (range(1, 29) as $_) {
+            RateLimiter::hit($key, 3600);
+        }
+        $this->postJson("/api/v1/chatbots/{$id}/test", $live)->assertUnprocessable();
         $this->assertSame([], $this->sent, 'tests never message customers');
     }
 
@@ -369,5 +419,37 @@ final class ChatbotProductionRulesTest extends TestCase
         // Window closed in the test settings and the fallback template doesn't exist: handed over, as live.
         $r = $this->postJson("/api/v1/chatbots/{$id}/test", ['window' => 'closed'])->assertOk()->json('data');
         $this->assertSame('handed_off', $r['state']['status']);
+    }
+
+    public function test_another_workspace_can_neither_see_nor_trigger_this_workspaces_flows(): void
+    {
+        $flow = $this->liveFlow(['nodes' => [
+            $this->node('start', 'start', ['any_message' => true], ['next' => 'hi']),
+            $this->node('hi', 'message', ['text' => 'Hello from workspace A'], ['next' => 'team']),
+            $this->handoff(),
+        ]]);
+        $this->putJson('/api/v1/chatbots/workspace', ['test_endpoints' => ['https://api.example.com/']])->assertOk();
+
+        $other = $this->createTenant();
+        $this->subscribe($other, 'pro');
+        $intruder = $this->addMember($other);
+        $this->connectNumber($other, wabaId: '202290129340399', phoneNumberId: '206540352242923', display: '+971 58 000 0002');
+        $this->actingAsMember($intruder);
+
+        // Through the API: workspace A's flow does not exist for workspace B.
+        $this->getJson("/api/v1/chatbots/{$flow->id}")->assertNotFound();
+        $this->postJson("/api/v1/chatbots/{$flow->id}/test", [])->assertNotFound();
+        $this->postJson("/api/v1/chatbots/{$flow->id}/publish")->assertNotFound();
+        $this->assertSame([], $this->getJson('/api/v1/chatbots')->assertOk()->json('data'));
+        $this->assertSame([], $this->getJson('/api/v1/chatbots/workspace')->assertOk()->json('data.test_endpoints'), 'settings are per workspace');
+
+        // Through WhatsApp: a message to workspace B's number never starts workspace A's bot.
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => 'hi']], waId: '971509999999', bsuid: null, phoneNumberId: '206540352242923'), '202290129340399'))->assertOk();
+        $this->assertSame([], $this->sent);
+        $this->assertSame(0, $this->inTenant(fn () => ChatbotSession::query()->count()));
+        $this->assertSame(0, $this->tenantContext()->run($other, fn () => ChatbotSession::query()->count()));
+        // Workspace A's own customers still get it.
+        $this->says('hi');
+        $this->assertSame('Hello from workspace A', $this->sent[0]['text']['body'] ?? null);
     }
 }

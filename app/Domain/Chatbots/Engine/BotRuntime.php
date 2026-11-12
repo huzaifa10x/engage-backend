@@ -99,6 +99,15 @@ abstract class BotRuntime
     }
 
     /** For dry-run calls: success, error or timeout. */
+    /** Live flows may call any public address the step names (checked by UrlGuard). */
+    public function mayCallLive(string $url): bool
+    {
+        return true;
+    }
+
+    /** @param array<string, mixed> $call method, host, path, node, status */
+    public function liveCallMade(array $call): void {}
+
     public function apiMode(): string
     {
         return 'success';
