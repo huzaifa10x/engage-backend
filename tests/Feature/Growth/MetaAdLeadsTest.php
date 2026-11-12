@@ -403,7 +403,7 @@ final class MetaAdLeadsTest extends TestCase
         $this->getJson("/api/v1/growth/leads/{$contactId}/evidence")->assertForbidden();
     }
 
-    public function test_evidence_masks_ids_for_owners_and_admins(): void
+    public function test_evidence_shows_the_ad_id_but_never_the_click_id(): void
     {
         $this->enableGrowth();
         $this->inboundFromAd($this->fixture('full'));
@@ -414,10 +414,11 @@ final class MetaAdLeadsTest extends TestCase
 
         $this->assertSame('Meta ad', $row['label']);
         $this->assertSame('Free consultation this week', $row['details']['headline']);
-        $this->assertSame('120208••••••0001', $row['details']['ad_id']);
+        // The business's own ad ID is shown in full (7b4dd88, so it can be matched in Ads Manager);
+        // the per-person click ID never leaves the server.
+        $this->assertSame('120208000000000001', $row['details']['ad_id']);
         $this->assertTrue($row['details']['click_id_sent']); // "Present", never the value
         $this->assertSame('image', $row['details']['media_type']); // the ad's creative (Source details)
-        $this->assertStringNotContainsString('120208000000000001', (string) json_encode($row));
         $this->assertStringNotContainsString('ARAkLkA8rmlF', (string) json_encode($row));
     }
 

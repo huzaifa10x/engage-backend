@@ -18,6 +18,8 @@ use App\Domain\Messaging\Services\StatusApplier;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\WhatsApp\Enums\OnboardingType;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use GuzzleHttp\Psr7\Response;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Tests\Concerns\InteractsWithWhatsapp;
@@ -98,6 +100,14 @@ final class InboundMessagingTest extends TestCase
 
     public function test_stop_and_start_keywords_update_consent(): void
     {
+        $sent = [];
+        Http::preventStrayRequests();
+        Http::fake(['graph.facebook.com/v26.0/106540352242922/messages*' => function ($request) use (&$sent) {
+            $sent[] = $request->data()['text']['body'] ?? null;
+
+            return Http::response(['messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '971501234567']], 'messages' => [['id' => 'wamid.CONFIRM'.count($sent)]]]);
+        }]);
+
         $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => ' STOP! ']])))->assertOk();
         $this->inTenant(fn () => $this->assertSame(ConsentState::OptedOut, Contact::query()->sole()->consent_state));
 
@@ -108,6 +118,23 @@ final class InboundMessagingTest extends TestCase
         $this->inTenant(function () {
             $this->assertSame(ConsentState::OptedIn, Contact::query()->sole()->consent_state);
             $this->assertSame(['opted_out', 'opted_in'], ConsentEvent::query()->orderBy('id')->pluck('action')->all() /* UUIDv7: time-ordered */);
+        });
+        $this->assertCount(2, $sent, 'one confirmation for STOP, one for START');
+        $this->assertStringContainsString('unsubscribed', (string) $sent[0]);
+    }
+
+    public function test_the_webhook_still_succeeds_when_the_confirmation_hits_a_transport_error(): void
+    {
+        Http::preventStrayRequests();
+        // What a refusing proxy produces: a transport error that carries a 403 response, not Meta's reply.
+        Http::fake(['graph.facebook.com/*' => fn () => throw new RequestException(new \Illuminate\Http\Client\Response(new Response(403)))]);
+
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => 'STOP']])))->assertOk();
+
+        $this->inTenant(function () {
+            $this->assertSame(ConsentState::OptedOut, Contact::query()->sole()->consent_state, 'the opt-out is recorded even though the reply could not go out');
+            $reply = Message::query()->where('direction', Message::OUTBOUND)->sole();
+            $this->assertContains($reply->status, [MessageStatus::Queued, MessageStatus::Failed], 'retried or failed visibly, never an error page for Meta');
         });
     }
 

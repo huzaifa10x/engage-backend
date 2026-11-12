@@ -8,6 +8,7 @@ use App\Application\WhatsApp\AccessRevocation;
 use App\Domain\WhatsApp\Events\MetaAccessRejected;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -238,8 +239,8 @@ final class GraphClient
                 ->withQueryParameters(['appsecret_proof' => hash_hmac('sha256', $token, $this->appSecret)])
                 ->attach('file', $contents, $filename, ['Content-Type' => $mime])
                 ->post("{$this->version}/{$phoneNumberId}/media", ['messaging_product' => 'whatsapp', 'type' => $mime]);
-        } catch (ConnectionException $e) {
-            throw new MetaApiException('Could not reach Meta: '.$e->getMessage(), 503);
+        } catch (ConnectionException|RequestException $e) {
+            throw self::transportError('Could not reach Meta: ', $e);
         }
 
         $body = $response->json();
@@ -280,8 +281,8 @@ final class GraphClient
 
         try {
             $response = Http::timeout(120)->withToken($token)->withUserAgent('10X-Engage/1.0')->get($url);
-        } catch (ConnectionException $e) {
-            throw new MetaApiException('Could not download media: '.$e->getMessage(), 503);
+        } catch (ConnectionException|RequestException $e) {
+            throw self::transportError('Could not download media: ', $e);
         }
 
         if ($response->failed()) {
@@ -384,8 +385,8 @@ final class GraphClient
                 ->withHeaders(['Authorization' => 'OAuth '.$token, 'file_offset' => '0'])
                 ->withBody($contents, 'application/octet-stream')
                 ->post($url);
-        } catch (ConnectionException $e) {
-            throw new MetaApiException('Could not reach Meta: '.$e->getMessage(), 503);
+        } catch (ConnectionException|RequestException $e) {
+            throw self::transportError('Could not reach Meta: ', $e);
         }
 
         $body = $response->json();
@@ -581,8 +582,8 @@ final class GraphClient
                 'DELETE' => $request->delete($url, $data),
                 default => throw new RuntimeException("Unsupported method {$method}"),
             };
-        } catch (ConnectionException $e) {
-            throw new MetaApiException('Could not reach Meta: '.$e->getMessage(), 503);
+        } catch (ConnectionException|RequestException $e) {
+            throw self::transportError('Could not reach Meta: ', $e);
         }
 
         $body = $response->json();
@@ -624,6 +625,16 @@ final class GraphClient
         }
 
         return $request;
+    }
+
+    /**
+     * A failure below Meta's API (DNS, TLS, a proxy refusing the connection) becomes a MetaApiException
+     * like any other (503, transient), so callers retry it instead of meeting an unexpected exception.
+     * Meta's own error replies never get here: they arrive as a response and are read normally.
+     */
+    private static function transportError(string $prefix, ConnectionException|RequestException $e): MetaApiException
+    {
+        return new MetaApiException($prefix.$e->getMessage(), 503);
     }
 
     private function redactPath(string $path): string

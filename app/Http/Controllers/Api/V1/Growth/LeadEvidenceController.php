@@ -15,7 +15,8 @@ use Illuminate\Http\JsonResponse;
 
 /**
  * GET growth/leads/{contact}/evidence — the proof behind a contact's source (growth.view only).
- * The Meta ad ID is masked, the ad click ID (ctwa_clid) is reported only as sent or not; agents never
+ * The Meta ad ID is shown in full (it is the business's own, matched in Ads Manager); the ad click ID
+ * (ctwa_clid) identifies one person's click and is reported only as sent or not; agents never
  * reach this endpoint.
  */
 final class LeadEvidenceController extends Controller
@@ -56,7 +57,6 @@ final class LeadEvidenceController extends Controller
                 'media_type' => $fields['media_type'] ?? null,
                 'creative_url' => $fields['image_url'] ?? $fields['thumbnail_url'] ?? null,
                 'video_url' => $fields['video_url'] ?? null,
-                // 'ad_id' => self::mask($fields['source_id'] ?? null),
                 'ad_id' => $fields['source_id'] ?? null,
                 'click_id_sent' => isset($fields['ctwa_clid']),
             ], fn ($v) => $v !== null) : [],
