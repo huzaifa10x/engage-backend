@@ -15,6 +15,7 @@ use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Jobs\SendReadReceipt;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Models\InboxTeam;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\InboxCounts;
 use App\Domain\Messaging\Services\InboxTools;
@@ -40,6 +41,7 @@ final class ConversationController extends Controller
             'phone_number_id' => ['nullable', 'uuid'],
             'status' => ['nullable', Rule::enum(ConversationStatus::class)],
             'assigned' => ['nullable', Rule::in(['me', 'unassigned', 'others', 'any'])],
+            'team' => ['nullable', 'uuid'],
             // Chatbot views: handled by the bot now, waiting on the customer, or how the bot ended.
             'view' => ['nullable', Rule::in(['bot', 'waiting', 'abandoned', 'completed', 'handed_off'])],
             'unread' => ['nullable', 'boolean'],
@@ -58,6 +60,7 @@ final class ConversationController extends Controller
         $query
             ->when($data['phone_number_id'] ?? null, fn ($q, $id) => $q->where('phone_number_id', $id))
             ->when($data['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
+            ->when($data['team'] ?? null, fn ($q, $team) => $q->where('assigned_team_id', $team))
             ->when(($data['assigned'] ?? null) === 'me', fn ($q) => $q->where('assigned_membership_id', $membership->id))
             ->when(($data['assigned'] ?? null) === 'unassigned', fn ($q) => $q->whereNull('assigned_membership_id'))
             ->when(($data['assigned'] ?? null) === 'others', fn ($q) => $q->whereNotNull('assigned_membership_id')->where('assigned_membership_id', '!=', $membership->id))
@@ -135,6 +138,7 @@ final class ConversationController extends Controller
         $data = $request->validate([
             'status' => ['sometimes', Rule::enum(ConversationStatus::class)],
             'assigned_membership_id' => ['sometimes', 'nullable', 'uuid'],
+            'assigned_team_id' => ['sometimes', 'nullable', 'uuid'],
             // false = no automatic replies in this conversation (a person is handling it).
             'auto_reply_enabled' => ['sometimes', 'boolean'],
         ]);
@@ -155,7 +159,14 @@ final class ConversationController extends Controller
             }
         }
 
-        $before = ['status' => $conversation->status->value, 'assigned_membership_id' => $conversation->assigned_membership_id];
+        if (array_key_exists('assigned_team_id', $data)) {
+            $this->context->authorize(Permission::InboxAssign);
+            if ($data['assigned_team_id'] !== null && ! InboxTeam::query()->whereKey($data['assigned_team_id'])->exists()) {
+                throw ValidationException::withMessages(['assigned_team_id' => 'Choose one of your inbox teams.']);
+            }
+        }
+
+        $before = ['status' => $conversation->status->value, 'assigned_membership_id' => $conversation->assigned_membership_id, 'assigned_team_id' => $conversation->assigned_team_id];
 
         if (array_key_exists('auto_reply_enabled', $data)) {
             $conversation->setAttribute('auto_reply_enabled', (bool) $data['auto_reply_enabled']);
@@ -174,6 +185,9 @@ final class ConversationController extends Controller
         }
         if (array_key_exists('assigned_membership_id', $data)) {
             $conversation->assigned_membership_id = $data['assigned_membership_id'];
+        }
+        if (array_key_exists('assigned_team_id', $data)) {
+            $conversation->assigned_team_id = $data['assigned_team_id'];
         }
         $conversation->save();
         // Closing ends any chatbot session; the next customer message may start the bot again.

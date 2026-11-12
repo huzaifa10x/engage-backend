@@ -43,7 +43,12 @@ abstract class BotRuntime
     abstract public function updateContact(array $changes): void;
 
     /** @return ?string who the conversation went to, in words (for notes), or null */
-    abstract public function assign(string $mode, ?string $memberId, string $reason): ?string;
+    /**
+     * Gives the conversation to someone: 'route' (the inbox routing rule), 'auto' (least busy
+     * teammate), 'member' (that teammate) or 'team' (that inbox team: its least busy member who can
+     * reply on the number, or the team alone when nobody can). Returns who, in words, or null.
+     */
+    abstract public function assign(string $mode, ?string $memberId, string $reason, ?string $teamId = null): ?string;
 
     abstract public function closeConversation(): void;
 

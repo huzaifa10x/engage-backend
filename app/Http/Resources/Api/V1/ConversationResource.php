@@ -29,6 +29,7 @@ final class ConversationResource extends JsonResource
             'snoozed_until' => ($until = $this->getAttribute('snoozed_until')) !== null && $until->isFuture() ? $until->toIso8601String() : null,
             'auto_reply_enabled' => (bool) ($this->getAttribute('auto_reply_enabled') ?? true),
             'assigned_membership_id' => $this->assigned_membership_id,
+            'assigned_team_id' => $this->assigned_team_id,
             // Who answers now: "bot" (a chatbot session is running), "human", or null (nobody yet).
             'handler' => $this->getAttribute('handler'),
             'bot' => $this->bot(),

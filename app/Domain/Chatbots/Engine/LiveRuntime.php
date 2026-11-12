@@ -22,6 +22,7 @@ use App\Domain\Messaging\Exceptions\MessagingException;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\ConversationNote;
+use App\Domain\Messaging\Models\InboxTeam;
 use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Messaging\Services\InboxTools;
@@ -125,6 +126,7 @@ final class LiveRuntime extends BotRuntime
                 }
                 app(SendMessage::class)->toConversation($conversation, $data, MessageOrigin::Automation, null, $key);
             });
+            $this->event((string) ($this->state['current_node'] ?? 'start'), 'sent', $key);
         } catch (MessagingException $e) {
             $reason = match ($e->errorCode()) {
                 ErrorCode::WindowClosed => 'window_closed',
@@ -149,12 +151,32 @@ final class LiveRuntime extends BotRuntime
         $this->contact = self::snapshot($this->contactModel);
     }
 
-    public function assign(string $mode, ?string $memberId, string $reason): ?string
+    public function assign(string $mode, ?string $memberId, string $reason, ?string $teamId = null): ?string
     {
         try {
             $conversation = Conversation::query()->with('contact')->findOrFail($this->conversation->id);
             $tools = app(InboxTools::class);
             $member = null;
+
+            if ($mode === 'team') {
+                $team = $teamId !== null ? InboxTeam::query()->find($teamId) : null;
+                if ($team === null) {
+                    return $this->assign('route', null, $reason); // the team was deleted: the normal routing rule
+                }
+                // Already with someone in that team: they keep it. Otherwise the team's least busy member
+                // who can reply on this number; nobody available leaves it with the team, unassigned.
+                $current = $conversation->assigned_membership_id;
+                $member = $current !== null && in_array($current, $team->memberIds(), true)
+                    ? TenantMembership::query()->find($current)
+                    : $tools->pickAgent($conversation, $team->id);
+                $conversation->forceFill(['assigned_team_id' => $team->id, 'assigned_membership_id' => $member !== null ? $member->id : $conversation->assigned_membership_id])->save();
+                if ($member === null) {
+                    return "the {$team->name} team";
+                }
+                $tools->notify($member, 'assigned', $reason, $conversation->contact?->displayName(), "/inbox?c={$conversation->id}", email: true);
+
+                return ($member->user()->value('name') ?? 'a teammate')." ({$team->name})";
+            }
 
             if ($mode === 'route') {
                 // Handoff without a choice: the workspace's own routing rule (round robin, or nobody).
@@ -267,10 +289,11 @@ final class LiveRuntime extends BotRuntime
         if (trim($text) === '') {
             return;
         }
-        ConversationNote::query()->create([
+        $note = ConversationNote::query()->create([
             'conversation_id' => $this->conversation->id, 'membership_id' => null, 'author_name' => mb_substr($this->botName(), 0, 120),
             'body' => mb_substr($text, 0, 4000), 'mentions' => [],
         ]);
+        $this->event((string) ($this->state['current_node'] ?? 'start'), 'note', (string) $note->getKey());
     }
 
     public function botName(): string

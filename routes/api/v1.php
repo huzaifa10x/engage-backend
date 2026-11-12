@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\Billing\BillingController;
 use App\Http\Controllers\Api\V1\Campaigns\CampaignController;
 use App\Http\Controllers\Api\V1\ChatbotController;
+use App\Http\Controllers\Api\V1\ChatbotRunsController;
 use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\Crm\StageController;
@@ -30,6 +31,7 @@ use App\Http\Controllers\Api\V1\MeController;
 use App\Http\Controllers\Api\V1\Messaging\ContactController;
 use App\Http\Controllers\Api\V1\Messaging\ConversationController;
 use App\Http\Controllers\Api\V1\Messaging\FollowUpController;
+use App\Http\Controllers\Api\V1\Messaging\InboxTeamController;
 use App\Http\Controllers\Api\V1\Messaging\InboxToolsController;
 use App\Http\Controllers\Api\V1\Messaging\MediaController;
 use App\Http\Controllers\Api\V1\Messaging\MessageController;
@@ -166,9 +168,15 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::get('secrets', [ChatbotController::class, 'secrets'])->name('secrets');
         Route::get('workspace', [ChatbotController::class, 'workspace'])->name('workspace');
         Route::get('snippets', [ChatbotController::class, 'snippets'])->name('snippets');
+        Route::get('runs', [ChatbotRunsController::class, 'index'])->name('runs');
+        Route::get('start-rules', [ChatbotController::class, 'startRules'])->name('start-rules');
+        Route::post('start-rules/test', [ChatbotController::class, 'testStartRules'])->middleware('throttle:60,1')->name('start-rules.test');
+        Route::get('runs/{session}', [ChatbotRunsController::class, 'show'])->whereUuid('session')->name('runs.show');
         Route::get('{flow}', [ChatbotController::class, 'show'])->whereUuid('flow')->name('show');
         Route::get('{flow}/analytics', [ChatbotController::class, 'analytics'])->whereUuid('flow')->name('analytics');
         Route::get('{flow}/history', [ChatbotController::class, 'history'])->whereUuid('flow')->name('history');
+        Route::get('{flow}/revisions', [ChatbotController::class, 'revisions'])->whereUuid('flow')->name('revisions');
+        Route::get('{flow}/revisions/{revision}', [ChatbotController::class, 'revision'])->whereUuid('flow')->whereNumber('revision')->name('revisions.show');
         Route::get('{flow}/export', [ChatbotController::class, 'export'])->whereUuid('flow')->name('export');
         Route::post('{flow}/test', [ChatbotController::class, 'test'])->whereUuid('flow')->middleware('throttle:120,1')->name('test');
         Route::get('{flow}/comments', [ChatbotController::class, 'comments'])->whereUuid('flow')->name('comments');
@@ -182,6 +190,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::put('secrets', [ChatbotController::class, 'saveSecret'])->middleware('throttle:30,1')->name('secrets.save');
         Route::delete('secrets/{name}', [ChatbotController::class, 'deleteSecret'])->name('secrets.delete');
         Route::put('workspace', [ChatbotController::class, 'saveWorkspace'])->name('workspace.save');
+        Route::put('start-rules/order', [ChatbotController::class, 'orderStartRules'])->name('start-rules.order');
         Route::put('snippets', [ChatbotController::class, 'saveSnippet'])->name('snippets.save');
         Route::delete('snippets/{snippet}', [ChatbotController::class, 'deleteSnippet'])->whereUuid('snippet')->name('snippets.delete');
         Route::patch('{flow}', [ChatbotController::class, 'update'])->whereUuid('flow')->name('update');
@@ -452,6 +461,10 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
 
     Route::middleware('can:'.Permission::InboxView->value)->group(function () {
         Route::get('conversations', [ConversationController::class, 'index'])->name('conversations.index');
+        Route::get('inbox/teams', [InboxTeamController::class, 'index'])->name('inbox.teams.index');
+        Route::post('inbox/teams', [InboxTeamController::class, 'store'])->name('inbox.teams.store');
+        Route::put('inbox/teams/{team}', [InboxTeamController::class, 'update'])->whereUuid('team')->name('inbox.teams.update');
+        Route::delete('inbox/teams/{team}', [InboxTeamController::class, 'destroy'])->whereUuid('team')->name('inbox.teams.destroy');
         Route::get('conversations/counts', [ConversationController::class, 'counts'])->name('conversations.counts');
         Route::get('conversations/{conversation}', [ConversationController::class, 'show'])->name('conversations.show');
         Route::get('conversations/{conversation}/notes', [InboxToolsController::class, 'notes'])->name('conversations.notes');

@@ -47,15 +47,18 @@ final class HttpBlock
         }
 
         try {
-            $this->guard->assertPublic($url);
+            $ips = $this->guard->assertPublic($url);
         } catch (ValidationException $e) {
             return $this->fail($rt, $nodeId, 'blocked_url', (string) collect($e->errors())->flatten()->first());
         }
 
+        // Redirects are never followed (a 3xx is the Error branch), and the connection goes to the
+        // addresses just checked, never to what the hostname resolves to a moment later.
         $request = Http::timeout((int) $c['timeout'])->connectTimeout(min(5, (int) $c['timeout']))->withoutRedirecting()
+            ->withOptions(['curl' => [CURLOPT_RESOLVE => UrlGuard::pin($url, $ips)]])
             ->withHeaders(['Accept' => 'application/json', 'User-Agent' => '10X-Engage-Chatbot/1.0'] + $headers);
         if ((int) $c['retries'] > 0) {
-            $request = $request->retry((int) $c['retries'], 300, fn (Throwable $e) => $e instanceof ConnectionException, throw: false);
+            $request = $request->retry((int) $c['retries'], 300, fn (?Throwable $e) => $e instanceof ConnectionException, throw: false);
         }
         if ($body !== null && $c['method'] !== 'GET') {
             $request = $request->withBody($body, $json ? 'application/json' : 'text/plain');
@@ -172,8 +175,8 @@ final class HttpBlock
             };
         }
         try {
-            $this->guard->assertPublic($url);
-            $response = Http::timeout(8)->connectTimeout(5)->withoutRedirecting()->acceptJson()
+            $ips = $this->guard->assertPublic($url);
+            $response = Http::timeout(8)->connectTimeout(5)->withoutRedirecting()->withOptions(['curl' => [CURLOPT_RESOLVE => UrlGuard::pin($url, $ips)]])->acceptJson()
                 ->post($url, ['sheet' => $c['sheet'], 'row' => $row, 'submitted_at' => now()->toIso8601String()]);
         } catch (Throwable $e) {
             $rt->liveCallMade(['kind' => 'sheets', 'method' => 'POST', 'host' => parse_url($url, PHP_URL_HOST), 'path' => parse_url($url, PHP_URL_PATH), 'node' => $nodeId, 'status' => 0]);

@@ -20,6 +20,7 @@ use Illuminate\Support\Carbon;
  * @property array<string, mixed> $graph
  * @property ?array<string, mixed> $settings
  * @property ?string $published_by_membership_id
+ * @property ?array<string, string> $node_hashes fingerprint of each step (FlowGraph::nodeHashes), for version-aware insights
  * @property ?Carbon $created_at
  */
 class ChatbotFlowVersion extends Model
@@ -28,10 +29,10 @@ class ChatbotFlowVersion extends Model
 
     public const UPDATED_AT = null;
 
-    protected $fillable = ['tenant_id', 'flow_id', 'version', 'graph', 'settings', 'published_by_membership_id'];
+    protected $fillable = ['tenant_id', 'flow_id', 'version', 'graph', 'settings', 'published_by_membership_id', 'node_hashes'];
 
     protected function casts(): array
     {
-        return ['version' => 'integer', 'graph' => 'array', 'settings' => 'array', 'created_at' => 'datetime'];
+        return ['version' => 'integer', 'graph' => 'array', 'settings' => 'array', 'node_hashes' => 'array', 'created_at' => 'datetime'];
     }
 }

@@ -10,7 +10,16 @@ namespace App\Domain\Chatbots\Engine;
  */
 final class FlowSettings
 {
+    /**
+     * The engine behaviour new flows get. Level 1 is the behaviour before November 2026 (loose
+     * dates and numbers, a bot that stops silently when it cannot message); level 2 adds strict
+     * day-first dates, 120k / 1.2m amounts, readable dates in messages and handover when the bot
+     * cannot message. Flows that existed before level 2 were set to 1 by a migration.
+     */
+    public const ENGINE_LEVEL = 2;
+
     public const DEFAULTS = [
+        'engine_level' => self::ENGINE_LEVEL,
         // Step inactivity: one reminder when the customer stops answering mid-flow.
         'reminder_minutes' => 12,
         'reminder_text' => 'Are you still there? Just tap one of the options above to continue 🙂',
@@ -42,9 +51,17 @@ final class FlowSettings
         'abandoned_tag' => null,
     ];
 
+    /** @param array<string, mixed>|null $settings */
+    public static function level(?array $settings): int
+    {
+        $level = (int) ($settings['engine_level'] ?? self::ENGINE_LEVEL);
+
+        return $level >= 1 && $level <= self::ENGINE_LEVEL ? $level : self::ENGINE_LEVEL;
+    }
+
     /**
      * @param  array<string, mixed>|null  $input
-     * @return array{reminder_minutes: ?int, reminder_text: string, abandon_minutes: int, resume_minutes: int, retry_limit: int, invalid_text: string, handoff_keywords: list<string>, menu_keywords: list<string>, back_keywords: list<string>, non_text_text: string, escalate_text: string, languages: list<string>, language_field: ?string, reopen_template: ?array{name: string, language: string, body: list<string>}, auto_resume_minutes: ?int, abandoned_tag: ?string}
+     * @return array{engine_level: int, reminder_minutes: ?int, reminder_text: string, abandon_minutes: int, resume_minutes: int, retry_limit: int, invalid_text: string, handoff_keywords: list<string>, menu_keywords: list<string>, back_keywords: list<string>, non_text_text: string, escalate_text: string, languages: list<string>, language_field: ?string, reopen_template: ?array{name: string, language: string, body: list<string>}, auto_resume_minutes: ?int, abandoned_tag: ?string}
      */
     public static function normalize(?array $input): array
     {
@@ -62,6 +79,7 @@ final class FlowSettings
         $tag = trim((string) ($in['abandoned_tag'] ?? ''));
 
         return [
+            'engine_level' => self::level($in),
             'reminder_minutes' => $reminder,
             'reminder_text' => mb_substr(trim((string) $in['reminder_text']), 0, 1000) ?: self::DEFAULTS['reminder_text'],
             'abandon_minutes' => $abandon,

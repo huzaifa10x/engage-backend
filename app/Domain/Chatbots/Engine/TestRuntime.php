@@ -14,6 +14,7 @@ use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Messaging\Exceptions\MessagingException;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Models\InboxTeam;
 use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Templates\Services\TemplateMessage;
@@ -174,8 +175,13 @@ final class TestRuntime extends BotRuntime
         }
     }
 
-    public function assign(string $mode, ?string $memberId, string $reason): string
+    public function assign(string $mode, ?string $memberId, string $reason, ?string $teamId = null): string
     {
+        if ($mode === 'team' && $teamId !== null) {
+            $team = InboxTeam::query()->find($teamId);
+
+            return $team !== null ? "the {$team->name} team (its least busy member)" : 'a team that no longer exists';
+        }
         if ($mode === 'member' && $memberId !== null) {
             return TenantMembership::query()->find($memberId)?->user()->value('name') ?? 'the chosen teammate';
         }

@@ -18,6 +18,7 @@ use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Notifications\InboxAlertNotification;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -135,27 +136,31 @@ final class InboxTools
 
     /**
      * The teammate who can reply on the conversation's number and has the fewest open
-     * conversations right now (auto-routing, and chatbots handing a customer to a person).
+     * conversations right now (auto-routing, and chatbots handing a customer to a person), optionally
+     * only among one inbox team's members.
      */
-    public function pickAgent(Conversation $conversation): ?TenantMembership
+    public function pickAgent(Conversation $conversation, ?string $teamId = null): ?TenantMembership
     {
         $number = PhoneNumber::query()->find($conversation->phone_number_id);
         if ($number === null) {
             return null;
         }
 
-        $candidates = TenantMembership::query()->active()->with('role')->get()->filter(function (TenantMembership $m) use ($number): bool {
-            if ($m->role === null || ! $m->role->grants(Permission::InboxReply)) {
-                return false;
-            }
-            try {
-                $this->access->ensureCanAccess($m, $number);
+        $candidates = TenantMembership::query()->active()->with('role')
+            // A team handover: only that team's members (InboxTeam).
+            ->when($teamId !== null, fn ($q) => $q->whereIn('id', DB::table('inbox_team_members')->where('team_id', $teamId)->select('membership_id')))
+            ->get()->filter(function (TenantMembership $m) use ($number): bool {
+                if ($m->role === null || ! $m->role->grants(Permission::InboxReply)) {
+                    return false;
+                }
+                try {
+                    $this->access->ensureCanAccess($m, $number);
 
-                return true;
-            } catch (Throwable) {
-                return false;
-            }
-        });
+                    return true;
+                } catch (Throwable) {
+                    return false;
+                }
+            });
         if ($candidates->isEmpty()) {
             return null;
         }

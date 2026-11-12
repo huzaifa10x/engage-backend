@@ -123,6 +123,29 @@ final class FlowGraph
     // ── Cleaning what the builder sends ──────────────────────────────────────────────────────
 
     /**
+     * A fingerprint per step of a normalized graph: its type, settings and the names of its paths
+     * (not its title, position or where the paths lead). Two versions in which a step has the same
+     * fingerprint count as the same step in Flow insights; a changed step starts counting afresh.
+     *
+     * @param  array<string, mixed>  $graph
+     * @return array<string, string>
+     */
+    public static function nodeHashes(array $graph): array
+    {
+        $out = [];
+        foreach ((array) ($graph['nodes'] ?? []) as $node) {
+            if (! is_array($node) || ! isset($node['id'])) {
+                continue;
+            }
+            $out[(string) $node['id']] = substr(hash('sha256', (string) json_encode([
+                $node['type'] ?? null, $node['config'] ?? null, array_map(fn ($o) => is_array($o) ? ($o['id'] ?? null) : null, (array) ($node['outputs'] ?? [])),
+            ])), 0, 16);
+        }
+
+        return $out;
+    }
+
+    /**
      * @param  array<string, mixed>|null  $graph
      * @return array{nodes: list<array<string, mixed>>, sections?: list<array{id: string, name: string}>}
      */

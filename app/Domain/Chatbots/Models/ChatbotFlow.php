@@ -42,6 +42,9 @@ use Illuminate\Support\Carbon;
  * @property ?Carbon $reviewed_at
  * @property ?string $review_note
  * @property ?string $webhook_token
+ * @property int $draft_revision bumped by every saved draft (conflict-safe editing)
+ * @property ?string $draft_updated_by_membership_id
+ * @property int $start_priority order among the flows on its number (lower first)
  * @property ?Carbon $created_at
  * @property ?Carbon $updated_at
  */
@@ -56,12 +59,15 @@ class ChatbotFlow extends Model
     protected $fillable = [
         'tenant_id', 'name', 'phone_number_id', 'is_active', 'draft', 'settings', 'published_version', 'published_at', 'draft_updated_at', 'created_by_membership_id',
         'kind', 'folder', 'archived_at', 'activate_at', 'deactivate_at', 'editors', 'review_status', 'review_hash', 'reviewed_by_membership_id', 'reviewed_at', 'review_note', 'webhook_token',
+        'draft_revision', 'draft_updated_by_membership_id', 'start_priority',
     ];
 
     protected function casts(): array
     {
         return [
             'is_active' => 'boolean',
+            'draft_revision' => 'integer',
+            'start_priority' => 'integer',
             'draft' => 'array',
             'settings' => 'array',
             'published_version' => 'integer',
@@ -100,14 +106,15 @@ class ChatbotFlow extends Model
     }
 
     /**
-     * The flows live on a number right now, oldest published first.
+     * The live flows of a number in routing order: the Start rules priority, then the earlier
+     * published (the order routing used before priorities existed; the migration kept it).
      *
      * @return Collection<int, self>
      */
     public static function liveOn(string $phoneNumberId): Collection
     {
         return self::query()->where('phone_number_id', $phoneNumberId)->where('is_active', true)->where('kind', 'bot')
-            ->whereNotNull('published_version')->whereNull('archived_at')->orderBy('published_at')->orderBy('id')->get();
+            ->whereNotNull('published_version')->whereNull('archived_at')->orderBy('start_priority')->orderBy('published_at')->orderBy('id')->get();
     }
 
     public static function anyLiveOn(string $phoneNumberId): bool

@@ -188,7 +188,7 @@ final class Chatbots
      *
      * @return ?array{0: ChatbotFlow, 1: array{0: FlowGraph, 1: array<string, mixed>}, 2: string}
      */
-    public function pick(Conversation $conversation, Contact $contact, BotInput $input, ?Message $message = null): ?array
+    public function pick(Conversation $conversation, Contact $contact, BotInput $input, ?Message $message = null, ?bool $isFirstMessage = null): ?array
     {
         $flows = ChatbotFlow::liveOn($conversation->phone_number_id);
         if ($flows->isEmpty()) {
@@ -202,9 +202,7 @@ final class Chatbots
                 $candidates[] = [$flow, $version, $start['config']];
             }
         }
-        $words = $input->normalized();
-        $text = mb_strtolower(trim((string) $input->text));
-        $firstTime = null;
+        $firstTime = $isFirstMessage;
 
         // Outside business hours, an after-hours flow answers first — once per closed period; after
         // that the night's other messages wait for the team (no other flow, no auto-reply).
@@ -239,11 +237,10 @@ final class Chatbots
         }
 
         $levels = [
-            'campaign' => fn (array $c) => $c['campaign_buttons'] !== [] && in_array($input->type, ['button', 'interactive'], true)
-                && ($words !== '' && in_array($words, array_map(fn ($b) => (new BotInput($b))->normalized(), $c['campaign_buttons']), true)),
-            'qr' => fn (array $c) => $c['qr_code'] !== null && $text !== '' && str_contains($text, mb_strtolower($c['qr_code'])),
-            'ad' => fn (array $c) => $input->fromAd && $c['ad_referral'] && ! $c['any_message'],
-            'keyword' => fn (array $c) => $this->keywordMatch($c, $words, (string) $input->text),
+            'campaign' => fn (array $c) => $this->triggerMatches('campaign', $c, $input),
+            'qr' => fn (array $c) => $this->triggerMatches('qr', $c, $input),
+            'ad' => fn (array $c) => $this->triggerMatches('ad', $c, $input),
+            'keyword' => fn (array $c) => $this->triggerMatches('keyword', $c, $input),
             'greeting' => function (array $c) use ($contact, $message, &$firstTime): bool {
                 if (! $c['greeting']) {
                     return false;
@@ -264,6 +261,28 @@ final class Chatbots
         }
 
         return null;
+    }
+
+    /**
+     * Whether a Start block's specific trigger matches a message: a campaign button reply, a QR code's
+     * text, a Click-to-WhatsApp ad, or a keyword / pattern. Used by pick() and by the Start rules
+     * overlap check, so both always agree.
+     *
+     * @param  'campaign'|'qr'|'ad'|'keyword'  $level
+     * @param  array<string, mixed>  $c  the Start block's settings
+     */
+    public function triggerMatches(string $level, array $c, BotInput $input): bool
+    {
+        $words = $input->normalized();
+        $text = mb_strtolower(trim((string) $input->text));
+
+        return match ($level) {
+            'campaign' => $c['campaign_buttons'] !== [] && in_array($input->type, ['button', 'interactive'], true)
+                && ($words !== '' && in_array($words, array_map(fn ($b) => (new BotInput($b))->normalized(), $c['campaign_buttons']), true)),
+            'qr' => $c['qr_code'] !== null && $text !== '' && str_contains($text, mb_strtolower($c['qr_code'])),
+            'ad' => $input->fromAd && $c['ad_referral'] && ! $c['any_message'],
+            'keyword' => $this->keywordMatch($c, $words, (string) $input->text),
+        };
     }
 
     /** One after-hours reply per conversation per closed period: the period is named by the next opening time. */
@@ -914,6 +933,12 @@ final class Chatbots
             $this->mark($session, 'handed_off', $reason);
             $locked->forceFill(['bot_state' => 'handed_off']);
         }
+    }
+
+    /** Drops the published versions read in this request (after a change to them). */
+    public function forgetVersions(): void
+    {
+        $this->versions = [];
     }
 
     /** @return array{0: FlowGraph, 1: array<string, mixed>}|null */

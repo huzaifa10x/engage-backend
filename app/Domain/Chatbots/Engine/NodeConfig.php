@@ -31,8 +31,10 @@ final class NodeConfig
     {
         $text = fn (int $max = 1024) => self::str($c['text'] ?? null, $max);
         $assign = fn () => [
-            'assign' => in_array($c['assign'] ?? null, ['none', 'auto', 'member'], true) ? $c['assign'] : 'none',
+            'assign' => in_array($c['assign'] ?? null, ['none', 'auto', 'member', 'team'], true) ? $c['assign'] : 'none',
             'member_id' => self::uuid($c['member_id'] ?? null),
+            // assign = team: the inbox team the chat goes to (its least busy member who can reply on the number).
+            'team_id' => self::uuid($c['team_id'] ?? null),
         ];
         // Input blocks: unrecognised answers, retries and the per-step "no reply" timer.
         $input = fn () => [

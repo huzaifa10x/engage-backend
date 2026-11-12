@@ -17,6 +17,7 @@ use App\Domain\Identity\Models\User;
 use App\Domain\Messaging\Events\MessageStored;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Models\InboxTeam;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Plans\Models\Plan;
 use App\Domain\Plans\Models\PlanVersion;
@@ -101,6 +102,7 @@ class AppServiceProvider extends ServiceProvider
             'message_template' => MessageTemplate::class,
             'campaign' => Campaign::class,
             'chatbot_flow' => ChatbotFlow::class,
+            'inbox_team' => InboxTeam::class,
             'growth_site' => GrowthSite::class,
         ]);
 

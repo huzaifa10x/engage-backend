@@ -39,6 +39,13 @@ final class FlowEngine
 
     private mixed $whyDetail = null;
 
+    /**
+     * Behaviour level of the flow version being run (FlowSettings::level). Versions published before
+     * level 2 existed keep level 1, so a deploy never changes what a live flow does; the level moves
+     * up only when someone upgrades the flow in Bot settings and publishes it.
+     */
+    private int $level = FlowSettings::ENGINE_LEVEL;
+
     public function __construct(private readonly HttpBlock $http) {}
 
     /**
@@ -49,8 +56,12 @@ final class FlowEngine
     public function begin(FlowGraph $graph, array $settings, BotRuntime $rt, ?BotInput $first = null): void
     {
         $run = new FlowRun($graph, $settings, $rt);
+        $this->level = FlowSettings::level($run->settings);
         $rt->state['vars']['_lang'] = $this->language($run, $first);
         $this->attribute($rt, $first);
+        if ($first?->messageId !== null) {
+            $rt->event('start', 'received', $first->messageId);
+        }
         $start = $graph->start();
         if ($start === null) {
             $this->finish($rt, 'stopped', 'no_start');
@@ -69,12 +80,16 @@ final class FlowEngine
     public function inbound(FlowGraph $graph, array $settings, BotRuntime $rt, BotInput $input): void
     {
         $run = new FlowRun($graph, $settings, $rt);
+        $this->level = FlowSettings::level($run->settings);
         if (! $this->enterCurrentGraph($run)) {
             return;
         }
         $this->guard($run, function () use ($run, $rt, $settings, $input): void {
             $rt->state['vars']['last_input'] = $input->text !== null ? mb_substr($input->text, 0, 1000) : null;
             $this->attribute($rt, $input);
+            if ($input->messageId !== null) {
+                $rt->event((string) ($rt->state['current_node'] ?? 'start'), 'received', $input->messageId);
+            }
             $words = $input->normalized();
 
             // The window had closed and a template re-opened it: run the step that could not be sent.
@@ -155,6 +170,7 @@ final class FlowEngine
     public function resume(FlowGraph $graph, array $settings, BotRuntime $rt, ?string $output = null): void
     {
         $run = new FlowRun($graph, $settings, $rt);
+        $this->level = FlowSettings::level($run->settings);
         $rt->state['status'] = 'active';
         $rt->state['resume_at'] = null;
         $output ??= (string) ($rt->state['vars']['_resume'] ?? 'next');
@@ -182,6 +198,7 @@ final class FlowEngine
     public function timeout(FlowGraph $graph, array $settings, BotRuntime $rt): void
     {
         $run = new FlowRun($graph, $settings, $rt);
+        $this->level = FlowSettings::level($run->settings);
         $rt->state['timeout_at'] = null;
         if (! $this->enterCurrentGraph($run)) {
             return;
@@ -203,6 +220,7 @@ final class FlowEngine
     public function remind(array $settings, BotRuntime $rt, ?FlowGraph $graph = null): void
     {
         $run = new FlowRun($graph ?? FlowGraph::from(null), $settings, $rt);
+        $this->level = FlowSettings::level($run->settings);
         $this->guard($run, fn () => $this->sendText($rt, $this->say($settings['reminder_text'], $rt)));
     }
 
@@ -375,7 +393,7 @@ final class FlowEngine
             case 'tag':
                 $this->tags($c, $rt, $node['id']);
                 if ($c['assign'] !== 'none') {
-                    $who = $rt->assign($c['assign'], $c['member_id'], 'The chatbot assigned a conversation to you');
+                    $who = $rt->assign($c['assign'], $c['member_id'], 'The chatbot assigned a conversation to you', $c['team_id'] ?? null);
                     $rt->note($who !== null ? "Assigned to {$who}." : 'Nobody could be assigned (no teammate can reply on this number).');
                 }
 
@@ -461,7 +479,7 @@ final class FlowEngine
                     return '__return';
                 }
                 if ($c['action'] === 'assign') {
-                    $who = $rt->assign($c['assign'] === 'none' ? 'auto' : $c['assign'], $c['member_id'], 'The chatbot finished and assigned a conversation to you');
+                    $who = $rt->assign($c['assign'] === 'none' ? 'auto' : $c['assign'], $c['member_id'], 'The chatbot finished and assigned a conversation to you', $c['team_id'] ?? null);
                     $rt->note($who !== null ? "Assigned to {$who}." : 'Nobody could be assigned.');
                 }
                 $rt->event($node['id'], 'complete', $c['outcome'] ?? null);
@@ -725,7 +743,7 @@ final class FlowEngine
         if ($text !== null) {
             $this->sendText($rt, $this->say($text, $rt));
         }
-        $who = $rt->assign($c['assign'] === 'none' ? 'route' : $c['assign'], $c['member_id'], 'A customer asked to talk to a person');
+        $who = $rt->assign($c['assign'] === 'none' ? 'route' : $c['assign'], $c['member_id'], 'A customer asked to talk to a person', $c['team_id'] ?? null);
         if ($c['note'] ?? true) {
             $rt->internalNote($this->summary($run, $who, $why));
         }
@@ -1264,12 +1282,50 @@ final class FlowEngine
             return null;
         }
 
+        if ($this->level < 2) {
+            return $this->legacyAnswer($c, $t, $rt);
+        }
+
         return match ($c['validate']) {
             'number' => $this->numberAnswer($c, $t),
             'date', 'future_date', 'workday' => $this->dateAnswer($c, $t, $rt),
             'time' => self::time($t),
             'email' => filter_var($t, FILTER_VALIDATE_EMAIL) !== false ? mb_strtolower($t) : null,
             'phone' => preg_match('/^\+?[\d\s().-]{6,20}$/', $t) === 1 ? $t : null,
+            'text' => preg_match('/\p{L}/u', $t) === 1 ? mb_substr($t, 0, 1000) : null,
+            'regex' => $c['pattern'] !== null && @preg_match('/'.str_replace('/', '\/', $c['pattern']).'/u', $t) === 1 ? mb_substr($t, 0, 1000) : null,
+            default => mb_substr($t, 0, 1000),
+        };
+    }
+
+    /**
+     * Level 1 answers, exactly as before level 2: plain numbers only, dates read by strtotime() after
+     * turning d/m/y into y-m-d (31/04 became 1 May), no booking window.
+     *
+     * @param  array<string, mixed>  $c
+     */
+    private function legacyAnswer(array $c, string $t, BotRuntime $rt): ?string
+    {
+        $date = function (string $t) use ($rt): ?Carbon {
+            $t = strtr($t, self::ARABIC_DIGITS);
+            if (preg_match('#^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$#', $t, $m) === 1) {
+                $t = sprintf('%04d-%02d-%02d', strlen($m[3]) === 2 ? 2000 + (int) $m[3] : (int) $m[3], (int) $m[2], (int) $m[1]);
+            }
+            $ts = strtotime($t, now($rt->timezone())->getTimestamp());
+
+            return $ts !== false ? Carbon::createFromTimestamp($ts, $rt->timezone())->startOfDay() : null;
+        };
+        $today = now($rt->timezone())->startOfDay();
+
+        return match ($c['validate']) {
+            'number' => is_numeric($n = str_replace([',', ' '], '', strtr($t, self::ARABIC_DIGITS)))
+                && (($c['min'] ?? null) === null || (float) $n >= (float) $c['min']) && (($c['max'] ?? null) === null || (float) $n <= (float) $c['max']) ? $n : null,
+            'time' => self::time($t),
+            'email' => filter_var($t, FILTER_VALIDATE_EMAIL) !== false ? mb_strtolower($t) : null,
+            'phone' => preg_match('/^\+?[\d\s().-]{6,20}$/', $t) === 1 ? $t : null,
+            'date' => ($d = $date($t)) !== null ? $d->toDateString() : null,
+            'future_date' => ($d = $date($t)) !== null && $d->gt($today) ? $d->toDateString() : null,
+            'workday' => ($d = $date($t)) !== null && $d->gt($today) && in_array(strtolower($d->format('D')), $rt->openDays(), true) ? $d->toDateString() : null,
             'text' => preg_match('/\p{L}/u', $t) === 1 ? mb_substr($t, 0, 1000) : null,
             'regex' => $c['pattern'] !== null && @preg_match('/'.str_replace('/', '\/', $c['pattern']).'/u', $t) === 1 ? mb_substr($t, 0, 1000) : null,
             default => mb_substr($t, 0, 1000),
@@ -1418,7 +1474,7 @@ final class FlowEngine
     /** Customer-facing text: placeholders filled, saved dates shown as “Wed 18 Nov 2026”. */
     private function say(?string $text, BotRuntime $rt): string
     {
-        return Placeholders::fill($text, $rt, human: true);
+        return Placeholders::fill($text, $rt, human: $this->level >= 2);
     }
 
     /**
@@ -1589,6 +1645,13 @@ final class FlowEngine
     {
         $rt = $run->rt;
         $node = (string) ($rt->state['current_node'] ?? 'start');
+        if ($this->level < 2) {
+            // Level 1: the bot stops where it is (the conversation stays as it was).
+            $rt->note('Stopped: '.$e->getMessage());
+            $this->finish($rt, 'stopped', $e->reason);
+
+            return;
+        }
         if (in_array($e->reason, ['opted_out', 'number_unavailable'], true)) {
             $rt->internalNote('🤖 '.$rt->botName().' stopped: '.$e->getMessage());
             $rt->note('Stopped: '.$e->getMessage());

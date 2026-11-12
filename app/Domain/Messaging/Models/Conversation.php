@@ -25,6 +25,7 @@ use Illuminate\Support\Carbon;
  * @property string $contact_id
  * @property ConversationStatus $status
  * @property ?string $assigned_membership_id
+ * @property ?string $assigned_team_id the inbox team it was given to (InboxTeam)
  * @property int $unread_count
  * @property ?Carbon $last_message_at
  * @property ?Carbon $last_inbound_at
@@ -55,7 +56,7 @@ class Conversation extends Model
     ];
 
     protected $fillable = [
-        'tenant_id', 'phone_number_id', 'contact_id', 'status', 'assigned_membership_id', 'unread_count', 'last_message_at',
+        'tenant_id', 'phone_number_id', 'contact_id', 'status', 'assigned_membership_id', 'assigned_team_id', 'unread_count', 'last_message_at',
         'last_message_preview', 'last_message_direction', 'last_inbound_at', 'window_expires_at', 'closed_at',
         'reply_state', 'needs_reply_since', 'after_hours', 'ad_lead', 'opened_at',
     ];

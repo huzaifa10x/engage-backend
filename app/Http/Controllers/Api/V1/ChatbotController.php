@@ -13,7 +13,7 @@ use App\Domain\Chatbots\Engine\FlowEngine;
 use App\Domain\Chatbots\Engine\FlowGraph;
 use App\Domain\Chatbots\Engine\FlowSettings;
 use App\Domain\Chatbots\Engine\TestRuntime;
-use App\Domain\Chatbots\Models\ChatbotEvent;
+use App\Domain\Chatbots\Models\ChatbotDraftRevision;
 use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotNodeComment;
@@ -23,13 +23,16 @@ use App\Domain\Chatbots\Models\ChatbotSnippet;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Chatbots\Services\ChatbotWorkspace;
 use App\Domain\Chatbots\Services\DataTriggers;
+use App\Domain\Chatbots\Services\FlowInsights;
 use App\Domain\Chatbots\Services\FlowTemplates;
 use App\Domain\Chatbots\Services\OrderLookup;
+use App\Domain\Chatbots\Services\StartRules;
 use App\Domain\Crm\Models\ContactField;
 use App\Domain\Crm\Models\ContactTag;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Identity\Models\User;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Models\InboxTeam;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
@@ -189,9 +192,45 @@ final class ChatbotController extends Controller
             'editors.*' => ['uuid'],
             'activate_at' => ['sometimes', 'nullable', 'date'],
             'deactivate_at' => ['sometimes', 'nullable', 'date'],
+            'base_revision' => ['sometimes', 'integer', 'min:1'],
         ]);
         $this->assertCanEdit($flow);
+        $editsDraft = isset($data['draft']) || isset($data['settings']) || isset($data['name']);
+        if ($editsDraft) {
+            // Conflict-safe editing: the row is locked, and a save based on an older revision than the
+            // one stored is refused with what is stored now, so the editor can merge instead of overwriting.
+            $outcome = DB::transaction(function () use ($flow, $data): ?array {
+                /** @var ChatbotFlow $locked */
+                $locked = ChatbotFlow::query()->whereKey($flow->id)->lockForUpdate()->firstOrFail();
+                if (isset($data['base_revision']) && (int) $data['base_revision'] !== $locked->draft_revision) {
+                    return null;
+                }
 
+                return [$locked, ...$this->applyUpdate($locked, $data, true)];
+            });
+            if ($outcome === null) {
+                return $this->draftConflict($flow->refresh());
+            }
+            [$flow, $scheduled, $upgraded] = $outcome;
+        } else {
+            [$scheduled, $upgraded] = $this->applyUpdate($flow, $data, false);
+        }
+        if ($upgraded) {
+            $this->audit->record('chatbot.engine_level', $flow, meta: ['level' => FlowSettings::level($flow->settings)]);
+        }
+        if ($scheduled) {
+            $this->audit->record('chatbot.scheduled', $flow, meta: ['activate_at' => $flow->activate_at?->toIso8601String(), 'deactivate_at' => $flow->deactivate_at?->toIso8601String()]);
+        }
+
+        return response()->json(['data' => $this->present($flow, full: true)]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{0: bool, 1: bool} [schedule changed, engine level changed]
+     */
+    private function applyUpdate(ChatbotFlow $flow, array $data, bool $editsDraft): array
+    {
         if (array_key_exists('phone_number_id', $data) && $data['phone_number_id'] !== $flow->phone_number_id) {
             $this->assertNumber($data['phone_number_id']);
             if ($flow->is_active) {
@@ -210,6 +249,9 @@ final class ChatbotController extends Controller
             $flow->draft_updated_at = now();
         }
         if (isset($data['settings'])) {
+            // The engine level only changes when it is sent on purpose (Bot settings → Upgrade);
+            // an editor that doesn't know the field keeps the flow's level.
+            $data['settings']['engine_level'] ??= FlowSettings::level($flow->settings);
             $flow->settings = FlowSettings::normalize($data['settings']);
             $flow->draft_updated_at = now();
         }
@@ -232,17 +274,29 @@ final class ChatbotController extends Controller
             throw ValidationException::withMessages(['deactivate_at' => 'The switch-off time must be after the switch-on time.']);
         }
         $scheduled = $flow->isDirty(['activate_at', 'deactivate_at']);
-        $flow->save();
-        if ($scheduled) {
-            $this->audit->record('chatbot.scheduled', $flow, meta: ['activate_at' => $flow->activate_at?->toIso8601String(), 'deactivate_at' => $flow->deactivate_at?->toIso8601String()]);
+        $upgraded = isset($data['settings']) && FlowSettings::level($flow->getOriginal('settings')) !== FlowSettings::level($flow->settings);
+        if ($editsDraft && $flow->isDirty(['draft', 'settings', 'name'])) {
+            $flow->draft_revision++;
+            $flow->draft_updated_by_membership_id = $this->context->membership()?->id;
+            ChatbotDraftRevision::query()->create([
+                'flow_id' => $flow->id, 'revision' => $flow->draft_revision, 'name' => $flow->name, 'draft' => $flow->draft,
+                'settings' => $flow->settings, 'membership_id' => $flow->draft_updated_by_membership_id,
+            ]);
+            ChatbotDraftRevision::query()->where('flow_id', $flow->id)->where('revision', '<=', $flow->draft_revision - ChatbotDraftRevision::KEEP)->delete();
         }
+        $flow->save();
 
-        return response()->json(['data' => $this->present($flow, full: true)]);
+        return [$scheduled, $upgraded];
     }
 
     /** The publish gate: refuses until every check passes (and, in agency mode, a reviewer approved this draft). */
-    public function publish(ChatbotFlow $flow): JsonResponse
+    public function publish(Request $request, ChatbotFlow $flow): JsonResponse
     {
+        $revision = $request->validate(['revision' => ['sometimes', 'integer', 'min:1']])['revision'] ?? null;
+        if ($revision !== null && (int) $revision !== $flow->draft_revision) {
+            // Someone saved a newer draft since this editor loaded it: publish what you have seen only.
+            return $this->draftConflict($flow);
+        }
         $issues = $this->issues($flow);
         if (array_filter($issues, fn ($i) => $i['level'] === 'error') !== []) {
             return response()->json([
@@ -250,14 +304,26 @@ final class ChatbotController extends Controller
             ], 422);
         }
 
-        DB::transaction(function () use ($flow): void {
+        $published = DB::transaction(function () use ($flow, $revision): bool {
+            // The draft published is the one that was checked: a save that slipped in meanwhile wins the lock
+            // and this publish is refused instead of publishing something nobody reviewed.
+            $locked = ChatbotFlow::query()->whereKey($flow->id)->lockForUpdate()->firstOrFail();
+            if ($locked->draft_revision !== $flow->draft_revision || ($revision !== null && (int) $revision !== $locked->draft_revision)) {
+                return false;
+            }
             $version = (int) ChatbotFlowVersion::query()->where('flow_id', $flow->id)->max('version') + 1;
+            $graph = FlowGraph::normalize($flow->draft);
             ChatbotFlowVersion::query()->create([
-                'flow_id' => $flow->id, 'version' => $version, 'graph' => FlowGraph::normalize($flow->draft),
+                'flow_id' => $flow->id, 'version' => $version, 'graph' => $graph, 'node_hashes' => FlowGraph::nodeHashes($graph),
                 'settings' => FlowSettings::normalize($flow->settings), 'published_by_membership_id' => $this->context->membership()?->id,
             ]);
             $flow->forceFill(['published_version' => $version, 'published_at' => now(), 'draft_updated_at' => now()->subSecond()])->save();
+
+            return true;
         });
+        if (! $published) {
+            return $this->draftConflict($flow->refresh());
+        }
         DataTriggers::forget($this->context->id());
         $this->audit->record('chatbot.published', $flow, meta: ['version' => $flow->published_version]);
 
@@ -362,10 +428,19 @@ final class ChatbotController extends Controller
     public function restore(Request $request, ChatbotFlow $flow, int $version): JsonResponse
     {
         $row = ChatbotFlowVersion::query()->where('flow_id', $flow->id)->where('version', $version)->firstOrFail();
-        $flow->forceFill(['draft' => $row->graph, 'settings' => $row->settings, 'draft_updated_at' => now()])->save();
+        DB::transaction(function () use ($flow, $row): void {
+            $locked = ChatbotFlow::query()->whereKey($flow->id)->lockForUpdate()->firstOrFail();
+            $revision = $locked->draft_revision + 1;
+            $flow->forceFill(['draft' => $row->graph, 'settings' => $row->settings, 'draft_updated_at' => now(), 'draft_revision' => $revision,
+                'draft_updated_by_membership_id' => $this->context->membership()?->id])->save();
+            ChatbotDraftRevision::query()->create([
+                'flow_id' => $flow->id, 'revision' => $revision, 'name' => $flow->name, 'draft' => $row->graph, 'settings' => $row->settings,
+                'membership_id' => $this->context->membership()?->id,
+            ]);
+        });
         $this->audit->record('chatbot.version_restored', $flow, meta: ['version' => $version]);
 
-        return $request->boolean('publish', true) ? $this->publish($flow) : response()->json(['data' => $this->present($flow, full: true)]);
+        return $request->boolean('publish', true) ? $this->publish($request, $flow) : response()->json(['data' => $this->present($flow, full: true)]);
     }
 
     // ── Export / import ──────────────────────────────────────────────────────────────────────
@@ -508,65 +583,68 @@ final class ChatbotController extends Controller
         ])->values()]);
     }
 
+    // ── Start rules ──────────────────────────────────────────────────────────────────────────
+
+    /** Every number's flows in routing order, what starts each, and the overlaps (chatbots.view). */
+    public function startRules(StartRules $rules): JsonResponse
+    {
+        return response()->json(['data' => $rules->overview()]);
+    }
+
+    /** Reorders the flows of one number (chatbots.publish): first = checked first within each kind of trigger. */
+    public function orderStartRules(Request $request, StartRules $rules): JsonResponse
+    {
+        $this->context->authorize(Permission::ChatbotsPublish);
+        $data = $request->validate([
+            'phone_number_id' => ['required', 'uuid'],
+            'flow_ids' => ['required', 'array', 'max:200'],
+            'flow_ids.*' => ['uuid'],
+        ]);
+        $this->assertNumber($data['phone_number_id']);
+        $rules->reorder($data['phone_number_id'], array_values($data['flow_ids']));
+        $this->audit->record('chatbot.start_rules_ordered', null, meta: ['phone_number_id' => $data['phone_number_id'], 'flow_ids' => array_values($data['flow_ids'])]);
+
+        return $this->startRules($rules);
+    }
+
+    /** Which flow would answer a message on a number right now, and why (nothing is sent or saved). */
+    public function testStartRules(Request $request, StartRules $rules): JsonResponse
+    {
+        $data = $request->validate([
+            'phone_number_id' => ['required', 'uuid'],
+            'text' => ['required', 'string', 'max:300'],
+            'button' => ['sometimes', 'boolean'],
+            'from_ad' => ['sometimes', 'boolean'],
+            'first_message' => ['sometimes', 'boolean'],
+        ]);
+        $this->assertNumber($data['phone_number_id']);
+
+        return response()->json(['data' => $rules->test($data['phone_number_id'], $data['text'], (bool) ($data['button'] ?? false), (bool) ($data['from_ad'] ?? false), (bool) ($data['first_message'] ?? false))]);
+    }
+
     // ── Analytics ────────────────────────────────────────────────────────────────────────────
 
-    /** The flow dashboard and the numbers on the canvas: per block entries, branches taken, drop-off; completion, time and handoff rate; A/B results. */
-    public function analytics(Request $request, ChatbotFlow $flow): JsonResponse
+    /**
+     * The flow dashboard and the numbers on the canvas, from the execution log: per step entries,
+     * branches taken, drop-off; completion, time and handoff rate; outcomes; A/B results.
+     * `version`: "current" (default: the published version, each step counted over the versions in
+     * which it was identical), a version number, or "all".
+     */
+    public function analytics(Request $request, ChatbotFlow $flow, FlowInsights $insights): JsonResponse
     {
-        $days = (int) ($request->validate(['days' => ['nullable', 'integer', 'min:1', 'max:90']])['days'] ?? 30);
+        $data = $request->validate([
+            'days' => ['nullable', 'integer', 'min:1', 'max:90'],
+            'version' => ['nullable', 'regex:/^(current|all|\d{1,6})$/'],
+        ]);
+        $days = (int) ($data['days'] ?? 30);
         $since = now()->subDays($days);
+        $report = $insights->report($flow, (string) ($data['version'] ?? 'current'), $since);
+        /** @var FlowGraph $graph */
+        $graph = $report['graph'];
+        unset($report['graph']);
+        $report['nodes'] = (object) $report['nodes'];
 
-        $rows = ChatbotEvent::query()->where('flow_id', $flow->id)->where('created_at', '>=', $since)
-            ->selectRaw('node_id, kind, detail, count(*) AS total, count(DISTINCT session_id) AS sessions')
-            ->groupBy('node_id', 'kind', 'detail')->toBase()->get();
-        $nodes = [];
-        foreach ($rows as $r) {
-            $n = &$nodes[$r->node_id];
-            $n ??= ['entries' => 0, 'clicks' => [], 'abandoned' => 0, 'handoffs' => 0, 'completed' => 0, 'errors' => 0, 'no_match' => 0];
-            match ($r->kind) {
-                'enter' => $n['entries'] += (int) $r->sessions,
-                'click' => $n['clicks'][(string) $r->detail] = ($n['clicks'][(string) $r->detail] ?? 0) + (int) $r->total,
-                'abandon' => $n['abandoned'] += (int) $r->total,
-                'handoff' => $n['handoffs'] += (int) $r->total,
-                'complete' => $n['completed'] += (int) $r->total,
-                default => $r->detail === 'no_match' ? $n['no_match'] += (int) $r->total : $n['errors'] += (int) $r->total,
-            };
-            unset($n);
-        }
-
-        $sessions = ChatbotSession::query()->where('flow_id', $flow->id)->where('created_at', '>=', $since)
-            ->selectRaw('status, count(*) AS total')->groupBy('status')->toBase()->pluck('total', 'status');
-        $total = (int) $sessions->sum();
-        $finished = (int) ($sessions['completed'] ?? 0) + (int) ($sessions['handed_off'] ?? 0);
-        $avg = ChatbotSession::query()->where('flow_id', $flow->id)->where('created_at', '>=', $since)->whereIn('status', ['completed', 'handed_off'])->whereNotNull('ended_at')
-            ->selectRaw('avg(extract(epoch from (ended_at - created_at))) AS seconds')->toBase()->value('seconds');
-        $daily = ChatbotSession::query()->where('flow_id', $flow->id)->where('created_at', '>=', $since)
-            ->selectRaw("to_char(created_at, 'YYYY-MM-DD') AS day, count(*) AS started, count(*) FILTER (WHERE status IN ('completed', 'handed_off')) AS finished")
-            ->groupBy('day')->orderBy('day')->toBase()->get();
-
-        // Where customers stopped: the blocks with the most abandoned sessions.
-        $graph = FlowGraph::from($flow->publishedGraph()->graph ?? $flow->draft);
-        $dropoff = collect($nodes)->filter(fn ($n) => $n['abandoned'] > 0)->sortByDesc('abandoned')->take(8)
-            ->map(fn ($n, $id) => ['node_id' => (string) $id, 'title' => $graph->node((string) $id)['title'] ?? (string) $id, 'abandoned' => $n['abandoned'], 'entries' => $n['entries']])->values();
-
-        return response()->json(['data' => [
-            'days' => $days,
-            'sessions' => [
-                'started' => $total,
-                'running' => (int) (($sessions['active'] ?? 0) + ($sessions['waiting'] ?? 0)),
-                'completed' => (int) ($sessions['completed'] ?? 0),
-                'handed_off' => (int) ($sessions['handed_off'] ?? 0),
-                'abandoned' => (int) ($sessions['abandoned'] ?? 0),
-                'stopped' => (int) ($sessions['stopped'] ?? 0),
-                'completion_rate' => $total > 0 ? round(100 * $finished / $total, 1) : null,
-                'handoff_rate' => $total > 0 ? round(100 * (int) ($sessions['handed_off'] ?? 0) / $total, 1) : null,
-                'avg_seconds' => $avg !== null ? (int) round((float) $avg) : null,
-            ],
-            'daily' => $daily->map(fn ($d) => ['day' => $d->day, 'started' => (int) $d->started, 'finished' => (int) $d->finished])->values(),
-            'dropoff' => $dropoff,
-            'ab' => $this->abResults($flow, $graph, $since),
-            'nodes' => (object) $nodes,
-        ]]);
+        return response()->json(['data' => ['days' => $days] + $report + ['ab' => $this->abResults($flow, $graph, $since)]]);
     }
 
     /** @return list<array<string, mixed>> */
@@ -747,6 +825,7 @@ final class ChatbotController extends Controller
             'members' => TenantMembership::query()->active()->with('user:id,name')->get()->map(fn (TenantMembership $m) => [
                 'id' => $m->id, 'name' => $m->user->name ?? 'Teammate',
             ])->values(),
+            'teams' => InboxTeam::query()->orderBy('name')->get(['id', 'name'])->values(),
             'templates' => MessageTemplate::query()->whereIn('waba_account_id', $wabas)->get()->filter(fn (MessageTemplate $t) => $t->isSendable())
                 ->map(fn (MessageTemplate $t) => [
                     'name' => $t->name, 'language' => $t->language, 'category' => $t->category, 'waba_account_id' => $t->waba_account_id,
@@ -889,6 +968,46 @@ final class ChatbotController extends Controller
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────────────
 
+    /** 409: the draft changed since the editor loaded it. Carries what is stored now, to merge with. */
+    private function draftConflict(ChatbotFlow $flow): JsonResponse
+    {
+        return response()->json(['error' => [
+            'code' => 'draft_conflict',
+            'message' => 'Someone else saved this flow since you opened it.',
+            'details' => [
+                'revision' => $flow->draft_revision,
+                'name' => $flow->name,
+                'draft' => FlowGraph::normalize($flow->draft),
+                'settings' => FlowSettings::normalize($flow->settings),
+                'edited_by' => $flow->draft_updated_by_membership_id !== null ? ($this->memberNames([$flow->draft_updated_by_membership_id])[$flow->draft_updated_by_membership_id] ?? null) : null,
+                'edited_at' => $flow->draft_updated_at?->toIso8601String(),
+            ],
+        ]], 409);
+    }
+
+    /** The saved drafts kept for this flow (newest first). */
+    public function revisions(ChatbotFlow $flow): JsonResponse
+    {
+        $rows = ChatbotDraftRevision::query()->where('flow_id', $flow->id)->orderByDesc('revision')->limit(ChatbotDraftRevision::KEEP)->get(['revision', 'name', 'membership_id', 'created_at', 'draft']);
+        $names = $this->memberNames($rows->pluck('membership_id')->filter()->unique()->values()->all());
+
+        return response()->json(['data' => $rows->map(fn (ChatbotDraftRevision $r) => [
+            'revision' => $r->revision, 'name' => $r->name, 'steps' => count((array) ($r->draft['nodes'] ?? [])),
+            'by' => $r->membership_id !== null ? ($names[$r->membership_id] ?? 'Former member') : null, 'created_at' => $r->created_at?->toIso8601String(),
+        ])->values()]);
+    }
+
+    /** One saved draft, to look at or bring back (the editor saves it as the newest draft). */
+    public function revision(ChatbotFlow $flow, int $revision): JsonResponse
+    {
+        $r = ChatbotDraftRevision::query()->where('flow_id', $flow->id)->where('revision', $revision)->firstOrFail();
+
+        return response()->json(['data' => [
+            'revision' => $r->revision, 'name' => $r->name, 'draft' => FlowGraph::normalize($r->draft), 'settings' => FlowSettings::normalize($r->settings),
+            'created_at' => $r->created_at?->toIso8601String(),
+        ]]);
+    }
+
     /** @return array<string, mixed> */
     private function present(ChatbotFlow $flow, bool $full = false): array
     {
@@ -912,6 +1031,11 @@ final class ChatbotController extends Controller
             'published_at' => $flow->published_at?->toIso8601String(),
             'has_unpublished_changes' => $flow->hasUnpublishedChanges(),
             'draft_updated_at' => $flow->draft_updated_at?->toIso8601String(),
+            'draft_revision' => $flow->draft_revision,
+            'draft_updated_by' => $flow->draft_updated_by_membership_id !== null ? ($this->memberNames([$flow->draft_updated_by_membership_id])[$flow->draft_updated_by_membership_id] ?? null) : null,
+            'engine_level' => FlowSettings::level($flow->settings),
+            'published_engine_level' => $published !== null ? FlowSettings::level($published[1]) : null,
+            'start_priority' => $flow->start_priority,
             'archived_at' => $flow->archived_at?->toIso8601String(),
             'activate_at' => $flow->activate_at?->toIso8601String(),
             'deactivate_at' => $flow->deactivate_at?->toIso8601String(),
@@ -988,7 +1112,7 @@ final class ChatbotController extends Controller
     }
 
     /** Dependency checks on what is live: a template rejected or a field deleted since publishing. */
-    public const DEPENDENCY_CODES = ['deleted_field', 'missing_template', 'template_status', 'missing_secret', 'missing_member', 'deleted_segment', 'missing_subflow', 'missing_file', 'no_store', 'reopen_template'];
+    public const DEPENDENCY_CODES = ['deleted_field', 'missing_template', 'template_status', 'missing_secret', 'missing_member', 'missing_team', 'deleted_segment', 'missing_subflow', 'missing_file', 'no_store', 'reopen_template'];
 
     /** @return list<string> */
     private function attention(ChatbotFlow $flow): array
@@ -1056,6 +1180,7 @@ final class ChatbotController extends Controller
         }
         if (array_intersect($types, ['tag', 'handoff', 'end']) !== []) {
             $deps['members'] = array_fill_keys(TenantMembership::query()->active()->pluck('id')->all(), true);
+            $deps['teams'] = array_fill_keys(InboxTeam::query()->pluck('id')->all(), true);
         }
         if (in_array('condition', $types, true)) {
             $deps['segments'] = [];

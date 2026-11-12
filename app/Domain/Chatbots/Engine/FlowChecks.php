@@ -352,6 +352,13 @@ final class FlowChecks
             case 'end':
                 break;
         }
+        if (in_array($node['type'], ['tag', 'handoff', 'end'], true) && ($c['assign'] ?? null) === 'team') {
+            if (($c['team_id'] ?? null) === null) {
+                $err('no_team', 'no inbox team chosen.', 'Pick the team, or use the inbox routing rule.');
+            } elseif (isset($deps['teams']) && ! isset($deps['teams'][$c['team_id']])) {
+                $err('missing_team', 'hands over to an inbox team that no longer exists.', 'Pick another team.');
+            }
+        }
         if (in_array($node['type'], ['tag', 'handoff', 'end'], true) && ($c['assign'] ?? null) === 'member') {
             if ($c['member_id'] === null) {
                 $err('no_member', 'no teammate chosen.', 'Pick the teammate, or assign to the least busy teammate.');
