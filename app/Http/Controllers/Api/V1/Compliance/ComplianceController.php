@@ -7,10 +7,12 @@ namespace App\Http\Controllers\Api\V1\Compliance;
 use App\Application\Messaging\SendMessage;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Compliance\ComplianceSettings;
+use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\ConsentEvent;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -20,6 +22,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -28,7 +31,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 final class ComplianceController extends Controller
 {
-    private const ACTIONS = ['opted_in', 'opted_out', 'marketing_opted_in', 'marketing_opted_out', 'consent_declined'];
+    private const ACTIONS = ['opted_in', 'opted_out', 'marketing_opted_in', 'marketing_opted_out', 'consent_declined', 'consent_requested'];
 
     public function __construct(private readonly TenantContext $context, private readonly AuditLogger $audit) {}
 
@@ -166,25 +169,41 @@ final class ComplianceController extends Controller
     }
 
     /**
-     * In-chat opt-in: sends the consent question with Subscribe / No thanks buttons inside the
-     * open 24-hour window. A tap on Subscribe is recorded in the ledger as an explicit opt-in.
+     * Marketing consent, asked in the chat (double opt-in): the customer gets the consent question
+     * with Subscribe / Unsubscribe buttons inside the open 24-hour window. Nothing is recorded as
+     * consent until they tap: Subscribe records the opt-in (and sends the opt-in confirmation),
+     * Unsubscribe the opt-out (no marketing; order updates still go). The question itself is kept
+     * in the ledger, and the contact shows "waiting for an answer" meanwhile.
      */
-    public function requestConsent(Conversation $conversation, SendMessage $send): JsonResponse
+    public function requestConsent(Conversation $conversation, SendMessage $send, ConsentService $consent): JsonResponse
     {
-        $settings = ComplianceSettings::for($this->context->tenant());
+        $tenant = $this->context->tenant();
+        $settings = ComplianceSettings::for($tenant);
+        /** @var Contact $contact */
+        $contact = $conversation->contact()->firstOrFail();
+        if ($contact->consent_state === ConsentState::OptedIn && ! $contact->marketing_opted_out) {
+            throw ValidationException::withMessages(['conversation' => 'This customer already agreed to marketing messages.']);
+        }
+        if (! $conversation->isWindowOpen()) {
+            throw ValidationException::withMessages(['conversation' => 'The consent question can be sent only within 24 hours of the customer’s last message (WhatsApp’s rule for buttons). Ask again when they write to you.']);
+        }
 
+        $header = mb_substr(trim((string) ($tenant->name ?? '')), 0, 60);
         $message = $send->toConversation($conversation, [
             'type' => 'interactive',
             'body' => $settings->consentRequestText,
-            'content' => [
+            'content' => array_filter([
                 'type' => 'button',
+                'header' => $header !== '' ? ['type' => 'text', 'text' => $header] : null,
                 'body' => ['text' => $settings->consentRequestText],
+                'footer' => ['text' => 'You can change this at any time.'],
                 'action' => ['buttons' => [
-                    ['type' => 'reply', 'reply' => ['id' => 'consent_opt_in', 'title' => 'Subscribe']],
-                    ['type' => 'reply', 'reply' => ['id' => 'consent_decline', 'title' => 'No thanks']],
+                    ['type' => 'reply', 'reply' => ['id' => ConsentService::BUTTON_OPT_IN, 'title' => 'Subscribe']],
+                    ['type' => 'reply', 'reply' => ['id' => ConsentService::BUTTON_OPT_OUT, 'title' => 'Unsubscribe']],
                 ]],
-            ],
+            ]),
         ], MessageOrigin::Agent, $this->context->membership());
+        $consent->requested($contact, $message->id, $this->context->membership()?->id);
 
         return MessageResource::make($message)->response()->setStatusCode(202);
     }

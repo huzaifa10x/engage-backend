@@ -25,6 +25,9 @@ final class ConsentService
     /** Button ids of the in-chat consent request (Inbox → Ask for consent). */
     public const BUTTON_OPT_IN = 'consent_opt_in';
 
+    public const BUTTON_OPT_OUT = 'consent_opt_out';
+
+    /** "No thanks" on consent requests sent before the Unsubscribe button: still understood. */
     public const BUTTON_DECLINE = 'consent_decline';
 
     /**
@@ -48,6 +51,7 @@ final class ConsentService
         if ($message->type === 'interactive' && is_array($reply) && isset($reply['id'])) {
             return match ((string) $reply['id']) {
                 self::BUTTON_OPT_IN => 'opt_in',
+                self::BUTTON_OPT_OUT => 'opt_out',
                 self::BUTTON_DECLINE => 'decline',
                 default => $this->keywordIntent($text) === 'opt_out' ? 'opt_out' : null,
             };
@@ -62,7 +66,15 @@ final class ConsentService
      */
     public function recordDecline(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null): void
     {
+        $contact->forceFill(['consent_requested_at' => null])->save();
         $this->record($contact, 'consent_declined', $source, $detail, $messageId, null);
+    }
+
+    /** The consent question was sent: recorded in the ledger, and the contact waits for an answer. */
+    public function requested(Contact $contact, ?string $messageId, ?string $membershipId): void
+    {
+        $contact->forceFill(['consent_requested_at' => now()])->save();
+        $this->record($contact, 'consent_requested', 'in_chat_button', null, $messageId, $membershipId);
     }
 
     /** @return 'opt_out'|'opt_in'|null */
@@ -96,7 +108,7 @@ final class ConsentService
             return false;
         }
 
-        $contact->forceFill(['consent_state' => ConsentState::OptedOut, 'opted_out_at' => now()])->save();
+        $contact->forceFill(['consent_state' => ConsentState::OptedOut, 'opted_out_at' => now(), 'consent_requested_at' => null])->save();
         $this->record($contact, 'opted_out', $source, $detail, $messageId, $membershipId);
         app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.opted_out', PublicPayload::contact($contact) + ['source' => $source]);
 
@@ -110,7 +122,7 @@ final class ConsentService
             return false;
         }
 
-        $contact->forceFill(['consent_state' => ConsentState::OptedIn, 'opted_in_at' => now(), 'opted_out_at' => null])->save();
+        $contact->forceFill(['consent_state' => ConsentState::OptedIn, 'opted_in_at' => now(), 'opted_out_at' => null, 'consent_requested_at' => null])->save();
         $this->record($contact, 'opted_in', $source, $detail, $messageId, $membershipId);
         app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.opted_in', PublicPayload::contact($contact) + ['source' => $source]);
 

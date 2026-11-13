@@ -128,6 +128,42 @@ final class ComplianceTest extends TestCase
         $this->getJson('/api/v1/compliance/consent-events')->assertJsonPath('data.0.action', 'opted_in')->assertJsonPath('data.0.source', 'in_chat_button');
     }
 
+    public function test_asking_for_consent_sends_subscribe_and_unsubscribe_and_records_only_the_answer(): void
+    {
+        $this->text('Hi, do you have offers?');
+        $conversation = $this->tenantContext()->run($this->tenant, fn () => Conversation::query()->firstOrFail());
+
+        $this->postJson("/api/v1/conversations/{$conversation->id}/consent-request")->assertStatus(202);
+        Http::assertSent(fn (Request $r) => ($r['type'] ?? null) === 'interactive'
+            && $r['interactive']['header']['text'] === $this->tenant->name
+            && str_contains($r['interactive']['body']['text'], 'Would you like to receive marketing messages')
+            && array_column(array_column($r['interactive']['action']['buttons'], 'reply'), 'title') === ['Subscribe', 'Unsubscribe']
+            && array_column(array_column($r['interactive']['action']['buttons'], 'reply'), 'id') === ['consent_opt_in', 'consent_opt_out']);
+
+        // Asked, not yet answered: consent is unchanged; the question is in the ledger.
+        $contact = $this->contact();
+        $this->assertSame('unknown', $contact->consent_state->value);
+        $this->assertNotNull($contact->consent_requested_at);
+        $this->getJson("/api/v1/contacts/{$contact->id}")->assertJsonPath('data.consent_requested_at', fn ($v) => $v !== null);
+        $this->getJson('/api/v1/compliance/consent-events?action=consent_requested')->assertJsonCount(1, 'data');
+
+        // Unsubscribe: opted out (no marketing), with the opt-out confirmation; the question is answered.
+        $this->inbound(['type' => 'interactive', 'interactive' => ['type' => 'button_reply', 'button_reply' => ['id' => 'consent_opt_out', 'title' => 'Unsubscribe']]]);
+        $contact = $this->contact();
+        $this->assertSame('opted_out', $contact->consent_state->value);
+        $this->assertNull($contact->consent_requested_at);
+        Http::assertSent(fn (Request $r) => str_contains((string) ($r['text']['body'] ?? ''), 'unsubscribed'));
+
+        // Already opted in: no second question.
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->update(['consent_state' => 'opted_in']));
+        $this->postJson("/api/v1/conversations/{$conversation->id}/consent-request")->assertStatus(422);
+
+        // Outside the 24-hour window the buttons cannot be sent.
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->update(['consent_state' => 'unknown']));
+        $this->travel(25)->hours();
+        $this->postJson("/api/v1/conversations/{$conversation->id}/consent-request")->assertStatus(422);
+    }
+
     public function test_no_thanks_on_the_consent_request_is_recorded_and_answered_by_nothing(): void
     {
         $this->text('Hello');

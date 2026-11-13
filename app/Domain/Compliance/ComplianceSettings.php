@@ -56,7 +56,7 @@ final class ComplianceSettings
             (string) ($stored['opt_out_reply'] ?? 'You have been unsubscribed from our promotional messages. You will still get updates about your orders and bookings. Reply START to subscribe again.'),
             (bool) ($stored['confirm_opt_in'] ?? true),
             (string) ($stored['opt_in_reply'] ?? 'You are subscribed. Reply STOP at any time to unsubscribe.'),
-            (string) ($stored['consent_request_text'] ?? "Would you like to receive offers and updates from {$name} on WhatsApp? You can unsubscribe at any time by replying STOP."),
+            (string) ($stored['consent_request_text'] ?? "We'd love to send you updates, offers and promotional messages on WhatsApp.\n\nWould you like to receive marketing messages from {$name}?"),
             (bool) ($stored['retention_enabled'] ?? false),
             max(self::MIN_MESSAGE_DAYS, (int) ($stored['message_retention_days'] ?? 365)),
             max(self::MIN_MEDIA_DAYS, (int) ($stored['media_retention_days'] ?? 180)),

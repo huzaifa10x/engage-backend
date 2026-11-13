@@ -44,6 +44,8 @@ final class ContactResource extends JsonResource
             'stage_changed_at' => $this->stage_changed_at?->toIso8601String(),
             'consent_state' => $this->consent_state->value,
             'opted_out_at' => $this->opted_out_at?->toIso8601String(),
+            // The Subscribe / Unsubscribe question is waiting for an answer since then.
+            'consent_requested_at' => $this->consent_requested_at?->toIso8601String(),
             'marketing_opted_out' => $this->marketing_opted_out,
             'last_inbound_at' => $this->last_inbound_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),

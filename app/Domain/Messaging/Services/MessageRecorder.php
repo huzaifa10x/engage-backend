@@ -208,6 +208,10 @@ final class MessageRecorder
             return;
         }
         $text = $message->body;
+        // Any answer ends a pending consent question.
+        if ($contact->consent_requested_at !== null) {
+            $contact->forceFill(['consent_requested_at' => null])->save();
+        }
         // A tapped button (our in-chat "Subscribe" request) is recorded apart from a typed keyword.
         $source = $message->type === 'text' ? 'keyword' : 'in_chat_button';
 

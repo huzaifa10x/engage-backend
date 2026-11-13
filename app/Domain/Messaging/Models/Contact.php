@@ -37,6 +37,7 @@ use Illuminate\Validation\ValidationException;
  * @property ?PhoneNumber $syncedFrom
  * @property ConsentState $consent_state
  * @property ?Carbon $opted_out_at
+ * @property ?Carbon $consent_requested_at
  * @property bool $marketing_opted_out
  * @property ?Carbon $last_inbound_at
  * @property ?string $stage_id
@@ -56,7 +57,7 @@ class Contact extends Model
 
     protected $fillable = [
         'tenant_id', 'wa_id', 'bsuid', 'parent_bsuid', 'username', 'profile_name', 'name', 'email', 'custom_fields', 'tags', 'source',
-        'consent_state', 'opted_in_at', 'opted_out_at', 'marketing_opted_out', 'last_inbound_at', 'synced_from_phone_number_id',
+        'consent_state', 'opted_in_at', 'opted_out_at', 'consent_requested_at', 'marketing_opted_out', 'last_inbound_at', 'synced_from_phone_number_id',
     ];
 
     /**
@@ -87,6 +88,7 @@ class Contact extends Model
             'consent_state' => ConsentState::class,
             'opted_in_at' => 'datetime',
             'opted_out_at' => 'datetime',
+            'consent_requested_at' => 'datetime',
             'marketing_opted_out' => 'boolean',
             'last_inbound_at' => 'datetime',
             // Growth Hub projection (written only by EvidenceRecorder).
