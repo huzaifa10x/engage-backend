@@ -28,7 +28,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 final class ComplianceController extends Controller
 {
-    private const ACTIONS = ['opted_in', 'opted_out', 'marketing_opted_in', 'marketing_opted_out'];
+    private const ACTIONS = ['opted_in', 'opted_out', 'marketing_opted_in', 'marketing_opted_out', 'consent_declined'];
 
     public function __construct(private readonly TenantContext $context, private readonly AuditLogger $audit) {}
 

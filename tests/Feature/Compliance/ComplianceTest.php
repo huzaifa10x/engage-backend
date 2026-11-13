@@ -128,6 +128,34 @@ final class ComplianceTest extends TestCase
         $this->getJson('/api/v1/compliance/consent-events')->assertJsonPath('data.0.action', 'opted_in')->assertJsonPath('data.0.source', 'in_chat_button');
     }
 
+    public function test_no_thanks_on_the_consent_request_is_recorded_and_answered_by_nothing(): void
+    {
+        $this->text('Hello');
+        Http::assertSentCount(0);
+
+        $this->inbound(['type' => 'interactive', 'interactive' => ['type' => 'button_reply', 'button_reply' => ['id' => 'consent_decline', 'title' => 'No thanks']]]);
+
+        $this->assertSame('unknown', $this->contact()->consent_state->value);
+        Http::assertSentCount(0); // no confirmation, no auto-reply, no bot
+        $this->getJson('/api/v1/compliance/consent-events?action=consent_declined')->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.source', 'in_chat_button');
+    }
+
+    public function test_the_subscribe_button_is_read_by_its_id_whatever_the_title_and_lifts_a_marketing_stop(): void
+    {
+        $this->text('Hello');
+        $this->tenantContext()->run($this->tenant, fn () => $this->contact()->forceFill(['marketing_opted_out' => true])->save());
+
+        // A translated title is not a keyword, but the id is ours.
+        $this->inbound(['type' => 'interactive', 'interactive' => ['type' => 'button_reply', 'button_reply' => ['id' => 'consent_opt_in', 'title' => 'اشترك الآن']]]);
+
+        $contact = $this->contact();
+        $this->assertSame('opted_in', $contact->consent_state->value);
+        $this->assertFalse((bool) $contact->marketing_opted_out);
+        Http::assertSent(fn (Request $r) => str_contains((string) ($r['text']['body'] ?? ''), 'You are subscribed'));
+        Http::assertSentCount(1);
+    }
+
     public function test_overview_reports_consent_coverage_and_policy_checks(): void
     {
         $this->text('STOP');

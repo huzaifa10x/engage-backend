@@ -61,6 +61,7 @@ class Campaign extends Model
         'matched_count', 'eligible_count', 'failure_reason', 'created_by_membership_id',
         'notes', 'objective', 'audience_tag', 'batch_per_hour', 'next_batch_at', 'wait_reason', 'paused_at', 'pause_reason',
         'include_non_opted_in',
+        'consent_basis',
     ];
 
     protected function casts(): array

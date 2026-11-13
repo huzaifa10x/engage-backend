@@ -229,9 +229,11 @@ final class TestRuntime extends BotRuntime
         return FlowGraph::from($row !== null ? $row->graph : $flow->draft);
     }
 
-    public function optIn(): void
+    public function optIn(): bool
     {
         $this->note('(Test) The customer would be opted in to messages, marketing included.');
+
+        return true;
     }
 
     public function optOut(string $scope): void

@@ -13,6 +13,7 @@ use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use Illuminate\Support\Facades\DB;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
 
@@ -88,6 +89,31 @@ final class LeadsTest extends TestCase
         $this->assertNull($mariam['acquisition']);
         $chat = collect($this->getJson('/api/v1/conversations')->assertOk()->json('data'))->first(fn ($c) => $c['contact']['display_name'] === 'Mariam');
         $this->assertNull($chat['contact']['acquisition']);
+    }
+
+    public function test_a_custom_date_range_lists_the_leads_whose_ad_touch_fell_on_those_days(): void
+    {
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Owner));
+        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['timezone' => 'Asia/Dubai'])->save());
+        $today = now('Asia/Dubai')->toDateString();
+        $yesterday = now('Asia/Dubai')->subDay()->toDateString();
+
+        $this->assertCount(1, $this->getJson("/api/v1/growth/leads?since={$today}&until={$today}")->assertOk()->json('data'));
+        $this->assertSame(1, $this->getJson("/api/v1/growth/leads?since={$yesterday}&until={$today}")->json('meta.counts.all'));
+        $this->assertCount(0, $this->getJson("/api/v1/growth/leads?since=2026-01-01&until={$yesterday}")->assertOk()->json('data'));
+
+        // Older than every preset period: only a custom range reaches it.
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->where('wa_id', '971500000001')->update([
+            'acquisition_original' => DB::raw("jsonb_set(acquisition_original, '{occurred_at}', '\"2025-02-10T09:00:00+00:00\"')"),
+            'acquisition_latest' => DB::raw("jsonb_set(coalesce(acquisition_latest, acquisition_original), '{occurred_at}', '\"2025-02-10T09:00:00+00:00\"')"),
+        ]));
+        $this->assertCount(0, $this->getJson('/api/v1/growth/leads?days=365')->json('data'));
+        $this->assertCount(1, $this->getJson('/api/v1/growth/leads?since=2025-02-10&until=2025-02-10')->json('data'));
+        $this->assertCount(0, $this->getJson('/api/v1/growth/leads?since=2025-02-11&until=2025-03-01')->json('data'));
+
+        $this->getJson('/api/v1/growth/leads?since=2025-03-01&until=2025-02-01')->assertStatus(422);
+        $this->getJson('/api/v1/growth/leads?since=2025-03-01')->assertStatus(422);
+        $this->get('/api/v1/growth/leads/export?since=2025-02-10&until=2025-02-10')->assertOk();
     }
 
     public function test_a_customer_who_comes_back_through_an_ad_is_a_returning_lead(): void

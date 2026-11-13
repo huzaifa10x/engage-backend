@@ -440,6 +440,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::post('tags', [CrmController::class, 'storeTag'])->name('tags.store');
         Route::delete('tags/{tag}', [CrmController::class, 'destroyTag'])->name('tags.destroy');
         Route::post('contacts/bulk-tag', [CrmController::class, 'bulkTag'])->name('contacts.bulk-tag');
+        Route::post('contacts/bulk-edit', [CrmController::class, 'bulkEdit'])->middleware('throttle:30,1')->name('contacts.bulk-edit');
         Route::post('contact-fields', [CrmController::class, 'storeField'])->name('contact-fields.store');
         Route::patch('contact-fields/{field}', [CrmController::class, 'updateField'])->name('contact-fields.update');
         Route::delete('contact-fields/{field}', [CrmController::class, 'destroyField'])->name('contact-fields.destroy');

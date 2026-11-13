@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Domain\Chatbots\Engine;
 
+use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Growth\Services\MetaReferral;
+use App\Domain\Tenancy\TenantContext;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -422,10 +424,16 @@ final class FlowEngine
                 // Put after the customer agreed (a "Yes, subscribe" button, a keyword): recorded in the consent
                 // ledger as an opt-in from the chatbot, and marketing messages are allowed again.
             case 'optin':
-                $rt->optIn();
+                $changed = $rt->optIn();
                 $rt->note('The customer is opted in to messages, marketing included.');
                 if ($c['text'] !== null) {
                     $this->sendText($rt, $this->say($c['text'], $rt));
+                } elseif ($changed) {
+                    // No confirmation of its own: the workspace's opt-in confirmation (Consent & Privacy).
+                    $settings = ComplianceSettings::for(app(TenantContext::class)->tenantOrNull());
+                    if ($settings->confirmOptIn && trim($settings->optInReply) !== '') {
+                        $this->sendText($rt, $settings->optInReply);
+                    }
                 }
 
                 return 'next';

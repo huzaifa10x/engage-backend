@@ -260,13 +260,16 @@ final class LiveRuntime extends BotRuntime
         return $this->graphs[$flowId];
     }
 
-    public function optIn(): void
+    public function optIn(): bool
     {
         $consent = app(ConsentService::class);
-        $consent->optIn($this->contactModel, 'chatbot', $this->botName());
+        $wasMarketingOut = (bool) $this->contactModel->marketing_opted_out;
+        $changed = $consent->optIn($this->contactModel, 'chatbot', $this->botName());
         $consent->setMarketingPreference($this->contactModel, false, $this->botName(), 'chatbot');
         $this->contactModel->refresh();
         $this->contact = self::snapshot($this->contactModel);
+
+        return $changed || $wasMarketingOut;
     }
 
     public function optOut(string $scope): void

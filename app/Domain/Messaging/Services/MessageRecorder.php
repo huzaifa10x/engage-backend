@@ -203,18 +203,30 @@ final class MessageRecorder
 
     private function applyConsentKeyword(Contact $contact, Message $message): void
     {
-        $text = in_array($message->type, ['text', 'button', 'interactive'], true) ? $message->body : null;
-
-        $intent = $this->consent->keywordIntent($text);
+        $intent = $this->consent->intentFor($message);
         if ($intent === null) {
             return;
         }
+        $text = $message->body;
         // A tapped button (our in-chat "Subscribe" request) is recorded apart from a typed keyword.
         $source = $message->type === 'text' ? 'keyword' : 'in_chat_button';
 
-        $changed = $intent === 'opt_out'
-            ? $this->consent->optOut($contact, $source, $text, $message->id)
-            : $this->consent->optIn($contact, $source, $text, $message->id);
+        if ($intent === 'decline') {
+            $this->consent->recordDecline($contact, $source, $text, $message->id);
+
+            return; // nothing is sent back: "No thanks" is an answer, not a request
+        }
+
+        if ($intent === 'opt_out') {
+            $changed = $this->consent->optOut($contact, $source, $text, $message->id);
+        } else {
+            $changed = $this->consent->optIn($contact, $source, $text, $message->id);
+            // An explicit Subscribe also lifts an earlier "stop marketing" (Meta preference or a bot block).
+            if ($contact->marketing_opted_out) {
+                $this->consent->setMarketingPreference($contact, false, $text, $source);
+                $changed = true;
+            }
+        }
 
         // An opt-out ends any chatbot conversation at once: the bot never answers STOP.
         if ($changed && $intent === 'opt_out' && ($conversation = Conversation::query()->find($message->conversation_id)) !== null) {

@@ -11,6 +11,7 @@ use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\ConsentEvent;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\TenantContext;
 
 /**
@@ -20,6 +21,49 @@ use App\Domain\Tenancy\TenantContext;
 final class ConsentService
 {
     public function __construct(private readonly AuditLogger $audit, private readonly TenantContext $context) {}
+
+    /** Button ids of the in-chat consent request (Inbox → Ask for consent). */
+    public const BUTTON_OPT_IN = 'consent_opt_in';
+
+    public const BUTTON_DECLINE = 'consent_decline';
+
+    /**
+     * What an inbound message says about consent, the way WhatsApp tools handle it:
+     *  - a tap on our own consent request is read by its button id (never by its title);
+     *  - a tap on any other button or list row is an answer to the chatbot (or an agent's question), so
+     *    a "Subscribe" or "Yes" button in a flow reaches the flow and its Opt-in block, which sends the
+     *    flow's own confirmation. Only an opt-out word is still honoured there: STOP can never be missed;
+     *  - typed text and template quick replies are matched against the keyword lists, whole message only.
+     *
+     * @return 'opt_out'|'opt_in'|'decline'|null
+     */
+    public function intentFor(Message $message, ?string $text = null): ?string
+    {
+        if (! in_array($message->type, ['text', 'button', 'interactive'], true)) {
+            return null;
+        }
+        $text ??= $message->body;
+        $content = (array) ($message->content ?? []);
+        $reply = $content['button_reply'] ?? $content['list_reply'] ?? null;
+        if ($message->type === 'interactive' && is_array($reply) && isset($reply['id'])) {
+            return match ((string) $reply['id']) {
+                self::BUTTON_OPT_IN => 'opt_in',
+                self::BUTTON_DECLINE => 'decline',
+                default => $this->keywordIntent($text) === 'opt_out' ? 'opt_out' : null,
+            };
+        }
+
+        return $this->keywordIntent($text);
+    }
+
+    /**
+     * The customer tapped "No thanks" on the consent request: kept in the ledger as an answer. Their
+     * consent state does not change (declining marketing is not an opt-out of the conversation).
+     */
+    public function recordDecline(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null): void
+    {
+        $this->record($contact, 'consent_declined', $source, $detail, $messageId, null);
+    }
 
     /** @return 'opt_out'|'opt_in'|null */
     public function keywordIntent(?string $text): ?string

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Campaigns;
 
 use App\Domain\Campaigns\Models\Campaign;
+use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -78,6 +79,8 @@ final class DailyMessagingLimitTest extends TestCase
             $phone = '+97150222000'.$i;
             $this->contacts[$phone] = (string) $this->postJson('/api/v1/contacts', ['phone' => $phone, 'name' => "Guest {$i}", 'tags' => ['Class']])->assertCreated()->json('data.id');
         }
+        // Campaigns go to contacts with a recorded opt-in.
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->update(['consent_state' => 'opted_in']));
     }
 
     private function template(string $phone): TestResponse

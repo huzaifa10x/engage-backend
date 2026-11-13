@@ -152,6 +152,63 @@ final class ChatbotBuilderV2Test extends TestCase
         $this->assertSame('chatbot', $this->inTenant(fn () => ConsentEvent::query()->where('contact_id', $contact->id)->latest('created_at')->value('source')));
     }
 
+    public function test_a_flow_button_titled_subscribe_reaches_the_flow_and_sends_its_own_opt_in_confirmation(): void
+    {
+        // "Subscribe" is a locked opt-in keyword; a tap on the flow's own button must still reach the
+        // flow, so the customer gets the Opt-in block's message and not the generic keyword reply.
+        $this->flow('Subscribe', [
+            self::node('start', 'start', ['any_message' => true], ['next' => 'ask']),
+            self::node('ask', 'buttons', ['text' => 'Get our offers on WhatsApp?', 'retries' => 0, 'buttons' => [['id' => 'yes', 'title' => 'Subscribe'], ['id' => 'no', 'title' => 'Not now']]], ['yes' => 'optin', 'no' => 'bye']),
+            self::node('optin', 'optin', ['text' => 'Welcome to the VIP list!'], ['next' => 'bye']),
+            self::node('bye', 'end', ['text' => 'Bye']),
+            self::node('person', 'handoff', ['text' => null]),
+        ]);
+
+        $this->says('hi');
+        $this->taps('yes', 'Subscribe');
+
+        $received = $this->received();
+        $this->assertContains('Welcome to the VIP list!', $received);
+        $this->assertNotContains('You are subscribed. Reply STOP at any time to unsubscribe.', $received);
+        $contact = $this->inTenant(fn () => Contact::query()->where('wa_id', '971501234567')->firstOrFail());
+        $this->assertSame('opted_in', $contact->consent_state->value);
+        $this->assertSame(['chatbot'], $this->inTenant(fn () => ConsentEvent::query()->where('contact_id', $contact->id)->where('action', 'opted_in')->pluck('source')->all()));
+        $this->assertSame('completed', $this->botSession()->status);
+    }
+
+    public function test_an_opt_in_block_without_text_sends_the_workspace_opt_in_confirmation_once(): void
+    {
+        $this->flow('Subscribe', [
+            self::node('start', 'start', ['any_message' => true], ['next' => 'ask']),
+            self::node('ask', 'buttons', ['text' => 'Get our offers?', 'retries' => 0, 'buttons' => [['id' => 'yes', 'title' => 'Yes'], ['id' => 'no', 'title' => 'No']]], ['yes' => 'optin', 'no' => 'bye']),
+            self::node('optin', 'optin', ['text' => null], ['next' => 'bye']),
+            self::node('bye', 'end', ['text' => null]),
+            self::node('person', 'handoff', ['text' => null]),
+        ]);
+
+        $this->says('hi');
+        $this->taps('yes', 'Yes');
+
+        $this->assertSame(1, count(array_keys($this->received(), 'You are subscribed. Reply STOP at any time to unsubscribe.', true)));
+    }
+
+    public function test_stop_is_honoured_even_as_a_flow_button_and_the_bot_stops(): void
+    {
+        $this->flow('Menu', [
+            self::node('start', 'start', ['any_message' => true], ['next' => 'ask']),
+            self::node('ask', 'buttons', ['text' => 'Pick one', 'retries' => 0, 'buttons' => [['id' => 'a', 'title' => 'Prices'], ['id' => 'b', 'title' => 'Stop']]], ['a' => 'bye', 'b' => 'bye']),
+            self::node('bye', 'end', ['text' => 'Thanks for asking about prices']),
+            self::node('person', 'handoff', ['text' => null]),
+        ]);
+
+        $this->says('hi');
+        $this->taps('b', 'Stop');
+
+        $contact = $this->inTenant(fn () => Contact::query()->where('wa_id', '971501234567')->firstOrFail());
+        $this->assertSame('opted_out', $contact->consent_state->value);
+        $this->assertNotContains('Thanks for asking about prices', $this->received());
+    }
+
     public function test_every_template_creates_a_flow_that_passes_the_publish_gate_and_fills_business_variables(): void
     {
         $catalog = $this->getJson('/api/v1/chatbots/templates')->assertOk()->json('data');

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Crm;
 
+use App\Application\Crm\BulkEditContacts;
 use App\Application\Crm\ContactImporter;
 use App\Application\Crm\TagCatalog;
 use App\Domain\Audit\AuditLogger;
@@ -87,6 +88,38 @@ final class CrmController extends Controller
         });
 
         return response()->json(['data' => ['updated' => $changed]]);
+    }
+
+    /**
+     * Edit the selected contacts together: tags, one custom field, stage, consent. `confirm_count` is
+     * the number of contacts the teammate confirmed in the dialog.
+     */
+    public function bulkEdit(Request $request, BulkEditContacts $bulk): JsonResponse
+    {
+        $data = $request->validate([
+            'contact_ids' => ['required', 'array', 'min:1', 'max:'.BulkEditContacts::MAX],
+            'contact_ids.*' => ['uuid'],
+            'confirm_count' => ['required', 'integer', 'min:1'],
+            'tags_add' => ['nullable', 'array', 'max:20'],
+            'tags_add.*' => ['string', 'max:40'],
+            'tags_remove' => ['nullable', 'array', 'max:20'],
+            'tags_remove.*' => ['string', 'max:40'],
+            'field' => ['nullable', 'array'],
+            'field.key' => ['required_with:field', 'string', 'max:40'],
+            'field.value' => ['nullable'],
+            'stage' => ['nullable', 'array'],
+            'stage.id' => ['nullable', 'uuid'],
+            'consent' => ['nullable', 'array'],
+            'consent.state' => ['required_with:consent', Rule::in([ConsentState::OptedIn->value, ConsentState::OptedOut->value])],
+            'consent.note' => ['nullable', 'string', 'max:190'],
+        ]);
+
+        $changes = array_intersect_key($data, array_flip(['tags_add', 'tags_remove', 'field', 'consent']));
+        if ($request->has('stage')) {
+            $changes['stage'] = ['id' => $data['stage']['id'] ?? null];
+        }
+
+        return response()->json(['data' => $bulk->apply($data['contact_ids'], $changes, (int) $data['confirm_count'])]);
     }
 
     // ── Custom fields ──────────────────────────────────────────────────────────────────────

@@ -115,7 +115,7 @@ final class Chatbots
             return;
         }
         // STOP / START get their own handling and confirmation; the bot never answers them.
-        if (in_array($message->type, ['text', 'button', 'interactive'], true) && $this->consent->keywordIntent((string) BotInput::textFor($message)) !== null) {
+        if ($this->consent->intentFor($message, BotInput::textFor($message)) !== null) {
             return;
         }
         if (in_array($message->type, ['reaction', 'system', 'unsupported'], true)) {

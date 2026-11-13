@@ -69,7 +69,8 @@ abstract class BotRuntime
     abstract public function graph(string $flowId): ?FlowGraph;
 
     /** Opt-in (marketing included) through the consent service, recorded in the ledger. */
-    abstract public function optIn(): void;
+    /** @return bool whether the customer's consent changed (they were not opted in before) */
+    abstract public function optIn(): bool;
 
     /** Marketing opt-out ("marketing") or a full opt-out ("all") through the consent service. */
     abstract public function optOut(string $scope): void;

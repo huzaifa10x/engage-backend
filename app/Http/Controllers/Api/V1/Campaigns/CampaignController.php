@@ -254,8 +254,9 @@ final class CampaignController extends Controller
             'audience_tag' => ['nullable', 'string', 'max:40'],
             'filter' => ['nullable'],
             'notes' => ['nullable', 'string', 'max:2000'],
-            // Marketing: also send to contacts with no recorded opt-in (opted-out contacts never).
+            // Also send to contacts with no recorded opt-in (opted-out contacts never), with where they agreed.
             'include_non_opted_in' => ['nullable', 'boolean'],
+            'consent_basis' => ['nullable', 'required_if_accepted:include_non_opted_in', 'string', 'min:10', 'max:190'],
             'objective' => ['nullable', Rule::in(['promo', 'announcement', 're_engagement', 'reminder', 'update', 'other'])],
             'media_id' => ['nullable', 'uuid'],
             'variables' => ['nullable', 'array'],
@@ -297,6 +298,7 @@ final class CampaignController extends Controller
             'audience_tag' => $c->audience_tag,
             'audience_filter' => $c->getAttribute('audience_filter'),
             'include_non_opted_in' => (bool) $c->include_non_opted_in,
+            'consent_basis' => $c->getAttribute('consent_basis'),
             'audience_name' => $c->audience['name'] ?? null,
             'notes' => $c->notes,
             'objective' => $c->objective,

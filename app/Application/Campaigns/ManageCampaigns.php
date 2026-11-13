@@ -123,7 +123,8 @@ final class ManageCampaigns
             'audience_filter' => $this->segments->filter($data['filter'] ?? null),
             'notes' => isset($data['notes']) && trim((string) $data['notes']) !== '' ? trim((string) $data['notes']) : null,
             'objective' => $data['objective'] ?? null,
-            'include_non_opted_in' => (bool) ($data['include_non_opted_in'] ?? false),
+            'include_non_opted_in' => $include = (bool) ($data['include_non_opted_in'] ?? false),
+            'consent_basis' => $include ? self::basis($data['consent_basis'] ?? null) : null,
         ])->save();
 
         $this->audit->record($campaign->wasRecentlyCreated ? 'campaign.created' : 'campaign.updated', $campaign, after: ['name' => $campaign->name]);
@@ -157,9 +158,13 @@ final class ManageCampaigns
         $audience = ['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'name' => $segment?->name, 'tag' => $campaign->audience_tag,
             'filter' => $campaign->getAttribute('audience_filter')];
 
+        // Contacts without a recorded opt-in only with a stated basis (saved before this check existed: ask again).
+        if ($campaign->include_non_opted_in && self::basis($campaign->getAttribute('consent_basis')) === null) {
+            throw CampaignException::cannot('Say where the contacts without a recorded opt-in agreed to receive WhatsApp messages from you, or untick “Include contacts with no recorded opt-in”.');
+        }
         $counts = $this->counts($audience, $campaign->template_category, (bool) $campaign->include_non_opted_in);
         if ($counts['eligible'] === 0) {
-            throw CampaignException::cannot('Nobody in this audience can be messaged: '.($counts['matched'] === 0 ? 'no contact matches the segment.' : ($counts['not_opted_in'] > 0 ? 'none of the matching contacts has opted in. Tick “Include contacts who have not opted in” to reach them.' : 'all the matching contacts opted out or have no WhatsApp number.')));
+            throw CampaignException::cannot('Nobody in this audience can be messaged: '.($counts['matched'] === 0 ? 'no contact matches the segment.' : ($counts['not_opted_in'] > 0 ? 'none of the matching contacts has a recorded opt-in. Record their opt-in, or include them with the place they agreed (“Include contacts with no recorded opt-in”).' : 'all the matching contacts opted out or have no WhatsApp number.')));
         }
         // The plan's monthly reach is checked before the first message, never mid-campaign.
         $this->entitlements->ensureWithinLimit($tenant, FeatureKey::CampaignReachMonthly, $counts['eligible']);
@@ -181,7 +186,7 @@ final class ManageCampaigns
             'failure_reason' => null,
         ])->save();
 
-        $this->audit->record($scheduled ? 'campaign.scheduled' : 'campaign.launched', $campaign, meta: $counts + ['include_non_opted_in' => (bool) $campaign->include_non_opted_in]);
+        $this->audit->record($scheduled ? 'campaign.scheduled' : 'campaign.launched', $campaign, meta: $counts + ['include_non_opted_in' => (bool) $campaign->include_non_opted_in, 'consent_basis' => $campaign->getAttribute('consent_basis')]);
 
         if (! $scheduled) {
             LaunchCampaign::dispatch($campaign->id)->afterCommit();
@@ -266,7 +271,7 @@ final class ManageCampaigns
         $this->entitlements->ensureEnabled($this->context->tenant(), FeatureKey::Broadcasts);
 
         $copy = Campaign::query()->create(array_merge(
-            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'audience_filter', 'notes', 'objective', 'include_non_opted_in']),
+            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'audience_filter', 'notes', 'objective', 'include_non_opted_in', 'consent_basis']),
             ['name' => mb_substr($campaign->name, 0, 112).' (copy)', 'status' => CampaignStatus::Draft, 'created_by_membership_id' => $this->context->membership()?->id],
         ));
         $this->audit->record('campaign.duplicated', $copy, meta: ['from' => $campaign->id]);
@@ -274,15 +279,23 @@ final class ManageCampaigns
         return $copy;
     }
 
+    /** A consent basis worth the name: at least a few words, trimmed. */
+    private static function basis(mixed $text): ?string
+    {
+        $text = is_string($text) ? trim($text) : '';
+
+        return mb_strlen($text) >= 10 ? mb_substr($text, 0, 190) : null;
+    }
+
     /**
      * @param  array{match?: string, rules?: array<int, array<string, mixed>>, tag?: ?string, filter?: mixed}|null  $audience
-     * @return array{matched: int, eligible: int, not_opted_in: int} not_opted_in: reachable marketing contacts without a recorded opt-in
+     * @return array{matched: int, eligible: int, not_opted_in: int} not_opted_in: reachable contacts without a recorded opt-in
      */
     public function counts(?array $audience, ?string $category, bool $includeNonOptedIn = false): array
     {
         $matched = $this->audienceQuery($audience)->count();
         $eligible = $this->eligibleQuery($audience, $category, $includeNonOptedIn)->count();
-        $notOptedIn = strtoupper((string) $category) === 'MARKETING'
+        $notOptedIn = $category !== null
             ? $this->eligibleQuery($audience, $category, true)->where('consent_state', '!=', ConsentState::OptedIn->value)->count() : 0;
 
         return ['matched' => $matched, 'eligible' => $eligible, 'not_opted_in' => $notOptedIn];
@@ -359,12 +372,13 @@ final class ManageCampaigns
     {
         $query = $this->audienceQuery($audience)
             ->where('consent_state', '!=', ConsentState::OptedOut->value)
-            ->where(fn (Builder $w) => $w->whereNotNull('wa_id')->orWhereNotNull('bsuid'));
+            ->where(fn (Builder $w) => $w->whereNotNull('wa_id')->orWhereNotNull('bsuid'))
+            // Every category: Meta needs an opt-in before a business-initiated message, and Unknown is not one.
+            ->when(! $includeNonOptedIn, fn (Builder $q) => $q->where('consent_state', ConsentState::OptedIn->value));
 
         if (strtoupper((string) $category) === 'MARKETING') {
-            // Opted-in contacts only, unless the sender includes those who have not opted in (never the opted-out).
-            $query->where('marketing_opted_out', false)
-                ->when(! $includeNonOptedIn, fn (Builder $q) => $q->where('consent_state', ConsentState::OptedIn->value));
+            // Never anyone who stopped marketing messages in WhatsApp, whatever the consent basis.
+            $query->where('marketing_opted_out', false);
 
             $cap = ComplianceSettings::for($this->context->tenant())->marketingFrequencyCap;
             if ($cap > 0) {

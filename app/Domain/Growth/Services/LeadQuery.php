@@ -35,6 +35,9 @@ final class LeadQuery
         'assigned' => ['nullable', 'string', 'max:36'], // a membership id, "me" or "unassigned"
         'stage_id' => ['nullable', 'string', 'max:36'], // a stage id or "none"
         'days' => ['nullable', 'integer', 'in:7,30,90,365'],
+        // A custom period instead of "days": the paid touch fell on these local dates (workspace time zone), both included.
+        'since' => ['nullable', 'date_format:Y-m-d', 'required_with:until'],
+        'until' => ['nullable', 'date_format:Y-m-d', 'required_with:since', 'after_or_equal:since'],
         // new: their first-ever message came from a paid tracked source; returning: they existed before
         // (or first wrote without a source) and came back through an ad or the website.
         'tab' => ['nullable', 'in:all,new,returning'],
@@ -91,7 +94,9 @@ final class LeadQuery
             // Leads with a paid touch in the period (the Marketing drill-down uses its own cohort instead).
             ->when(empty($f['from']), fn ($q) => $q->whereHas('contact', function ($c) use ($f) {
                 self::paidLead($c);
-                $c->whereRaw("coalesce((acquisition_latest->>'occurred_at')::timestamptz, (acquisition_original->>'occurred_at')::timestamptz) >= ?", [now()->subDays((int) ($f['days'] ?? 30))]);
+                $touched = "coalesce((acquisition_latest->>'occurred_at')::timestamptz, (acquisition_original->>'occurred_at')::timestamptz)";
+                [$start, $end] = $this->period($f);
+                $c->whereRaw("{$touched} >= ?", [$start])->when($end !== null, fn ($w) => $w->whereRaw("{$touched} < ?", [$end]));
             }))
             ->when($f['phone_number_id'] ?? null, fn ($q, string $id) => $q->where('phone_number_id', $id))
             ->when($f['assigned'] ?? null, fn ($q, string $a) => match ($a) {
@@ -125,6 +130,25 @@ final class LeadQuery
         }
 
         return self::perContact($query);
+    }
+
+    /**
+     * The period of the list: a custom range of local dates (both days included, in the workspace's
+     * time zone), or the last N days.
+     *
+     * @param  array<string, mixed>  $f
+     * @return array{0: Carbon, 1: ?Carbon} start, and the exclusive end (null: until now)
+     */
+    public function period(array $f): array
+    {
+        if (! empty($f['since']) && ! empty($f['until'])) {
+            $zone = $this->context->tenant()->timezone ?: 'UTC';
+
+            return [Carbon::createFromFormat('Y-m-d', (string) $f['since'], $zone)->startOfDay()->utc(),
+                Carbon::createFromFormat('Y-m-d', (string) $f['until'], $zone)->addDay()->startOfDay()->utc()];
+        }
+
+        return [now()->subDays((int) ($f['days'] ?? 30)), null];
     }
 
     /**

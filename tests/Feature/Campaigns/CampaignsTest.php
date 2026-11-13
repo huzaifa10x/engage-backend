@@ -159,14 +159,22 @@ final class CampaignsTest extends TestCase
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertStatus(409);
     }
 
-    public function test_a_utility_campaign_goes_to_everyone_who_has_not_opted_out(): void
+    public function test_a_utility_campaign_also_needs_a_recorded_opt_in_or_a_stated_consent_basis(): void
     {
+        // Meta: an opt-in before any business-initiated message, whatever the template category.
         $id = $this->draft(['name' => 'Reminder', 'template_id' => $this->templates['class_reminder'], 'variables' => []]);
-
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
+        $recipients = collect($this->getJson("/api/v1/campaigns/{$id}/recipients")->json('data'));
+        $this->assertContains('No opt-in recorded', $recipients->pluck('reason')->all());
+        $optedIn = $this->getJson("/api/v1/campaigns/{$id}")->json('data.stats.sent');
 
+        $id = $this->draft(['name' => 'Reminder 2', 'template_id' => $this->templates['class_reminder'], 'variables' => [], 'include_non_opted_in' => true,
+            'consent_basis' => 'Opt-in checkbox on the class booking form']);
+        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
         $this->getJson("/api/v1/campaigns/{$id}")
+            ->assertJsonPath('data.consent_basis', 'Opt-in checkbox on the class booking form')
             ->assertJsonPath('data.stats.matched', 5)->assertJsonPath('data.stats.eligible', 4)->assertJsonPath('data.stats.sent', 4)->assertJsonPath('data.stats.skipped', 1);
+        $this->assertLessThan(4, $optedIn);
     }
 
     public function test_drafts_are_validated_against_the_template(): void
@@ -194,7 +202,9 @@ final class CampaignsTest extends TestCase
         $this->getJson($query)->assertJsonPath('data.eligible', 2)->assertJsonPath('data.not_opted_in', 1);
         $this->getJson($query.'&include_non_opted_in=1')->assertJsonPath('data.eligible', 3)->assertJsonPath('data.not_opted_in', 1);
 
-        $id = $this->draft(['segment_id' => $segment, 'include_non_opted_in' => true]);
+        // Including them needs the place they agreed: Unknown is not consent.
+        $this->postJson('/api/v1/campaigns', ['segment_id' => $segment, 'include_non_opted_in' => true, 'name' => 'Summer offer', 'phone_number_id' => $this->number->id, 'template_id' => $this->templates['summer_offer'], 'variables' => ['body' => ['{{first_name|there}}', '20%']]])->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['fields' => ['consent_basis']]]]);
+        $id = $this->draft(['segment_id' => $segment, 'include_non_opted_in' => true, 'consent_basis' => 'Signed up on our website newsletter form']);
         $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.include_non_opted_in', true);
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
 

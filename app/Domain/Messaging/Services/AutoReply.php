@@ -64,7 +64,7 @@ final class AutoReply
             return; // the team is at work: a person will answer
         }
         // "STOP" / "START" already get their own confirmation.
-        if (in_array($inbound->type, ['text', 'button', 'interactive'], true) && $this->consent->keywordIntent((string) BotInput::textFor($inbound)) !== null) {
+        if ($this->consent->intentFor($inbound, BotInput::textFor($inbound)) !== null) {
             return;
         }
 
