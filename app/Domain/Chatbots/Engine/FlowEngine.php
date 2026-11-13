@@ -73,6 +73,26 @@ final class FlowEngine
     }
 
     /**
+     * Test chat only (“Test from this step”): starts the run at one step instead of the Start step.
+     * Answers that earlier steps would have collected are simply empty.
+     *
+     * @param  array<string, mixed>  $settings
+     */
+    public function beginAt(FlowGraph $graph, array $settings, BotRuntime $rt, string $nodeId): void
+    {
+        $run = new FlowRun($graph, $settings, $rt);
+        $this->level = FlowSettings::level($run->settings);
+        $rt->state['vars']['_lang'] = $this->language($run, null);
+        $node = $graph->node($nodeId);
+        if ($node === null || $node['type'] === 'start') {
+            $this->begin($graph, $settings, $rt);
+
+            return;
+        }
+        $this->guard($run, fn () => $this->run($run, $nodeId));
+    }
+
+    /**
      * The customer wrote (or tapped) something while the session is running.
      *
      * @param  array<string, mixed>  $settings

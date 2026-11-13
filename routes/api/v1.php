@@ -184,6 +184,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::get('{flow}/history', [ChatbotController::class, 'history'])->whereUuid('flow')->name('history');
         Route::get('{flow}/revisions', [ChatbotController::class, 'revisions'])->whereUuid('flow')->name('revisions');
         Route::get('{flow}/revisions/{revision}', [ChatbotController::class, 'revision'])->whereUuid('flow')->whereNumber('revision')->name('revisions.show');
+        Route::get('{flow}/versions/{version}', [ChatbotController::class, 'version'])->whereUuid('flow')->whereNumber('version')->name('versions.show');
         Route::get('{flow}/export', [ChatbotController::class, 'export'])->whereUuid('flow')->name('export');
         Route::post('{flow}/test', [ChatbotController::class, 'test'])->whereUuid('flow')->middleware('throttle:120,1')->name('test');
         Route::get('{flow}/comments', [ChatbotController::class, 'comments'])->whereUuid('flow')->name('comments');

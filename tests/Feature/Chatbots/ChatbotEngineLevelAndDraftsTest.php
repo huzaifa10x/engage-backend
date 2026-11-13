@@ -165,4 +165,22 @@ final class ChatbotEngineLevelAndDraftsTest extends TestCase
         $this->assertSame($current, end($rows), 'revisions are consecutive and the newest is the stored draft');
         $this->assertSame(range($current - ChatbotDraftRevision::KEEP + 1, $current), $rows);
     }
+
+    public function test_a_published_version_can_be_read_and_restored_as_the_draft_without_publishing(): void
+    {
+        $flow = $this->liveFlow($this->dateFlow());
+        $draft = $this->getJson("/api/v1/chatbots/{$flow->id}")->json('data.draft');
+        $original = $draft['nodes'][2]['config']['text'];
+        $draft['nodes'][2]['config']['text'] = 'Edited after publishing';
+        $this->patchJson("/api/v1/chatbots/{$flow->id}", ['draft' => $draft])->assertOk();
+
+        $v = $this->getJson("/api/v1/chatbots/{$flow->id}/versions/1")->assertOk()->json('data');
+        $this->assertSame($original, $v['graph']['nodes'][2]['config']['text']);
+        $this->getJson("/api/v1/chatbots/{$flow->id}/versions/9")->assertNotFound();
+
+        // “Discard my edits since version 1”: the draft is version 1 again, nothing is published.
+        $this->postJson("/api/v1/chatbots/{$flow->id}/versions/1/restore", ['publish' => false])->assertOk()
+            ->assertJsonPath('data.draft.nodes.2.config.text', $original)->assertJsonPath('data.published_version', 1);
+        $this->assertSame(1, $this->inTenant(fn () => ChatbotFlowVersion::query()->where('flow_id', $flow->id)->count()));
+    }
 }

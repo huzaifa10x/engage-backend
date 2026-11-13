@@ -713,6 +713,7 @@ final class ChatbotController extends Controller
             'api_mode' => ['nullable', Rule::in(['success', 'error', 'timeout'])],
             'window' => ['nullable', Rule::in(['open', 'closed'])],
             'source' => ['nullable', Rule::in(['meta_ad', 'google_ads', 'paid_other'])],
+            'from_node' => ['nullable', 'string', 'regex:/^[A-Za-z0-9_-]{1,64}$/'],
         ]);
         $live = ($data['integrations'] ?? 'mock') === 'live';
         $endpoints = [];
@@ -763,7 +764,12 @@ final class ChatbotController extends Controller
             if (isset($data['source'])) {
                 $rt->state['vars']['_source'] = ['source' => $data['source'], 'campaign' => null, 'evidence' => 'test'];
             }
-            $engine->begin($graph, $settings, $rt, $first);
+            if (isset($data['from_node']) && $graph->node($data['from_node']) !== null) {
+                $rt->note('Started at “'.($graph->node($data['from_node'])['title'] ?? 'this step').'”.');
+                $engine->beginAt($graph, $settings, $rt, $data['from_node']);
+            } else {
+                $engine->begin($graph, $settings, $rt, $first);
+            }
             if (isset($data['language']) && in_array($data['language'], $settings['languages'], true)) {
                 $rt->state['vars']['_lang'] = $data['language'];
             }
@@ -1005,6 +1011,17 @@ final class ChatbotController extends Controller
         return response()->json(['data' => [
             'revision' => $r->revision, 'name' => $r->name, 'draft' => FlowGraph::normalize($r->draft), 'settings' => FlowSettings::normalize($r->settings),
             'created_at' => $r->created_at?->toIso8601String(),
+        ]]);
+    }
+
+    /** One published version's steps (Builder › History: what changed since it). */
+    public function version(ChatbotFlow $flow, int $version): JsonResponse
+    {
+        $v = ChatbotFlowVersion::query()->where('flow_id', $flow->id)->where('version', $version)->firstOrFail();
+
+        return response()->json(['data' => [
+            'version' => $v->version, 'graph' => FlowGraph::normalize($v->graph), 'settings' => FlowSettings::normalize($v->settings),
+            'published_at' => $v->created_at?->toIso8601String(),
         ]]);
     }
 

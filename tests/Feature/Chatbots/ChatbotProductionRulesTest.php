@@ -317,6 +317,28 @@ final class ChatbotProductionRulesTest extends TestCase
         $this->assertTrue($this->inTenant(fn () => ChatbotEvent::query()->where('flow_id', $flow->id)->where('kind', 'handoff')->where('detail', 'Qualified lead')->exists()));
     }
 
+    public function test_the_test_chat_can_start_at_a_chosen_step(): void
+    {
+        $this->actingAsMember($this->owner);
+        $id = $this->postJson('/api/v1/chatbots', ['name' => 'Bot', 'phone_number_id' => $this->number->id, 'template' => 'blank'])->assertCreated()->json('data.id');
+        $this->patchJson("/api/v1/chatbots/{$id}", ['draft' => ['nodes' => [
+            $this->node('start', 'start', ['any_message' => true], ['next' => 'hello']),
+            $this->node('hello', 'message', ['text' => 'Welcome!'], ['next' => 'prices']),
+            $this->node('prices', 'message', ['text' => 'Our prices start at AED 349.'], ['next' => 'team']),
+            $this->handoff(),
+        ]]])->assertOk();
+
+        $text = fn (array $t) => collect($t)->map(fn ($e) => $e['message']['body'] ?? $e['text'] ?? '')->implode("\n");
+        $t = $text($this->postJson("/api/v1/chatbots/{$id}/test", ['from_node' => 'prices'])->assertOk()->json('data.transcript'));
+        $this->assertStringNotContainsString('Welcome!', $t);
+        $this->assertStringContainsString('Our prices start at AED 349.', $t);
+        $this->assertStringContainsString('Started at “', $t);
+
+        // An unknown step, or the Start step, starts at the beginning as usual.
+        $this->assertStringContainsString('Welcome!', $text($this->postJson("/api/v1/chatbots/{$id}/test", ['from_node' => 'nope'])->assertOk()->json('data.transcript')));
+        $this->postJson("/api/v1/chatbots/{$id}/test", ['from_node' => '../etc'])->assertUnprocessable();
+    }
+
     public function test_the_test_chat_never_calls_apis_or_sheets_unless_a_publisher_allows_it(): void
     {
         $this->actingAsMember($this->owner);
