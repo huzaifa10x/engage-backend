@@ -11,6 +11,7 @@ use App\Domain\Messaging\Jobs\SendWhatsappMessage;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -127,6 +128,30 @@ final class OutboundMessagingTest extends TestCase
             ->assertStatus(422)->assertJsonPath('error.code', 'contact_opted_out');
         $this->getJson("/api/v1/conversations/{$conversation->id}")->assertOk()
             ->assertJsonPath('data.window.open', true)->assertJsonPath('data.window.replies_allowed', false);
+    }
+
+    public function test_after_stop_only_utility_and_authentication_templates_go_and_never_marketing(): void
+    {
+        $conversation = $this->thread();
+        Http::fake([self::SEND => fn () => Http::response(['messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '971501234567']], 'messages' => [['id' => 'wamid.OUT'.bin2hex(random_bytes(6))]]])]);
+        foreach (['order_shipped' => 'UTILITY', 'login_code' => 'AUTHENTICATION', 'big_sale' => 'MARKETING'] as $name => $category) {
+            $this->tenantContext()->run($this->tenant, fn () => MessageTemplate::query()->create([
+                'waba_account_id' => $this->number->waba_account_id, 'name' => $name, 'language' => 'en', 'status' => 'APPROVED', 'category' => $category,
+                'components' => [['type' => 'BODY', 'text' => 'Hello']],
+            ]));
+        }
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->update(['consent_state' => ConsentState::OptedOut, 'opted_out_at' => now()->addSecond()]));
+        $this->actingAsMember($this->owner);
+        $send = fn (string $name) => $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'template', 'template' => ['name' => $name, 'language' => 'en']]);
+
+        $send('order_shipped')->assertStatus(202);
+        $send('login_code')->assertStatus(202);
+        $send('big_sale')->assertStatus(422)->assertJsonPath('error.code', 'contact_opted_out');
+
+        // Stopped marketing in WhatsApp (not a full opt-out): utility goes, marketing does not.
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->update(['consent_state' => ConsentState::Unknown, 'marketing_opted_out' => true]));
+        $send('big_sale')->assertStatus(422);
+        $send('order_shipped')->assertStatus(202);
     }
 
     public function test_an_opted_out_customer_who_writes_again_can_be_answered_inside_the_window(): void

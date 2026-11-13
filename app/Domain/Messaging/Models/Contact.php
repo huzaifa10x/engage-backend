@@ -111,28 +111,22 @@ class Contact extends Model
      * @return ?string null when allowed, otherwise the reason it is not
      */
     /**
-     * Why a template may not go to this contact (null: it may). $requireOptIn = false only when the
-     * sender stated where these contacts opted in outside Engage (a campaign's consent basis):
-     * Meta requires an opt-in before any business-initiated message, and Unknown is not one.
-     * $anyCategory: the opt-in is required for every template category (campaigns), not only marketing.
+     * Why a template may not go to this contact (null: it may). Marketing: never to anyone who opted
+     * out (STOP) or stopped marketing messages in WhatsApp; Unknown and opted-in contacts receive it.
+     * Utility and authentication templates (order updates, codes) go to every contact with a number.
      */
-    public function campaignBlocker(?string $category, bool $requireOptIn = true, bool $anyCategory = false): ?string
+    public function campaignBlocker(?string $category): ?string
     {
         if ($this->wa_id === null && $this->bsuid === null) {
             return 'No WhatsApp number';
         }
-        if ($this->consent_state === ConsentState::OptedOut) {
-            return 'Opted out';
-        }
         if (strtoupper((string) $category) === 'MARKETING') {
+            if ($this->consent_state === ConsentState::OptedOut) {
+                return 'Opted out';
+            }
             if ($this->marketing_opted_out) {
                 return 'Stopped marketing messages in WhatsApp';
             }
-            if ($requireOptIn && $this->consent_state !== ConsentState::OptedIn) {
-                return 'No marketing opt-in';
-            }
-        } elseif ($anyCategory && $requireOptIn && $this->consent_state !== ConsentState::OptedIn) {
-            return 'No opt-in recorded';
         }
 
         return null;

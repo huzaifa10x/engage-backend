@@ -16,6 +16,7 @@ use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\ConversationTracker;
 use App\Domain\Messaging\Services\MessagingLimits;
+use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Templates\Services\TemplateMessage;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
@@ -54,9 +55,15 @@ final class SendMessage
             throw MessagingException::numberUnavailable();
         }
         $freeForm = in_array($data['type'], self::FREE_FORM, true);
-        // Opted out: nothing the business starts (templates). Replies are allowed only inside a window the
-        // customer opened by writing to us after opting out, plus the confirmation of the opt-out itself.
-        if ($contact->isOptedOut() && ! $consentNotice && ! ($freeForm && $conversation->acceptsFreeFormFrom($contact))) {
+        // Opted out (STOP): no marketing, ever, until they send START. Utility and authentication templates
+        // (order updates, codes) still go. Free-form replies only inside a window the customer opened by
+        // writing to us after opting out, plus the confirmation of the opt-out itself.
+        $category = $data['type'] === 'template' ? $this->templateCategory($number, (array) ($data['template'] ?? [])) : null;
+        if ($data['type'] === 'template' && $category === 'MARKETING' && $contact->marketing_opted_out && ! $contact->isOptedOut()) {
+            throw MessagingException::marketingStopped();
+        }
+        if ($contact->isOptedOut() && ! $consentNotice && ! ($freeForm && $conversation->acceptsFreeFormFrom($contact))
+            && ! ($data['type'] === 'template' && in_array($category, ['UTILITY', 'AUTHENTICATION'], true))) {
             throw MessagingException::optedOut();
         }
         if ($contact->wa_id === null && $contact->bsuid === null) {
@@ -159,5 +166,18 @@ final class SendMessage
     public function toContact(PhoneNumber $number, Contact $contact, array $data, MessageOrigin $origin, ?TenantMembership $sender = null, ?string $idempotencyKey = null): Message
     {
         return $this->toConversation($this->conversations->forContact($number, $contact), $data, $origin, $sender, $idempotencyKey);
+    }
+
+    /**
+     * The category of the template being sent (null when it is not synced yet).
+     *
+     * @param  array<string, mixed>  $template
+     */
+    private function templateCategory(PhoneNumber $number, array $template): ?string
+    {
+        $category = MessageTemplate::query()->where('waba_account_id', $number->waba_account_id)
+            ->where('name', (string) ($template['name'] ?? ''))->where('language', (string) ($template['language'] ?? ''))->value('category');
+
+        return is_string($category) ? strtoupper($category) : null;
     }
 }

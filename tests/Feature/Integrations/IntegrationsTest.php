@@ -239,14 +239,18 @@ final class IntegrationsTest extends TestCase
         $this->saveRule($id, 'order_created', ['template_name' => 'order_confirmed', 'variables' => ['body' => ['{{customer_first_name}}']]])->assertStatus(422)->assertJsonStructure(['error' => ['details' => ['fields' => ['variables']]]]);
         $this->saveRule($id, 'checkout_abandoned', ['template_name' => 'come_back'])->assertNotFound(); // WooCommerce does not report abandoned checkouts
 
-        // A marketing template is only sent to customers who opted in.
+        // A marketing template goes to customers whose consent is unknown, never to one who opted out.
         $this->saveRule($id, 'order_created', ['template_name' => 'come_back', 'variables' => ['body' => ['{{customer_first_name}}']]])->assertOk();
         $this->app['auth']->forgetGuards();
         $this->wooWebhook($id, $this->wooOrder())->assertOk();
-        $event = $this->events()->first();
+        $this->assertCount(1, $this->sent());
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->where('wa_id', '971501234567')->update(['consent_state' => 'opted_out']));
+        $this->wooWebhook($id, $this->wooOrder(['id' => 5010, 'number' => '5010']))->assertOk();
+        $event = $this->events()->firstWhere('external_id', '5010');
         $this->assertSame('skipped', $event->status);
-        $this->assertStringContainsString('has not opted in', (string) $event->detail);
-        $this->assertCount(0, $this->sent());
+        $this->assertSame('Opted out.', $event->detail);
+        $this->assertCount(1, $this->sent());
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->where('wa_id', '971501234567')->update(['consent_state' => 'unknown']));
 
         // An order without a phone number, and one whose number cannot be completed, explain themselves too.
         $this->wooWebhook($id, $this->wooOrder(['id' => 5002, 'billing' => ['first_name' => 'No', 'phone' => '']]))->assertOk();

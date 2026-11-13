@@ -53,7 +53,7 @@ final class ComplianceSettings
             self::keywords($stored['opt_out_keywords'] ?? config('engage.messaging.stop_keywords'), self::LOCKED_OPT_OUT),
             self::keywords($stored['opt_in_keywords'] ?? config('engage.messaging.start_keywords'), self::LOCKED_OPT_IN),
             (bool) ($stored['confirm_opt_out'] ?? true),
-            (string) ($stored['opt_out_reply'] ?? 'You have been unsubscribed and will not receive further messages from us. Reply START to subscribe again.'),
+            (string) ($stored['opt_out_reply'] ?? 'You have been unsubscribed from our promotional messages. You will still get updates about your orders and bookings. Reply START to subscribe again.'),
             (bool) ($stored['confirm_opt_in'] ?? true),
             (string) ($stored['opt_in_reply'] ?? 'You are subscribed. Reply STOP at any time to unsubscribe.'),
             (string) ($stored['consent_request_text'] ?? "Would you like to receive offers and updates from {$name} on WhatsApp? You can unsubscribe at any time by replying STOP."),

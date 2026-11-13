@@ -24,7 +24,12 @@ final class MessagingException extends DomainException
 
     public static function optedOut(): self
     {
-        return new self('This contact has opted out of messages. They must send START (or opt in again) before you can message them.', ErrorCode::ContactOptedOut, 422);
+        return new self('This contact has opted out (STOP). Only utility and authentication templates can be sent until they send START.', ErrorCode::ContactOptedOut, 422);
+    }
+
+    public static function marketingStopped(): self
+    {
+        return new self('This contact stopped marketing messages in WhatsApp. Send a utility template, or wait until they turn marketing back on.', ErrorCode::ContactOptedOut, 422);
     }
 
     public static function numberUnavailable(): self
