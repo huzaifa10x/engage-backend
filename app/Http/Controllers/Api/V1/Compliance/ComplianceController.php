@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Compliance;
 
 use App\Application\Messaging\SendMessage;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Chatbots\Services\ChatbotWorkspace;
 use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Enums\MessageOrigin;
@@ -113,6 +114,13 @@ final class ComplianceController extends Controller
         $all = $tenant->settings ?? [];
         $before = (array) ($all['compliance'] ?? []);
         $all['compliance'] = array_merge($before, $data);
+        // Texts left as the default are not stored, so a better default reaches the workspace later.
+        $defaults = ComplianceSettings::for($tenant->replicate()->forceFill(['settings' => []]))->toArray();
+        foreach (['opt_in_reply', 'opt_out_reply', 'consent_request_text'] as $key) {
+            if (isset($data[$key], $defaults[$key]) && $data[$key] === $defaults[$key]) {
+                unset($all['compliance'][$key]);
+            }
+        }
         $tenant->forceFill(['settings' => $all])->save();
 
         $this->audit->record('compliance.settings_updated', $tenant, before: array_intersect_key($before, $data), after: $data);
@@ -188,7 +196,7 @@ final class ComplianceController extends Controller
             throw ValidationException::withMessages(['conversation' => 'The consent question can be sent only within 24 hours of the customer’s last message (WhatsApp’s rule for buttons). Ask again when they write to you.']);
         }
 
-        $header = mb_substr(trim((string) ($tenant->name ?? '')), 0, 60);
+        $header = mb_substr(trim((string) (ChatbotWorkspace::variables($tenant)['name'] ?? $tenant->name ?? '')), 0, 60);
         $message = $send->toConversation($conversation, [
             'type' => 'interactive',
             'body' => $settings->consentRequestText,

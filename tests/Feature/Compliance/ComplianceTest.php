@@ -164,6 +164,30 @@ final class ComplianceTest extends TestCase
         $this->postJson("/api/v1/conversations/{$conversation->id}/consent-request")->assertStatus(422);
     }
 
+    public function test_the_question_is_titled_with_the_business_name_and_its_replies_are_labelled_as_consent(): void
+    {
+        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['settings' => ['chatbot' => ['variables' => ['name' => '10X Digital']]]])->save());
+        $this->text('Hi');
+        $conversation = $this->tenantContext()->run($this->tenant, fn () => Conversation::query()->firstOrFail());
+
+        $this->postJson("/api/v1/conversations/{$conversation->id}/consent-request")->assertStatus(202);
+        Http::assertSent(fn (Request $r) => ($r['interactive']['header']['text'] ?? null) === '10X Digital');
+
+        $this->inbound(['type' => 'interactive', 'interactive' => ['type' => 'button_reply', 'button_reply' => ['id' => 'consent_opt_in', 'title' => 'Subscribe']]]);
+        $thread = collect($this->getJson("/api/v1/conversations/{$conversation->id}/messages")->assertOk()->json('data'));
+        $this->assertSame('consent', $thread->firstWhere('body', 'You are subscribed. Reply STOP at any time to unsubscribe.')['automation'] ?? null);
+    }
+
+    public function test_texts_saved_unchanged_keep_following_the_default(): void
+    {
+        $defaults = $this->getJson('/api/v1/compliance/settings')->assertOk()->json('data');
+        $this->putJson('/api/v1/compliance/settings', ['opt_out_reply' => $defaults['opt_out_reply'], 'opt_in_reply' => 'Welcome aboard! Reply STOP to unsubscribe.'])->assertOk();
+
+        $stored = $this->tenantContext()->bypass(fn () => (array) ($this->tenant->refresh()->settings['compliance'] ?? []));
+        $this->assertArrayNotHasKey('opt_out_reply', $stored); // still the default: a better default reaches them later
+        $this->assertSame('Welcome aboard! Reply STOP to unsubscribe.', $stored['opt_in_reply']);
+    }
+
     public function test_no_thanks_on_the_consent_request_is_recorded_and_answered_by_nothing(): void
     {
         $this->text('Hello');

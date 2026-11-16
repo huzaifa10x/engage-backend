@@ -12,6 +12,7 @@ use App\Domain\Messaging\Exceptions\MessageNotYetKnown;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Models\MessageStatusEvent;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Applies `statuses[]` webhooks. Meta delivers them out of order and more than once, so:
@@ -33,7 +34,14 @@ final class StatusApplier
         $message = Message::query()->where('wamid', $wamid)->lockForUpdate()->first();
         if ($message === null) {
             // The send job may not have stored the wamid yet (status webhook raced the API
-            // response). Retry the webhook later instead of dropping the status.
+            // response): retry the webhook later. A status still unknown 10 minutes after Meta sent
+            // it belongs to a message Engage never sent (another tool on the same number): ignored.
+            $sentAt = isset($status['timestamp']) && is_numeric($status['timestamp']) ? Carbon::createFromTimestamp((int) $status['timestamp']) : null;
+            if ($sentAt !== null && $sentAt->lt(now()->subMinutes(10))) {
+                Log::info('Status for a message Engage did not send: ignored.', ['wamid' => $wamid, 'status' => $status['status'] ?? null]);
+
+                return null;
+            }
             throw new MessageNotYetKnown($wamid);
         }
 

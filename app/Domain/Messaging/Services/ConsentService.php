@@ -70,6 +70,26 @@ final class ConsentService
         $this->record($contact, 'consent_declined', $source, $detail, $messageId, null);
     }
 
+    /**
+     * When the contact's current opt-out was the customer's own doing, how ("replied STOP on 16 Nov");
+     * null when the team or an integration opted them out.
+     */
+    public function customerOptOut(Contact $contact): ?string
+    {
+        $event = ConsentEvent::query()->where('contact_id', $contact->id)->where('action', 'opted_out')->latest('created_at')->first();
+        if ($event === null) {
+            return null;
+        }
+        $how = match ($event->source) {
+            'keyword' => 'replied '.mb_strtoupper(trim((string) $event->detail) ?: 'STOP'),
+            'in_chat_button' => 'tapped Unsubscribe',
+            'meta_preference' => 'turned off messages in WhatsApp',
+            default => null,
+        };
+
+        return $how === null ? null : trim($how.' on '.($event->created_at?->format('j M Y') ?? ''));
+    }
+
     /** The consent question was sent: recorded in the ledger, and the contact waits for an answer. */
     public function requested(Contact $contact, ?string $messageId, ?string $membershipId): void
     {

@@ -10,6 +10,7 @@ use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\WhatsApp\Enums\WabaStatus;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use App\Infrastructure\Meta\GraphClient;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -118,6 +119,10 @@ final class TemplateSync
     public function lastSyncedAt(WabaAccount $waba): ?string
     {
         $at = Cache::get(self::cacheKey($waba));
+        // Older entries were written as a Unix timestamp.
+        if (is_int($at) || (is_string($at) && ctype_digit($at))) {
+            return Carbon::createFromTimestamp((int) $at)->toIso8601String();
+        }
 
         return is_string($at) ? $at : null;
     }

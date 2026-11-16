@@ -22,6 +22,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 final class ContactController extends Controller
 {
@@ -147,6 +148,11 @@ final class ContactController extends Controller
             'conversation_id' => ['nullable', 'uuid'],
         ]);
         $in = $data['state'] === ConsentState::OptedIn->value;
+        // The customer opted out themselves (STOP, the Unsubscribe button, WhatsApp's own setting): only
+        // they can opt back in (START or Subscribe). A teammate cannot override their own choice.
+        if ($in && $contact->consent_state === ConsentState::OptedOut && ($by = $consent->customerOptOut($contact)) !== null) {
+            throw ValidationException::withMessages(['state' => "This customer opted out themselves ({$by}). Only they can opt back in: ask for marketing consent in the chat, or they can reply START."]);
+        }
 
         $changed = $in
             ? $consent->optIn($contact, 'agent', $data['note'] ?? null, membershipId: $context->membership()?->id)
@@ -160,7 +166,8 @@ final class ContactController extends Controller
         }
 
         $confirmation = null;
-        if ($changed && ($data['notify'] ?? true)) {
+        // A change recorded by the team is not a reply to the customer: nothing is sent unless asked.
+        if ($changed && ($data['notify'] ?? false)) {
             $conversation = isset($data['conversation_id']) ? Conversation::query()->find($data['conversation_id']) : null; // tenant-scoped
             $confirmation = $replies->confirmRecorded($contact, $in ? 'opt_in' : 'opt_out', $conversation);
         }

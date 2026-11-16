@@ -50,7 +50,7 @@ final class SyncTemplates extends Command
 
             try {
                 $context->run($tenant, fn () => $sync->syncWaba($account));
-                Cache::put('templates:synced:'.$account->id, now()->timestamp, now()->addMinutes(60));
+                Cache::put('templates:synced:'.$account->id, now()->toIso8601String(), now()->addMinutes(60));
                 $ok++;
             } catch (Throwable $e) {
                 $failed++;

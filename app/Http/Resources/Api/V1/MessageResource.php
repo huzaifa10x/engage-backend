@@ -29,6 +29,8 @@ final class MessageResource extends JsonResource
             'conversation_id' => $this->conversation_id,
             'direction' => $this->direction,
             'origin' => $this->origin->value,
+            // What sent an automatic message: "consent" (the opt-in / opt-out confirmation), else null.
+            'automation' => $this->origin->value === 'automation' && str_starts_with((string) $this->idempotency_key, 'consent-') ? 'consent' : null,
             'type' => $this->type,
             'status' => $this->status->value,
             'body' => $clean,

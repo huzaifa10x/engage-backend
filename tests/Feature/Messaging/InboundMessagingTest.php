@@ -167,9 +167,12 @@ final class InboundMessagingTest extends TestCase
 
     public function test_a_status_for_an_unknown_wamid_is_retried_not_dropped(): void
     {
+        // Older than 10 minutes and still unknown: a message another tool sent on this number, ignored.
+        $this->assertNull($this->inTenant(fn () => app(StatusApplier::class)->apply(['id' => 'wamid.ELSEWHERE', 'status' => 'sent', 'timestamp' => (string) now()->subMinutes(11)->timestamp])));
+
         $this->expectException(MessageNotYetKnown::class);
 
-        $this->inTenant(fn () => app(StatusApplier::class)->apply(['id' => 'wamid.NOT_YET', 'status' => 'sent', 'timestamp' => '1767225600']));
+        $this->inTenant(fn () => app(StatusApplier::class)->apply(['id' => 'wamid.NOT_YET', 'status' => 'sent', 'timestamp' => (string) now()->timestamp]));
     }
 
     public function test_app_echoes_are_mirrored_without_opening_the_window(): void

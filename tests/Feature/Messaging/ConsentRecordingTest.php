@@ -50,7 +50,7 @@ final class ConsentRecordingTest extends TestCase
     {
         $conversation = $this->conversation();
 
-        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_in', 'conversation_id' => $conversation->id])->assertOk()
+        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_in', 'conversation_id' => $conversation->id, 'notify' => true])->assertOk()
             ->assertJsonPath('data.consent_state', 'opted_in')->assertJsonPath('meta.changed', true)->assertJsonPath('meta.confirmation.status', 'sent');
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && ($r['text']['body'] ?? null) === 'You are subscribed. Reply STOP at any time to unsubscribe.');
         $this->tenantContext()->run($this->tenant, function (): void {
@@ -69,7 +69,7 @@ final class ConsentRecordingTest extends TestCase
         $conversation = $this->conversation();
         $this->travel(25)->hours();
 
-        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_in'])->assertOk()
+        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_in', 'notify' => true])->assertOk()
             ->assertJsonPath('data.consent_state', 'opted_in')->assertJsonPath('meta.confirmation.status', 'window_closed');
         Http::assertSentCount(0);
     }
@@ -81,17 +81,18 @@ final class ConsentRecordingTest extends TestCase
             ->assertJsonPath('meta.confirmation', null);
 
         $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['settings' => ['compliance' => ['confirm_opt_out' => false]]])->save());
-        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_out'])->assertOk()
+        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_out', 'notify' => true])->assertOk()
             ->assertJsonPath('data.consent_state', 'opted_out')->assertJsonPath('meta.confirmation.status', 'disabled');
         Http::assertSentCount(0);
     }
 
-    public function test_a_teammate_recorded_opt_out_is_confirmed_once_and_then_blocks_business_messages(): void
+    public function test_a_teammate_recorded_opt_out_sends_nothing_and_blocks_business_messages(): void
     {
         $conversation = $this->conversation();
+        // Recorded by the team, not asked for by the customer in this chat: nothing is sent to them.
         $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_out'])->assertOk()
-            ->assertJsonPath('meta.confirmation.status', 'sent');
-        Http::assertSent(fn (Request $r) => str_contains((string) ($r['text']['body'] ?? ''), 'unsubscribed'));
+            ->assertJsonPath('data.consent_state', 'opted_out')->assertJsonPath('meta.confirmation', null);
+        Http::assertNothingSent();
 
         $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'template', 'template' => ['name' => 'hello_world', 'language' => 'en_US']])
             ->assertStatus(422)->assertJsonPath('error.code', 'contact_opted_out');
@@ -106,5 +107,21 @@ final class ConsentRecordingTest extends TestCase
         $this->actingAsMember($this->addMember($other));
 
         $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_out'])->assertNotFound();
+    }
+
+    public function test_the_team_cannot_opt_in_a_customer_who_opted_out_themselves(): void
+    {
+        $conversation = $this->conversation();
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => 'STOP']], bsuid: null)))->assertOk();
+        $this->assertTrue($this->tenantContext()->run($this->tenant, fn () => Contact::query()->sole()->isOptedOut()));
+
+        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_in', 'note' => 'Signed the form'])
+            ->assertStatus(422)->assertJsonPath('error.details.fields.state.0', fn (string $m) => str_contains($m, 'replied STOP on') && str_contains($m, 'Only they can opt back in'));
+
+        // Opted out by the team instead: the team may record a later opt-in given elsewhere.
+        $this->tenantContext()->run($this->tenant, fn () => Contact::query()->update(['consent_state' => 'unknown']));
+        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_out'])->assertOk();
+        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_in', 'note' => 'Signed the form'])->assertOk()
+            ->assertJsonPath('data.consent_state', 'opted_in');
     }
 }
