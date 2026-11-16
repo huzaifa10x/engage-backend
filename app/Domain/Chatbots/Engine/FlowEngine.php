@@ -1327,23 +1327,27 @@ final class FlowEngine
     }
 
     /**
-     * Level 1 answers, exactly as before level 2: plain numbers only, dates read by strtotime() after
-     * turning d/m/y into y-m-d (31/04 became 1 May), no booking window.
+     * Level 1 answers, as before level 2 (plain numbers only, no booking window), except dates: these
+     * are read day-first with the level-2 reader, so flows not yet upgraded can no longer save a wrong
+     * day (31/04 used to become 1 May, and 5/1 was read the US way). Dates that don't exist and the
+     * month first (11/18) are refused and asked again; a day and month already past this year means
+     * next year.
      *
      * @param  array<string, mixed>  $c
      */
     private function legacyAnswer(array $c, string $t, BotRuntime $rt): ?string
     {
-        $date = function (string $t) use ($rt): ?Carbon {
-            $t = strtr($t, self::ARABIC_DIGITS);
-            if (preg_match('#^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$#', $t, $m) === 1) {
-                $t = sprintf('%04d-%02d-%02d', strlen($m[3]) === 2 ? 2000 + (int) $m[3] : (int) $m[3], (int) $m[2], (int) $m[1]);
-            }
-            $ts = strtotime($t, now($rt->timezone())->getTimestamp());
-
-            return $ts !== false ? Carbon::createFromTimestamp($ts, $rt->timezone())->startOfDay() : null;
-        };
         $today = now($rt->timezone())->startOfDay();
+        $date = function (string $t) use ($rt, $today): ?Carbon {
+            [$iso, $why] = self::parseDate($t, $today);
+            if ($iso === null) {
+                $this->why = $why;
+
+                return null;
+            }
+
+            return Carbon::parse($iso, $rt->timezone())->startOfDay();
+        };
 
         return match ($c['validate']) {
             'number' => is_numeric($n = str_replace([',', ' '], '', strtr($t, self::ARABIC_DIGITS)))
