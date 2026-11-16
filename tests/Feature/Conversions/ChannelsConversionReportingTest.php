@@ -7,6 +7,7 @@ namespace Tests\Feature\Conversions;
 use App\Domain\Conversions\ConversionsAccess;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\WhatsApp\Models\MetaAccessToken;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
@@ -42,12 +43,22 @@ final class ChannelsConversionReportingTest extends TestCase
         $this->tenantContext()->run($this->tenant, fn () => ConversionsAccess::set($this->tenant, $on));
     }
 
-    /** @param list<string> $scopes */
+    /** @var list<string> */
+    private array $scopes = [];
+
+    private bool $debugFaked = false;
+
+    /** @param list<string> $scopes the permissions debug_token reports from now on */
     private function fakeDebugToken(array $scopes): void
     {
-        Http::fake(['graph.facebook.com/*/debug_token*' => Http::response(['data' => ['is_valid' => true, 'type' => 'SYSTEM_USER', 'scopes' => $scopes,
+        $this->scopes = $scopes;
+        if ($this->debugFaked) {
+            return;
+        }
+        $this->debugFaked = true;
+        Http::fake(['graph.facebook.com/*/debug_token*' => fn () => Http::response(['data' => ['is_valid' => true, 'type' => 'SYSTEM_USER', 'scopes' => $this->scopes,
             'app_id' => '1234567890', 'user_id' => '9988776655', 'expires_at' => 0,
-            'granular_scopes' => array_map(fn ($s) => ['scope' => $s, 'target_ids' => [self::WABA]], $scopes)]])]);
+            'granular_scopes' => array_map(fn ($s) => ['scope' => $s, 'target_ids' => [self::WABA]], $this->scopes)]])]);
     }
 
     /** @return array<string, mixed> */
@@ -111,5 +122,47 @@ final class ChannelsConversionReportingTest extends TestCase
 
         $this->allow();
         $this->postJson("/api/v1/whatsapp/accounts/{$account}/refresh")->assertOk()->assertJsonPath('data.conversions.status', 'not_enabled');
+    }
+
+    public function test_reconnecting_updates_the_account_in_place_and_messaging_keeps_working(): void
+    {
+        $this->allow();
+        config(['engage.meta.events_config_id' => '555000']); // one configuration for signup and "Reconnect to enable"
+        $this->fakeDebugToken(['whatsapp_business_management', 'whatsapp_business_messaging']);
+        $this->fakeGraph(self::WABA, self::PHONE);
+
+        // First connection: the main configuration, without the permission granted.
+        $first = $this->postJson('/api/v1/whatsapp/signups')->assertJsonPath('data.launch.login_options.config_id', '555000')->json('data.attempt.id');
+        $this->postJson("/api/v1/whatsapp/signups/{$first}/complete", $this->finish())->assertOk()->assertJsonPath('data.status', 'completed');
+        $this->getJson('/api/v1/whatsapp/accounts')->assertJsonPath('data.0.conversions.status', 'not_enabled');
+        $oldToken = $this->tenantContext()->bypass(fn () => WabaAccount::query()->value('access_token_id'));
+        $this->assertSame(1, $this->sentTo('/register'));
+        $this->assertSame(1, $this->sentTo('/subscribed_apps', 'POST'));
+
+        // Missing permission: messaging works, and switching reporting on just says "Not enabled".
+        $this->postJson('/api/v1/conversions/accounts/'.$this->getJson('/api/v1/whatsapp/accounts')->json('data.0.id').'/reporting', ['enabled' => true])
+            ->assertUnprocessable()->assertJsonPath('error.details.fields.enabled.0', fn ($m) => str_starts_with($m, 'Not enabled'));
+        $this->assertSame('connected', $this->getJson('/api/v1/phone-numbers')->json('data.0.status'));
+
+        // "Reconnect to enable", now granting the permission: same configuration, same records.
+        $this->fakeDebugToken(['whatsapp_business_management', 'whatsapp_business_messaging', 'whatsapp_business_manage_events']);
+        $again = $this->postJson('/api/v1/whatsapp/signups', ['conversions' => true])->assertJsonPath('data.launch.login_options.config_id', '555000')->json('data.attempt.id');
+        $this->postJson("/api/v1/whatsapp/signups/{$again}/complete", $this->finish())->assertOk()->assertJsonPath('data.status', 'completed');
+
+        $this->getJson('/api/v1/whatsapp/accounts')->assertJsonCount(1, 'data')->assertJsonPath('data.0.conversions.status', 'enabled');
+        $this->getJson('/api/v1/phone-numbers')->assertJsonCount(1, 'data')->assertJsonPath('data.0.status', 'connected');
+        $waba = $this->tenantContext()->bypass(fn () => WabaAccount::query()->sole());
+        $this->assertNotSame($oldToken, $waba->access_token_id);
+        $this->assertNotNull($this->tenantContext()->bypass(fn () => MetaAccessToken::query()->find($oldToken)?->revoked_at));
+        $saved = $this->tenantContext()->bypass(fn () => MetaAccessToken::query()->find($waba->access_token_id));
+        $this->assertContains('whatsapp_business_manage_events', $saved->getAttribute('scopes'));
+        $this->assertContains(['scope' => 'whatsapp_business_manage_events', 'target_ids' => [self::WABA]], $saved->getAttribute('granular_scopes'));
+        $this->assertSame(2, $this->sentTo('/subscribed_apps', 'POST'));   // webhooks subscribed again
+        $this->assertSame(1, $this->sentTo('/register'));                  // not registered again
+    }
+
+    private function sentTo(string $path, string $method = 'POST'): int
+    {
+        return Http::recorded(fn (Request $r) => $r->method() === $method && str_contains((string) parse_url($r->url(), PHP_URL_PATH), $path))->count();
     }
 }

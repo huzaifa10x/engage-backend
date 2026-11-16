@@ -102,6 +102,13 @@ final class ProvisionWhatsappAccount implements ShouldQueue
             if ($number !== null) {
                 if (! $number->isCoexistence()) {
                     $this->step($attempt, 'register_number', function () use ($graph, $number, $token, $secrets) {
+                        // Reconnecting a number that is already live here (a new token, e.g. "Reconnect
+                        // to enable"): it is not registered again. Registration is rate-limited by Meta
+                        // and would fail if the two-step PIN was changed in WhatsApp Manager.
+                        if ($number->status === PhoneNumberStatus::Connected
+                            && ($number->getAttribute('registered_at') !== null || $number->getAttribute('platform_type') === 'CLOUD_API')) {
+                            return;
+                        }
                         if ($number->pin_secret_id === null) {
                             $pin = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
                             $number->forceFill(['pin_secret_id' => $secrets->put('whatsapp.registration_pin', $pin, $number->tenant_id)])->save();
