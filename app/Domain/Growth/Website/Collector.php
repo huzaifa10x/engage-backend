@@ -148,15 +148,28 @@ final class Collector
 
         $found = $this->site($data['site_key'] ?? null);
         if ($found === null) {
+            self::countJunk(null, 'unknown_site');
+
             return [403, ['error' => 'unknown_site']];
         }
         [$site, $tenant] = $found;
 
+        // The cheap checks come before anything counts towards the site's limit, so junk sent with a
+        // real (public) site key can never push real taps out: the request must come from one of the
+        // site's domains and be in the tracker's format. Refused junk is counted on its own.
         $host = self::allowedOrigin($site, $origin, $referer);
         if ($host === null) {
-            $this->error($site, $tenant, 'origin_not_allowed');
+            $this->junk($site, $tenant, 'origin_not_allowed');
 
             return [403, ['error' => 'origin_not_allowed']];
+        }
+        $eventId = $data['event_id'] ?? null;
+        $reference = $data['reference'] ?? null;
+        $mappingId = $data['mapping_id'] ?? null;
+        if (! is_string($eventId) || ! Str::isUuid($eventId) || ! is_string($reference) || ! Reference::valid($reference) || ! is_string($mappingId) || ! Str::isUuid($mappingId)) {
+            $this->junk($site, $tenant, 'invalid_payload');
+
+            return [422, ['error' => 'invalid_payload']];
         }
         if (! self::active($tenant, $site)) {
             return [403, ['error' => 'site_disabled']];
@@ -173,15 +186,6 @@ final class Collector
         }
         foreach (self::limits($site->id, $ip, $data['tab_key'] ?? null) as [$key, , $decay]) {
             RateLimiter::hit('growth-c:'.$key, $decay);
-        }
-
-        $eventId = $data['event_id'] ?? null;
-        $reference = $data['reference'] ?? null;
-        $mappingId = $data['mapping_id'] ?? null;
-        if (! is_string($eventId) || ! Str::isUuid($eventId) || ! is_string($reference) || ! Reference::valid($reference) || ! is_string($mappingId) || ! Str::isUuid($mappingId)) {
-            $this->error($site, $tenant, 'invalid_payload');
-
-            return [422, ['error' => 'invalid_payload']];
         }
 
         return $this->context->run($tenant, function () use ($site, $tenant, $data, $eventId, $reference, $mappingId, $userAgent, $purpose) {
@@ -309,13 +313,50 @@ final class Collector
     }
 
     /** Remembered for the site card ("errors in the last 24 h", last error code). */
-    private function error(GrowthSite $site, Tenant $tenant, string $code): void
+    /** Reasons a beacon is refused as junk, before it counts towards the site's limit. */
+    public const JUNK_REASONS = ['origin_not_allowed', 'invalid_payload'];
+
+    /**
+     * A beacon refused before the site's limit: counted per site and reason for today (in the cache,
+     * so a flood costs no database writes), and the site's last problem noted at most once a minute.
+     */
+    private function junk(GrowthSite $site, Tenant $tenant, string $reason): void
+    {
+        self::countJunk($site->id, $reason);
+        if (Cache::add("growth:junk-noted:{$site->id}:{$reason}", 1, 60)) {
+            $this->error($site, $tenant, $reason, countsAsError: false);
+        }
+    }
+
+    private static function countJunk(?string $siteId, string $reason): void
     {
         try {
-            $this->context->run($tenant, function () use ($site, $code) {
+            $key = 'growth:junk:'.($siteId ?? 'unknown-site').':'.now()->toDateString().':'.$reason;
+            Cache::add($key, 0, now()->addDays(2));
+            Cache::increment($key);
+        } catch (\Throwable) {
+            // bookkeeping never fails a request
+        }
+    }
+
+    /** @return array<string, int> today's refused junk for a site, by reason */
+    public static function junkToday(string $siteId): array
+    {
+        $out = [];
+        foreach (self::JUNK_REASONS as $reason) {
+            $out[$reason] = (int) Cache::get("growth:junk:{$siteId}:".now()->toDateString().":{$reason}", 0);
+        }
+
+        return $out;
+    }
+
+    private function error(GrowthSite $site, Tenant $tenant, string $code, bool $countsAsError = true): void
+    {
+        try {
+            $this->context->run($tenant, function () use ($site, $code, $countsAsError) {
                 $today = now()->toDateString();
                 $h = DB::table('growth_site_health')->where('site_id', $site->id)->first(['errors_date', 'errors_today']);
-                $count = $h !== null && $h->errors_date === $today ? ((int) $h->errors_today) + 1 : 1;
+                $count = ($h !== null && $h->errors_date === $today ? (int) $h->errors_today : 0) + ($countsAsError ? 1 : 0);
                 DB::table('growth_site_health')->updateOrInsert(['site_id' => $site->id], [
                     'tenant_id' => $site->tenant_id, 'last_error_code' => $code, 'last_error_at' => now(), 'errors_date' => $today, 'errors_today' => $count,
                 ]);

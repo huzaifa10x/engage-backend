@@ -278,6 +278,9 @@ final class Sites
             'matched_24h' => $matched,
             'filtered_24h' => $filtered,
             'errors_24h' => $errorsToday,
+            // Junk refused before the site's limit (wrong domain, not the tracker's format): today, by reason.
+            'refused_today' => $refused = Collector::junkToday($site->id),
+            'refused_today_total' => array_sum($refused),
             'last_error_code' => $h->last_error_code ?? null,
             'last_error_at' => $h?->last_error_at !== null ? Carbon::parse((string) $h->last_error_at)->toIso8601String() : null,
             'config_version' => $site->config_version,

@@ -177,6 +177,36 @@ final class WebsiteTrackingTest extends TestCase
         $this->beacon(['reference' => $ref(201), 'tab_key' => sprintf('%012x', 201)])->assertStatus(429);
     }
 
+    public function test_junk_is_refused_before_the_site_limit_and_counted_on_its_own(): void
+    {
+        // A site limit of 3 taps in any second (and 3 + 30 a minute), to make the point quickly.
+        config(['engage.growth.collector.site_per_second' => 1, 'engage.growth.collector.site_burst' => 3]);
+        $ref = fn (int $n) => 'XG-'.str_pad(strtr((string) $n, '0123456789', 'ABCDEFGHJK'), 10, 'M', STR_PAD_LEFT);
+
+        // A flood of junk with the site's real, public key: wrong format, and another domain.
+        for ($i = 0; $i < 20; $i++) {
+            $this->beacon(['event_id' => 'not-a-uuid'])->assertStatus(422)->assertJsonPath('error', 'invalid_payload');
+            $this->beacon(['reference' => 'XG-lowercase'])->assertStatus(422);
+            $this->beacon(['mapping_id' => 'nope'])->assertStatus(422);
+            $this->beacon([], 'https://copied-elsewhere.com')->assertStatus(403)->assertJsonPath('error', 'origin_not_allowed');
+        }
+        $this->beacon(['site_key' => 'pk_site_'.str_repeat('x', 24)])->assertStatus(403)->assertJsonPath('error', 'unknown_site');
+
+        // None of it used the site's budget: the real taps still get all three places.
+        for ($i = 1; $i <= 3; $i++) {
+            $this->beacon(['reference' => $ref($i)])->assertCreated();
+        }
+        $this->beacon(['reference' => $ref(4)])->assertStatus(429);
+
+        // Junk is counted separately, by reason, and is not mixed into the site's errors.
+        $health = $this->getJson("/api/v1/growth/sites/{$this->site['id']}/health")->assertOk()->json('data');
+        $this->assertSame(['origin_not_allowed' => 20, 'invalid_payload' => 60], $health['refused_today']);
+        $this->assertSame(80, $health['refused_today_total']);
+        $this->assertSame(0, $health['errors_24h']);
+        $this->assertContains($health['last_error_code'], ['origin_not_allowed', 'invalid_payload'], 'the problem is still shown to the owner');
+        $this->assertSame(3, $health['accepted_clicks_24h']);
+    }
+
     public function test_click_registration_is_idempotent_and_rejects_bad_input(): void
     {
         $event = (string) Str::uuid();
