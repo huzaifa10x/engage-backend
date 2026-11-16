@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\Campaigns\CampaignController;
 use App\Http\Controllers\Api\V1\ChatbotController;
 use App\Http\Controllers\Api\V1\ChatbotRunsController;
 use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
+use App\Http\Controllers\Api\V1\Conversions\ConversionsController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\Crm\StageController;
 use App\Http\Controllers\Api\V1\DeveloperController;
@@ -162,6 +163,20 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::delete('{integration}', [IntegrationController::class, 'destroy'])->whereUuid('integration')->name('destroy');
         Route::put('{integration}/rules/{event}', [IntegrationController::class, 'saveRule'])->whereUuid('integration')->name('rules.save');
         Route::post('{integration}/rules/{event}/test', [IntegrationController::class, 'testRule'])->whereUuid('integration')->middleware('throttle:10,1')->name('rules.test');
+    });
+
+    /*
+    | Integrations › Meta conversion reporting (Conversions to Meta). Workspaces with the conversions flag only.
+    */
+    Route::middleware('can:'.Permission::IntegrationsView->value)->prefix('conversions')->name('conversions.')->group(function () {
+        Route::get('/', [ConversionsController::class, 'show'])->name('show');
+        Route::get('events', [ConversionsController::class, 'events'])->name('events');
+        Route::get('test-chats', [ConversionsController::class, 'testChats'])->name('test-chats');
+    });
+    Route::middleware('can:'.Permission::IntegrationsManage->value)->prefix('conversions')->name('conversions.')->group(function () {
+        Route::post('accounts/{account}/reporting', [ConversionsController::class, 'reporting'])->middleware('throttle:10,1,conversions-reporting')->name('reporting');
+        Route::put('rules', [ConversionsController::class, 'saveRules'])->name('rules');
+        Route::post('test-event', [ConversionsController::class, 'testEvent'])->middleware('throttle:10,1,conversions-test')->name('test-event');
     });
 
     /*

@@ -48,8 +48,12 @@ final class ConversionSender
         private readonly ConversionReporting $reporting,
     ) {}
 
-    /** @return array{sent: int, failed: int, retry: int, skipped: int, expired: int} */
-    public function send(string $wabaId): array
+    /**
+     * Sends the account's due events (or only $onlyEventId, at once: "Send test event").
+     *
+     * @return array{sent: int, failed: int, retry: int, skipped: int, expired: int}
+     */
+    public function send(string $wabaId, ?string $onlyEventId = null): array
     {
         $result = ['sent' => 0, 'failed' => 0, 'retry' => 0, 'skipped' => 0, 'expired' => 0];
 
@@ -59,7 +63,7 @@ final class ConversionSender
                 'error_reason' => 'Not sent within 6 days of the conversion. Meta only accepts events up to 7 days old.']);
 
         $due = ConversionEvent::query()->where('waba_id', $wabaId)->where('status', ConversionEvent::QUEUED)
-            ->where(fn ($q) => $q->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()))
+            ->when($onlyEventId, fn ($q, $id) => $q->whereKey($id), fn ($q) => $q->where(fn ($q) => $q->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now())))
             ->orderBy('event_time')->limit(self::BATCH)->get();
         if ($due->isEmpty()) {
             return $result;
