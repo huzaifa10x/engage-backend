@@ -10,7 +10,9 @@ use App\Domain\Webhooks\Handlers\WebhookHandler;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
@@ -57,6 +59,21 @@ final class WebhookProcessor
             ? Carbon::createFromTimestamp((int) $payload['entry_time']) : Carbon::parse($row->received_at);
 
         [$waba, $tenant] = $this->resolve($row->waba_id);
+
+        // An account no workspace has connected (or one disconnected and since reused elsewhere):
+        // nothing in it is applied to any workspace. The raw event stays in the inbound log, marked
+        // unknown_account, and a warning is logged at most once an hour per account and field.
+        // account_update is the one exception: a business-level event names no account of ours.
+        if ($tenant === null && $row->field !== 'account_update' && isset($this->handlers[$row->field])) {
+            $this->mark($row, ProcessResult::Ignored->value, 'unknown_account', null);
+            if (Cache::add('webhook:unknown-account:'.($row->waba_id ?? 'none').':'.$row->field, 1, now()->addHour())) {
+                Log::warning('Webhook for an unknown WhatsApp account dropped', [
+                    'waba_id' => $row->waba_id, 'phone_number_id' => $row->phone_number_id, 'field' => $row->field, 'webhook_log_id' => $row->id,
+                ]);
+            }
+
+            return;
+        }
 
         try {
             $result = $this->dispatch($row, $value, $occurredAt, $waba, $tenant);
