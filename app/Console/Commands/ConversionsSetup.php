@@ -13,12 +13,13 @@ use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Console\Command;
+use Illuminate\Support\Str;
 
 /**
  * Platform team only, until the Integrations card exists (batch 3b): switch a workspace on for
  * Conversions to Meta, and turn reporting on or off for one of its WhatsApp accounts.
  *
- *   php artisan engage:conversions --allow=<workspace ID>        let this workspace use conversions
+ *   php artisan engage:conversions --allow=<workspace ID or WABA ID>   let this workspace use conversions
  *   php artisan engage:conversions --disallow=<workspace ID>
  *   php artisan engage:conversions --enable=<WABA ID>            create/find the dataset and report
  *   php artisan engage:conversions --disable=<WABA ID>
@@ -39,7 +40,8 @@ final class ConversionsSetup extends Command
     {
         foreach (['allow' => true, 'disallow' => false] as $option => $value) {
             if (($id = $this->option($option)) !== null) {
-                $tenant = $context->bypass(fn () => Tenant::query()->find($id));
+                // A workspace ID, or the ID of a WhatsApp account connected to it.
+                $tenant = $context->bypass(fn () => Tenant::query()->find(Str::isUuid($id) ? $id : WabaAccount::query()->where('waba_id', $id)->value('tenant_id')));
                 if ($tenant === null) {
                     $this->error("No workspace {$id}.");
 

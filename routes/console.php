@@ -38,3 +38,6 @@ Schedule::command('engage:growth:marketing-refresh --days=2')->everyFiveMinutes(
 Schedule::command('engage:growth:marketing-refresh --days=31')->dailyAt('03:10')->onOneServer()->withoutOverlapping();
 // Growth Hub websites: pending codes, expired taps, daily totals, retention and alerts.
 Schedule::command('engage:growth:website-maintenance')->everyFiveMinutes()->onOneServer()->withoutOverlapping();
+
+// Conversions to Meta: send waiting conversion events (maintenance queue, per WhatsApp account).
+Schedule::command('engage:conversions:send')->everyMinute()->onOneServer()->withoutOverlapping();

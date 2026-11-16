@@ -110,7 +110,7 @@ final class MetaDatasetsTest extends TestCase
     public function test_the_platform_command_switches_a_workspace_on_and_turns_reporting_on(): void
     {
         $this->artisan('engage:conversions', ['--enable' => '102290129340398'])->expectsOutputToContain('Not allowed')->assertSuccessful();
-        $this->artisan('engage:conversions', ['--allow' => $this->tenant->id])->assertSuccessful();
+        $this->artisan('engage:conversions', ['--allow' => '102290129340398'])->expectsOutputToContain('Allowed: ')->assertSuccessful(); // by its WhatsApp account
         $this->artisan('engage:conversions', ['--enable' => '102290129340398'])->expectsOutputToContain('Reporting on for 102290129340398: dataset 1503923451234567.')->assertSuccessful();
         $this->artisan('engage:conversions', ['--workspace' => $this->tenant->id, '--lead-tag' => 'Booked', '--purchases' => 'on'])->assertSuccessful();
         $this->artisan('engage:conversions', ['--status' => true])->expectsOutputToContain('reporting on (dataset 1503923451234567)')
