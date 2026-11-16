@@ -11,6 +11,7 @@ use App\Http\Middleware\FirstPartyMediaLink;
 use App\Http\Middleware\ForceJsonResponse;
 use App\Http\Middleware\ResolveTenant;
 use App\Http\Middleware\SecurityHeaders;
+use App\Infrastructure\Monitoring\SentryReporter;
 use App\Support\Api\ApiExceptionRenderer;
 use App\Support\Exceptions\DomainException;
 use Illuminate\Foundation\Application;
@@ -85,4 +86,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->dontReport([
             DomainException::class,
         ]);
+
+        // Unhandled errors also go to Sentry when SENTRY_LARAVEL_DSN is set; logging continues as before.
+        $exceptions->report(function (Throwable $e): void {
+            app(SentryReporter::class)->capture($e);
+        });
     })->create();

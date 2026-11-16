@@ -39,3 +39,4 @@ services:
     build:
       args:
         NEXT_PUBLIC_APP_ENV: staging
+        NEXT_PUBLIC_SENTRY_ENVIRONMENT: staging

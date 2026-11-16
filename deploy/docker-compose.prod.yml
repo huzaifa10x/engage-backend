@@ -77,6 +77,9 @@ services:
         NEXT_PUBLIC_REVERB_SCHEME: https
         # Unfinished modules ("Soon" / "Preview" in the sidebar) are hidden in production.
         NEXT_PUBLIC_APP_ENV: production
+        # Browser error reporting. Empty = off. Set WEB_SENTRY_DSN in deploy/.env (a public DSN, not a secret).
+        NEXT_PUBLIC_SENTRY_DSN: ${WEB_SENTRY_DSN:-}
+        NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
     environment:
       BACKEND_URL: http://app:8000
     restart: unless-stopped

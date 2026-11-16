@@ -217,13 +217,24 @@ return [
         // these protect against abuse only: per site, per visitor (IP + the tracker's tab key) and a
         // generous per-IP backstop for carrier-grade NAT, offices and malls.
         'collector' => [
-            'site_per_5s' => (int) env('GROWTH_SITE_TAPS_PER_5S', 30),
-            'site_per_minute' => (int) env('GROWTH_SITE_TAPS_PER_MINUTE', 600),
+            // Per site: 30 taps a second sustained, with bursts of up to 100 (handover 15 Nov, I.3).
+            // Fixed windows approximate a token bucket of 100 refilled at 30/s: at most the burst in any
+            // second, and 30/s plus one burst over 10 seconds and over a minute.
+            'site_per_second' => (int) env('GROWTH_SITE_TAPS_PER_SECOND', 30),
+            'site_burst' => (int) env('GROWTH_SITE_TAPS_BURST', 100),
             'visitor_per_4s' => 12,
             'visitor_per_hour' => 300,
             'ip_per_4s' => (int) env('GROWTH_IP_TAPS_PER_4S', 60),
             'ip_per_hour' => (int) env('GROWTH_IP_TAPS_PER_HOUR', 3000),
         ],
+    ],
+
+    // Error monitoring (handover 15 Nov, I.3): unhandled errors go to Sentry when a DSN is set.
+    'sentry' => [
+        'dsn' => env('SENTRY_LARAVEL_DSN'),
+        'environment' => env('SENTRY_ENVIRONMENT', env('APP_ENV', 'production')),
+        'release' => env('SENTRY_RELEASE'),
+        'sample_rate' => (float) env('SENTRY_SAMPLE_RATE', 1.0),
     ],
 
     'alerts' => [

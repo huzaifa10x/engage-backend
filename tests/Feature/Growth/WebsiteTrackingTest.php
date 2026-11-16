@@ -8,6 +8,7 @@ use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\SystemRole;
 use App\Domain\Chatbots\Engine\BotInput;
 use App\Domain\Growth\GrowthSettings;
+use App\Domain\Growth\Website\Collector;
 use App\Domain\Growth\Website\Reference;
 use App\Domain\Growth\Website\WebsiteSource;
 use App\Domain\Messaging\Models\Contact;
@@ -144,6 +145,21 @@ final class WebsiteTrackingTest extends TestCase
         $this->beacon(['reference' => $ref(6), 'tab_key' => 'dddddddddddd'])->assertStatus(429);
         // The tab key is only a limiter key: it is never stored.
         $this->assertFalse($this->tenantContext()->run($this->tenant, fn () => str_contains((string) json_encode(DB::table('growth_click_events')->get()), 'aaaaaaaaaaaa')));
+    }
+
+    public function test_a_site_takes_30_taps_a_second_with_bursts_of_100(): void
+    {
+        $this->assertSame([['s1:SITE', 100, 1], ['s10:SITE', 400, 10], ['s60:SITE', 1900, 60]], array_slice(Collector::limits('SITE', '203.0.113.9', null), 0, 3));
+
+        // The same rule, scaled down for the test: 2 a second with bursts of 5 (other limits out of the way).
+        config(['engage.growth.collector.site_per_second' => 2, 'engage.growth.collector.site_burst' => 5, 'engage.growth.collector.ip_per_4s' => 1000]);
+        $ref = fn (int $n) => 'XG-'.str_pad(strtr((string) $n, '0123456789', 'ABCDEFGHJK'), 10, 'M', STR_PAD_LEFT);
+        for ($i = 1; $i <= 5; $i++) {
+            $this->beacon(['reference' => $ref($i)])->assertCreated(); // the burst
+        }
+        $this->beacon(['reference' => $ref(6)])->assertStatus(429)->assertHeader('Retry-After');
+        $this->travel(1)->seconds();
+        $this->beacon(['reference' => $ref(7)])->assertCreated(); // the next second: room again
     }
 
     public function test_click_registration_is_idempotent_and_rejects_bad_input(): void
