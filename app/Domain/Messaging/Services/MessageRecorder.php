@@ -6,6 +6,8 @@ namespace App\Domain\Messaging\Services;
 
 use App\Domain\Chatbots\Jobs\RunChatbot;
 use App\Domain\Chatbots\Services\Chatbots;
+use App\Domain\Conversions\Jobs\RecordAdClick;
+use App\Domain\Conversions\Services\AdClicks;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Jobs\RecordMessageEvidence;
 use App\Domain\Growth\Website\Reference;
@@ -45,6 +47,16 @@ final class MessageRecorder
      */
     private function queueAttribution(Message $message): void
     {
+        // Conversions to Meta: the ad click (ctwa_clid) is kept for every chat that starts from an ad,
+        // whatever the Growth Hub settings. Never allowed to affect the message.
+        try {
+            if (AdClicks::referral($message) !== null) {
+                RecordAdClick::dispatch($message->id)->afterCommit();
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Ad click was not queued.', ['message_id' => $message->id, 'error' => $e->getMessage()]);
+        }
+
         try {
             $tenant = app(TenantContext::class)->tenantOrNull();
             // A Meta ad referral, a website code, or a tracked website's greeting without its code.
