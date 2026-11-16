@@ -114,7 +114,8 @@ final class GraphClient
      */
     public function createDataset(string $wabaId, string $token): string
     {
-        $body = $this->send('POST', "{$wabaId}/dataset", $token);
+        // An empty JSON object: Meta refuses an empty array ("[]") as the request body (code 100).
+        $body = $this->send('POST', "{$wabaId}/dataset", $token, emptyObject: true);
         $id = $body['id'] ?? null;
         if (! is_scalar($id) || (string) $id === '') {
             throw new MetaApiException('Meta did not return a dataset ID.', 200);
@@ -615,9 +616,12 @@ final class GraphClient
      * @param  array<string, mixed>  $query  extra query-string parameters (DELETE filters)
      * @return array<string, mixed>
      */
-    private function send(string $method, string $path, ?string $token, array $data = [], array $query = []): array
+    private function send(string $method, string $path, ?string $token, array $data = [], array $query = [], bool $emptyObject = false): array
     {
         $request = $this->request($token);
+        if ($emptyObject && $data === []) {
+            $request = $request->withBody('{}', 'application/json');
+        }
         if ($query !== []) {
             $request = $request->withQueryParameters($query);
         }

@@ -80,7 +80,8 @@ final class MetaDatasetsTest extends TestCase
         $this->assertCount(1, $datasets);
         $this->assertSame(['102290129340398', '1503923451234567', true], [$datasets[0]->waba_id, $datasets[0]->dataset_id, $datasets[0]->enabled]);
         Http::assertSent(fn (Request $r) => $r->method() === 'POST' && str_ends_with((string) parse_url($r->url(), PHP_URL_PATH), '/102290129340398/dataset')
-            && $r->header('Authorization')[0] === 'Bearer EAA-existing-token');
+            && $r->header('Authorization')[0] === 'Bearer EAA-existing-token'
+            && $r->body() === '{}'); // Meta refuses "[]" as the body (code 100, JSON root must be an object)
         $this->assertTrue($this->tenantContext()->bypass(fn () => $this->waba->fresh()->events_permission));
 
         // Off keeps the dataset ID for later; on again uses it.
