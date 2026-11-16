@@ -119,7 +119,7 @@ final class Collector
             ["s1:{$siteId}", $burst, 1],
             ["s10:{$siteId}", $rate * 10 + $burst, 10],
             ["s60:{$siteId}", $rate * 60 + $burst, 60],
-            ["ip4:{$ipKey}", (int) ($c['ip_per_4s'] ?? 60), 4],
+            ["ip4:{$ipKey}", (int) ($c['ip_per_4s'] ?? 200), 4],
             ["ip3600:{$ipKey}", (int) ($c['ip_per_hour'] ?? 3000), 3600],
         ];
         if (is_string($tabKey) && preg_match('/^[a-f0-9]{8,40}$/', $tabKey) === 1) {
@@ -165,7 +165,7 @@ final class Collector
         // Abuse limits: per site 30/s steady with bursts of 100 (config engage.growth.collector). Per visitor — the IP together
         // with the tracker's per-tab key, because UAE mobile carriers (Etisalat, du), offices and malls
         // put many people behind one IP — 3/s, bursts of 12, 300 an hour. Per IP alone only a generous
-        // backstop (60 per 4 s, 3,000 an hour). The IP is only ever part of a short-lived hashed key.
+        // backstop (200 per 4 s = 50/s, 3,000 an hour). The IP is only ever part of a short-lived hashed key.
         foreach (self::limits($site->id, $ip, $data['tab_key'] ?? null) as [$key, $max, $decay]) {
             if (RateLimiter::tooManyAttempts('growth-c:'.$key, $max)) {
                 return [429, ['error' => 'rate_limited'], max(1, RateLimiter::availableIn('growth-c:'.$key))];

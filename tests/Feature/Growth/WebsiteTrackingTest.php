@@ -162,6 +162,21 @@ final class WebsiteTrackingTest extends TestCase
         $this->beacon(['reference' => $ref(7)])->assertCreated(); // the next second: room again
     }
 
+    public function test_one_shared_ip_takes_50_taps_a_second_while_one_visitor_stays_at_3(): void
+    {
+        $limits = Collector::limits('SITE', '203.0.113.9', 'aaaaaaaaaaaa');
+        $this->assertSame([200, 4], array_slice($limits[3], 1), 'per IP: 200 per 4 s = 50 a second');
+        $this->assertSame([12, 4], array_slice($limits[5], 1), 'per visitor: 12 per 4 s = 3 a second');
+
+        // 200 different people behind one carrier IP within the same 4 seconds are all counted.
+        config(['engage.growth.collector.site_burst' => 1000, 'engage.growth.collector.site_per_second' => 1000]);
+        $ref = fn (int $n) => 'XG-'.str_pad(strtr((string) $n, '0123456789', 'ABCDEFGHJK'), 10, 'M', STR_PAD_LEFT);
+        for ($i = 1; $i <= 200; $i++) {
+            $this->beacon(['reference' => $ref($i), 'tab_key' => sprintf('%012x', $i)])->assertCreated();
+        }
+        $this->beacon(['reference' => $ref(201), 'tab_key' => sprintf('%012x', 201)])->assertStatus(429);
+    }
+
     public function test_click_registration_is_idempotent_and_rejects_bad_input(): void
     {
         $event = (string) Str::uuid();

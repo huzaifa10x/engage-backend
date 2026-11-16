@@ -224,7 +224,7 @@ return [
             'site_burst' => (int) env('GROWTH_SITE_TAPS_BURST', 100),
             'visitor_per_4s' => 12,
             'visitor_per_hour' => 300,
-            'ip_per_4s' => (int) env('GROWTH_IP_TAPS_PER_4S', 60),
+            'ip_per_4s' => (int) env('GROWTH_IP_TAPS_PER_4S', 200), // 50 a second from one shared IP (carrier NAT, offices, malls)
             'ip_per_hour' => (int) env('GROWTH_IP_TAPS_PER_HOUR', 3000),
         ],
     ],
