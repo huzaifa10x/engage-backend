@@ -28,12 +28,15 @@ final class GraphClient
         private readonly int $timeout,
     ) {}
 
+    /** Used only when META_GRAPH_VERSION is empty or malformed: a call must never go out unversioned. */
+    public const DEFAULT_VERSION = 'v27.0';
+
     public static function fromConfig(): self
     {
         return new self(
             (string) config('engage.meta.app_id'),
             (string) config('engage.meta.app_secret'),
-            (string) config('engage.meta.graph_version', 'v27.0'),
+            self::versionFrom(config('engage.meta.graph_version')),
             (string) config('engage.meta.graph_url', 'https://graph.facebook.com'),
             (int) config('engage.meta.timeout', 20),
         );
@@ -42,6 +45,22 @@ final class GraphClient
     public function version(): string
     {
         return $this->version;
+    }
+
+    /**
+     * The Graph API version every call uses. A call without a version in its path would run on
+     * whatever default version is set for the app in the App Dashboard, so an empty or malformed
+     * value is never passed through: it falls back to DEFAULT_VERSION, with a warning.
+     */
+    public static function versionFrom(mixed $configured): string
+    {
+        $value = is_string($configured) ? trim($configured) : '';
+        if (preg_match('/^v\d{2}\.\d$/', $value) === 1) {
+            return $value;
+        }
+        Log::warning('META_GRAPH_VERSION is empty or not like v27.0; using the default.', ['configured' => $value, 'using' => self::DEFAULT_VERSION]);
+
+        return self::DEFAULT_VERSION;
     }
 
     public function appId(): string
