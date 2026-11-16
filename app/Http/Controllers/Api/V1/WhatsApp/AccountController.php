@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\WhatsApp;
 
 use App\Application\WhatsApp\ManageChannels;
 use App\Application\WhatsApp\MarketingMessages;
+use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\WabaAccountResource;
@@ -27,6 +28,21 @@ final class AccountController extends Controller
     public function refresh(WabaAccount $account, ManageChannels $channels): WabaAccountResource
     {
         return WabaAccountResource::make($channels->refresh($account));
+    }
+
+    /** "Reconnect webhooks": subscribe our app to the account's webhooks again. */
+    public function reconnectWebhooks(WabaAccount $account, ManageChannels $channels): WabaAccountResource
+    {
+        return WabaAccountResource::make($channels->reconnectWebhooks($account));
+    }
+
+    /** "Register now": register a number on the Cloud API (Meta's 14-day rule). */
+    public function registerNumber(WabaAccount $account, PhoneNumber $number, ManageChannels $channels): WabaAccountResource
+    {
+        abort_unless($number->waba_account_id === $account->id, 404);
+        $channels->register($number);
+
+        return WabaAccountResource::make($account->refresh()->load('phoneNumbers'));
     }
 
     /**

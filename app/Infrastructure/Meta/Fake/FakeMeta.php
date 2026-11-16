@@ -56,6 +56,11 @@ final class FakeMeta
             return Http::response(['id' => 'local-media-'.Str::lower(Str::random(16))]);
         }
 
+        // GET /{waba-id}/subscribed_apps — our app is subscribed (Refresh / Reconnect webhooks check it).
+        if (str_ends_with($path, '/subscribed_apps') && $request->method() === 'GET') {
+            return Http::response(['data' => [['whatsapp_business_api_data' => ['id' => (string) config('engage.meta.app_id'), 'name' => '10X Engage (local)']]]]);
+        }
+
         // Marketing Messages: local accounts count as onboarded, so the MM API route can be tried offline.
         parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
         if ($request->method() === 'GET' && str_contains((string) ($query['fields'] ?? ''), 'marketing_messages')) {

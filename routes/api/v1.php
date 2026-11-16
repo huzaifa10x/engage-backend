@@ -255,6 +255,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
             Route::post('signups/{attempt}/complete', [SignupController::class, 'complete'])->middleware('throttle:10,1')->name('signups.complete');
             Route::post('signups/{attempt}/cancel', [SignupController::class, 'cancel'])->name('signups.cancel');
             Route::post('accounts/{account}/refresh', [WhatsAppAccountController::class, 'refresh'])->middleware('throttle:6,1')->name('accounts.refresh');
+            Route::post('accounts/{account}/webhooks', [WhatsAppAccountController::class, 'reconnectWebhooks'])->middleware('throttle:6,1,wa-webhooks')->name('accounts.webhooks');
+            Route::post('accounts/{account}/numbers/{number}/register', [WhatsAppAccountController::class, 'registerNumber'])->middleware('throttle:6,1,wa-register')->name('accounts.numbers.register');
             Route::post('accounts/{account}/marketing-messages', [WhatsAppAccountController::class, 'enrollMarketingMessages'])->middleware('throttle:6,1')->name('accounts.marketing-messages');
             Route::delete('accounts/{account}', [WhatsAppAccountController::class, 'destroy'])->name('accounts.destroy');
         });

@@ -6,6 +6,7 @@ namespace App\Http\Resources\Api\V1;
 
 use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Messaging\Services\SendThroughput;
+use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Domain\WhatsApp\Services\CoexistenceImport;
 use Illuminate\Http\Request;
@@ -33,6 +34,8 @@ final class PhoneNumberResource extends JsonResource
                 'reason' => $this->getAttribute('attention_reason'),
                 'since' => $this->getAttribute('attention_since')?->toIso8601String(),
             ],
+            // Meta: a new number must be registered on the Cloud API within 14 days of Embedded Signup.
+            'registration' => $this->registrationDeadline(),
             'quality_rating' => $this->quality_rating,
             'messaging_limit_tier' => $this->messaging_limit_tier,
             // Meta's daily messaging limit for the business (null limit = unlimited), as the platform enforces it.
@@ -51,6 +54,22 @@ final class PhoneNumberResource extends JsonResource
             // Marketing Messages API status of the number's account (campaign marketing goes through it when onboarded).
             'marketing_messages_status' => $this->wabaAccount?->mm_status->value ?? 'not_started',
             'last_synced_at' => $this->getAttribute('last_synced_at')?->toIso8601String(),
+        ];
+    }
+
+    /** @return array{deadline: string, days_left: int, overdue: bool}|null null when registered (or not needed) */
+    private function registrationDeadline(): ?array
+    {
+        $registered = $this->getAttribute('registered_at') !== null || $this->getAttribute('platform_type') === 'CLOUD_API';
+        if ($registered || $this->isCoexistence() || $this->status === PhoneNumberStatus::Disconnected || $this->created_at === null) {
+            return null;
+        }
+        $deadline = $this->created_at->copy()->addDays(14);
+
+        return [
+            'deadline' => $deadline->toIso8601String(),
+            'days_left' => max(0, (int) ceil(now()->diffInHours($deadline, false) / 24)),
+            'overdue' => $deadline->isPast(),
         ];
     }
 }
