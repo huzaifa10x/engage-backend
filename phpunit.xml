@@ -35,5 +35,6 @@
         <env name="TELESCOPE_ENABLED" value="false" force="true"/>
         <env name="NIGHTWATCH_ENABLED" value="false" force="true"/>
         <env name="LOG_STACK" value="single" force="true"/>
+        <env name="META_GRAPH_VERSION" value="v27.0" force="true"/>
     </php>
 </phpunit>

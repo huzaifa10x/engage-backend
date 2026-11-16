@@ -59,7 +59,7 @@ final class MarketingMessagesTest extends TestCase
         $this->tenantContext()->bypass(fn () => WabaAccount::query()->where('waba_id', self::WABA)->update(['meta_business_id' => self::BUSINESS]));
         $this->actingAsMember($this->owner);
 
-        $v = 'graph.facebook.com/v26.0';
+        $v = 'graph.facebook.com/v27.0';
         $send = fn () => Http::response(['messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '0']], 'messages' => [['id' => 'wamid.S'.bin2hex(random_bytes(6))]]]);
         Http::fake([
             "{$v}/".self::WABA.'/message_templates*' => Http::response(['data' => [

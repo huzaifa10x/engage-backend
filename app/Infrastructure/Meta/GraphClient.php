@@ -15,7 +15,7 @@ use RuntimeException;
 
 /**
  * The single place the platform talks to Meta's Graph API. Every method maps 1:1 to an endpoint
- * in Meta's documentation (Graph v26.0) — nothing invented. Business-token calls carry
+ * in Meta's documentation (Graph v27.0; the version is one config value, META_GRAPH_VERSION) — nothing invented. Business-token calls carry
  * appsecret_proof. Tokens are never logged.
  */
 final class GraphClient
@@ -33,7 +33,7 @@ final class GraphClient
         return new self(
             (string) config('engage.meta.app_id'),
             (string) config('engage.meta.app_secret'),
-            (string) config('engage.meta.graph_version', 'v26.0'),
+            (string) config('engage.meta.graph_version', 'v27.0'),
             (string) config('engage.meta.graph_url', 'https://graph.facebook.com'),
             (int) config('engage.meta.timeout', 20),
         );

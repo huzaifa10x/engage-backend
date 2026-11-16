@@ -21,7 +21,7 @@ final class WorkspaceRequestsTest extends TestCase
 {
     use InteractsWithWhatsapp;
 
-    private const LIST = 'graph.facebook.com/v26.0/102290129340398/message_templates*';
+    private const LIST = 'graph.facebook.com/v27.0/102290129340398/message_templates*';
 
     private Tenant $tenant;
 

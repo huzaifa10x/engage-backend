@@ -30,7 +30,7 @@ final class InboxEngagementTest extends TestCase
 {
     use InteractsWithWhatsapp;
 
-    private const SEND = 'graph.facebook.com/v26.0/106540352242922/messages*';
+    private const SEND = 'graph.facebook.com/v27.0/106540352242922/messages*';
 
     private Tenant $tenant;
 

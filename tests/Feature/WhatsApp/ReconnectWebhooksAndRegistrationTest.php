@@ -82,7 +82,7 @@ final class ReconnectWebhooksAndRegistrationTest extends TestCase
         $this->apps[] = ['id' => '1234567890', 'name' => '10X Engage'];
         $this->calls = [];
         $this->postJson("/api/v1/whatsapp/accounts/{$waba->id}/webhooks")->assertOk()->assertJsonPath('data.is_subscribed_to_webhooks', true);
-        $this->assertSame(['POST /v26.0/102290129340398/subscribed_apps', 'GET /v26.0/102290129340398/subscribed_apps'], array_map(fn ($c) => preg_replace('#/v\d+\.\d+/#', '/v26.0/', $c), $this->calls));
+        $this->assertSame(['POST /v27.0/102290129340398/subscribed_apps', 'GET /v27.0/102290129340398/subscribed_apps'], array_map(fn ($c) => preg_replace('#/v\d+\.\d+/#', '/v27.0/', $c), $this->calls));
         $this->assertSame(1, $this->tenantContext()->bypass(fn () => DB::table('audit_log')->where('action', 'whatsapp.webhooks_reconnected')->count()));
     }
 

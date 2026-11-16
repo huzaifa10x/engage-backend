@@ -60,14 +60,14 @@ final class DailyMessagingLimitTest extends TestCase
         $this->actingAsMember($this->owner);
 
         Http::fake([
-            'graph.facebook.com/v26.0/102290129340398/message_templates*' => Http::response(['data' => [
+            'graph.facebook.com/v27.0/102290129340398/message_templates*' => Http::response(['data' => [
                 ['id' => '900002', 'name' => 'class_reminder', 'language' => 'en', 'status' => 'APPROVED', 'category' => 'UTILITY',
                     'components' => [['type' => 'BODY', 'text' => 'Reminder: your class is tomorrow.']]],
             ]]),
-            'graph.facebook.com/v26.0/*/messages*' => fn () => $this->metaRejects
+            'graph.facebook.com/v27.0/*/messages*' => fn () => $this->metaRejects
                 ? Http::response(['error' => ['code' => 131026, 'message' => 'Message undeliverable']], 400)
                 : Http::response(['messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '0']], 'messages' => [['id' => 'wamid.L'.bin2hex(random_bytes(6))]]]),
-            'graph.facebook.com/v26.0/106540352242922*' => fn () => Http::response([
+            'graph.facebook.com/v27.0/106540352242922*' => fn () => Http::response([
                 'id' => '106540352242922', 'display_phone_number' => '+971 58 549 6310', 'quality_rating' => 'GREEN',
                 'whatsapp_business_manager_messaging_limit' => $this->metaLimit, 'messaging_limit_tier' => 'TIER_1K',
             ]),

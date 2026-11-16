@@ -102,7 +102,7 @@ final class InboundMessagingTest extends TestCase
     {
         $sent = [];
         Http::preventStrayRequests();
-        Http::fake(['graph.facebook.com/v26.0/106540352242922/messages*' => function ($request) use (&$sent) {
+        Http::fake(['graph.facebook.com/v27.0/106540352242922/messages*' => function ($request) use (&$sent) {
             $sent[] = $request->data()['text']['body'] ?? null;
 
             return Http::response(['messaging_product' => 'whatsapp', 'contacts' => [['wa_id' => '971501234567']], 'messages' => [['id' => 'wamid.CONFIRM'.count($sent)]]]);
@@ -229,7 +229,7 @@ final class InboundMessagingTest extends TestCase
         Storage::fake('local');
         $bytes = 'fake-jpeg-bytes';
         Http::fake([
-            'graph.facebook.com/v26.0/MEDIA123*' => Http::response(['url' => 'https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1', 'mime_type' => 'image/jpeg', 'sha256' => hash('sha256', $bytes), 'file_size' => strlen($bytes), 'id' => 'MEDIA123']),
+            'graph.facebook.com/v27.0/MEDIA123*' => Http::response(['url' => 'https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1', 'mime_type' => 'image/jpeg', 'sha256' => hash('sha256', $bytes), 'file_size' => strlen($bytes), 'id' => 'MEDIA123']),
             'lookaside.fbsbx.com/*' => Http::response($bytes, 200, ['Content-Type' => 'image/jpeg']),
         ]);
 
