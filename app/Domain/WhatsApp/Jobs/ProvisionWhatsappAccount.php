@@ -10,7 +10,10 @@ use App\Application\WhatsApp\PhoneNumberSync;
 use App\Application\WhatsApp\RefreshDiagnostics;
 use App\Application\WhatsApp\WhatsappCredentials;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Conversions\ConversionsAccess;
+use App\Domain\Conversions\Services\ConversionReporting;
 use App\Domain\Templates\Jobs\SyncMessageTemplates;
+use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
@@ -149,6 +152,18 @@ final class ProvisionWhatsappAccount implements ShouldQueue
         }
 
         $attempt->forceFill(['status' => SignupStatus::Completed, 'finished_at' => now()])->save();
+
+        // Conversions to Meta (flagged workspaces only): store whether the new token carries
+        // whatsapp_business_manage_events, so Channels shows "Conversion reporting: Enabled" straight away.
+        // Never allowed to affect onboarding.
+        try {
+            $tenant = Tenant::query()->find($waba->tenant_id);
+            if ($tenant !== null && ConversionsAccess::allowed($tenant)) {
+                app(ConversionReporting::class)->checkPermission($waba);
+            }
+        } catch (Throwable $e) {
+            Log::info('Conversion reporting permission not checked after onboarding.', ['waba_id' => $waba->waba_id, 'error' => $e->getMessage()]);
+        }
 
         // Templates that already exist on the account become available straight away. Never
         // allowed to affect onboarding: the scheduled sync picks them up otherwise.

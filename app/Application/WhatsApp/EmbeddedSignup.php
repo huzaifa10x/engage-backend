@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Application\WhatsApp;
 
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Conversions\ConversionsAccess;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\Models\Tenant;
@@ -49,11 +50,32 @@ final class EmbeddedSignup
         private readonly GraphClient $graph,
     ) {}
 
+    /**
+     * The signup configuration that also asks for whatsapp_business_manage_events (coexistence has its
+     * own; falls back to the standard events one). Null when none is set: "Reconnect to enable" is hidden.
+     */
+    public static function eventsConfigId(bool $coexistence): ?string
+    {
+        $id = (string) (($coexistence ? config('engage.meta.coexistence_events_config_id') : null) ?: config('engage.meta.events_config_id'));
+
+        return $id === '' ? null : $id;
+    }
+
     /** @return array{attempt: EmbeddedSignupAttempt, numbers: array{used: int, limit: ?int}, launch: array<string, mixed>} */
-    public function start(bool $coexistence): array
+    public function start(bool $coexistence, bool $conversions = false): array
     {
         $tenant = $this->context->tenant();
         $this->assertConfigured();
+
+        // "Reconnect to enable" (Conversions to Meta): the configuration that also asks for
+        // whatsapp_business_manage_events. Only for workspaces switched on for conversions.
+        $eventsConfigId = null;
+        if ($conversions) {
+            $eventsConfigId = self::eventsConfigId($coexistence);
+            if (! ConversionsAccess::allowed($tenant) || $eventsConfigId === null) {
+                throw WhatsappException::conversionsSignupUnavailable();
+            }
+        }
 
         if ($coexistence) {
             if (! config('engage.meta.coexistence_enabled') || ! $this->entitlements->allows($tenant, FeatureKey::Coexistence)) {
@@ -83,7 +105,7 @@ final class EmbeddedSignup
         }
 
         // Coexistence has its own Facebook Login for Business configuration (falls back to the standard one).
-        $configId = (string) (($coexistence ? config('engage.meta.coexistence_config_id') : null) ?: config('engage.meta.embedded_signup_config_id'));
+        $configId = $eventsConfigId ?? (string) (($coexistence ? config('engage.meta.coexistence_config_id') : null) ?: config('engage.meta.embedded_signup_config_id'));
 
         return ['attempt' => $attempt, 'numbers' => ['used' => $used, 'limit' => $limit], 'launch' => [
             'app_id' => (string) config('engage.meta.app_id'),

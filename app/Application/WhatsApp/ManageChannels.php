@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Application\WhatsApp;
 
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Conversions\ConversionsAccess;
+use App\Domain\Conversions\Services\ConversionReporting;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
@@ -19,6 +21,7 @@ use App\Infrastructure\Secrets\SecretStore;
 use App\Support\Api\ErrorCode;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 final class ManageChannels
 {
@@ -63,6 +66,16 @@ final class ManageChannels
                 $waba->forceFill(['permission_error_at' => now(), 'permission_error' => array_filter(['code' => $e->metaCode, 'subcode' => $e->metaSubcode], fn ($v) => $v !== null)])->save();
             }
             throw WhatsappException::meta('Could not refresh from Meta: '.$e->getMessage(), $e->metaCode, $e->fbtraceId, $e->metaSubcode);
+        }
+
+        // Conversions to Meta (flagged workspaces only): re-check whatsapp_business_manage_events on the token.
+        try {
+            $tenant = $this->context->tenantOrNull();
+            if ($tenant !== null && ConversionsAccess::allowed($tenant)) {
+                app(ConversionReporting::class)->checkPermission($waba, $token);
+            }
+        } catch (Throwable $e) {
+            Log::info('Conversion reporting permission not checked.', ['waba_id' => $waba->waba_id, 'error' => $e->getMessage()]);
         }
 
         // Marketing Messages status too; a refusal here must not spoil the refresh.
@@ -154,7 +167,7 @@ final class ManageChannels
         $stillSubscribed = false;
         try {
             $this->graph->unsubscribeApp($waba->waba_id, $this->credentials->tokenFor($waba));
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             $stillSubscribed = (bool) $waba->is_subscribed_to_webhooks;
             Log::warning('Unsubscribe during disconnect failed; continuing.', ['waba_id' => $waba->waba_id, 'error' => $e->getMessage()]);
         }

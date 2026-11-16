@@ -94,6 +94,11 @@ return [
         // On as soon as that ID is set; META_COEXISTENCE_ENABLED=false is the platform-wide kill
         // switch. One workspace is switched off with an entitlement override in Super Admin.
         'coexistence_config_id' => env('META_COEXISTENCE_CONFIG_ID'),
+        // Conversions to Meta: Facebook Login for Business configurations that also ask for
+        // whatsapp_business_manage_events. Used only by "Reconnect to enable" in Channels, for
+        // workspaces switched on for conversions. Empty: the button is not offered.
+        'events_config_id' => env('META_ES_EVENTS_CONFIG_ID'),
+        'coexistence_events_config_id' => env('META_COEXISTENCE_EVENTS_CONFIG_ID'),
         'coexistence_enabled' => (bool) env('META_COEXISTENCE_ENABLED', (string) env('META_COEXISTENCE_CONFIG_ID', '') !== ''),
         // Hours after which an import that stopped sending data is closed, so the inbox does not
         // show "syncing" forever (Meta gives no explicit "finished" signal when a phone goes offline).

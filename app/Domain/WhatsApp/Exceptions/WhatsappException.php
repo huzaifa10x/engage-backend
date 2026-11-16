@@ -60,6 +60,11 @@ final class WhatsappException extends DomainException
         return new self('Connecting an existing WhatsApp Business app number is not available on this workspace yet.', ErrorCode::FeatureNotAvailable, 403);
     }
 
+    public static function conversionsSignupUnavailable(): self
+    {
+        return new self('Reconnecting for conversion reporting is not available on this workspace yet.', ErrorCode::FeatureNotAvailable, 403);
+    }
+
     /**
      * Meta refused the call. A permission error (code 200–299, or 10) gets a plain-language
      * message and a "reconnect" action instead of Meta's own text: the business has to grant

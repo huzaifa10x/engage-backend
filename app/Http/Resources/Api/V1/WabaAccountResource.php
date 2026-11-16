@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Application\WhatsApp\EmbeddedSignup;
 use App\Application\WhatsApp\MarketingMessages;
+use App\Domain\Conversions\ConversionsAccess;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -49,7 +52,28 @@ final class WabaAccountResource extends JsonResource
                 'onboarded_at' => $this->mm_onboarded_at?->toIso8601String(),
                 'synced_at' => $this->mm_status_synced_at?->toIso8601String(),
             ],
+            // Conversions to Meta: null for workspaces not switched on (they see no change). The status
+            // comes from the stored debug_token check; unknown until the account is checked once.
+            'conversions' => $this->conversions(),
             'phone_numbers' => PhoneNumberResource::collection($this->whenLoaded('phoneNumbers')),
+        ];
+    }
+
+    /** @return ?array{status: string, checked_at: ?string, can_reconnect: bool, coexistence: bool} */
+    private function conversions(): ?array
+    {
+        $tenant = app(TenantContext::class)->tenantOrNull();
+        if ($tenant === null || ! ConversionsAccess::allowed($tenant)) {
+            return null;
+        }
+        $permission = $this->getAttribute('events_permission');
+        $coexistence = $this->relationLoaded('phoneNumbers') && $this->phoneNumbers->contains(fn ($n) => $n->isCoexistence());
+
+        return [
+            'status' => $permission === null ? 'unknown' : ($permission ? 'enabled' : 'not_enabled'),
+            'checked_at' => $this->events_permission_checked_at?->toIso8601String(),
+            'can_reconnect' => EmbeddedSignup::eventsConfigId($coexistence) !== null,
+            'coexistence' => $coexistence, // reconnect with the coexistence flow
         ];
     }
 }

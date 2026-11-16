@@ -25,8 +25,8 @@ final class SignupController extends Controller
 {
     public function store(Request $request, EmbeddedSignup $signup): JsonResponse
     {
-        $data = $request->validate(['coexistence' => ['sometimes', 'boolean']]);
-        $result = $signup->start((bool) ($data['coexistence'] ?? false));
+        $data = $request->validate(['coexistence' => ['sometimes', 'boolean'], 'conversions' => ['sometimes', 'boolean']]);
+        $result = $signup->start((bool) ($data['coexistence'] ?? false), (bool) ($data['conversions'] ?? false));
 
         return response()->json(['data' => [
             'attempt' => SignupAttemptResource::make($result['attempt']),
