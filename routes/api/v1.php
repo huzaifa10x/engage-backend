@@ -396,6 +396,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::middleware('can:'.Permission::GrowthView->value)->group(function () {
         Route::get('growth/leads/unmatched-clicks', [LeadController::class, 'unmatchedClicks'])->name('growth.leads.unmatched');
         Route::get('growth/meta-ads', [MetaAdController::class, 'index'])->name('growth.meta-ads.index');
+        // Meta conversions per ad (Conversions to Meta; workspaces with the conversions flag only, 404 otherwise).
+        Route::get('growth/conversions', [ConversionsController::class, 'results'])->name('growth.conversions');
         Route::get('growth/leads/export', [LeadController::class, 'export'])
             ->middleware(['can:'.Permission::ContactsExport->value, 'throttle:20,1'])->name('growth.leads.export');
     });

@@ -160,4 +160,42 @@ final class ConversionsCardTest extends TestCase
         $this->putJson('/api/v1/conversions/rules', ['lead_tags' => [], 'lead_steps' => [], 'purchases' => true])->assertForbidden();
         $this->postJson('/api/v1/conversions/test-event', ['conversation_id' => (string) Str::uuid()])->assertForbidden();
     }
+
+    public function test_growth_hub_shows_leads_purchases_and_revenue_per_ad_for_a_period(): void
+    {
+        $chat = $this->fromAd();
+        $other = $this->fromAd('971503333333', 'ARB-second-click');
+        $this->tenantContext()->bypass(function () use ($chat, $other) {
+            DB::table('ad_clicks')->where('conversation_id', $other)->update(['source_id' => '120210000000000002', 'headline' => 'Summer offer']);
+            $click = fn (string $c) => (string) DB::table('ad_clicks')->where('conversation_id', $c)->value('id');
+            $rows = [
+                [$chat, 'LeadSubmitted', null, now()->subDays(2), 'sent', false],
+                [$chat, 'Purchase', 250, now()->subDay(), 'sent', false],
+                [$chat, 'Purchase', 100, now()->subDays(1), 'queued', false],
+                [$chat, 'LeadSubmitted', null, now(), 'sent', true],          // a test event never counts
+                [$chat, 'Purchase', 999, now()->subDays(40), 'sent', false],  // outside 30 days
+                [$other, 'LeadSubmitted', null, now()->subDays(3), 'skipped', false],
+            ];
+            foreach ($rows as [$conv, $event, $value, $at, $status, $test]) {
+                DB::table('conversion_events')->insert(['id' => (string) Str::uuid7(), 'tenant_id' => $this->tenant->id, 'conversation_id' => $conv, 'ad_click_id' => $click($conv),
+                    'event_name' => $event, 'event_time' => $at, 'value' => $value, 'currency' => $value !== null ? 'AED' : null, 'status' => $status, 'is_test' => $test,
+                    'created_at' => now(), 'updated_at' => now()]);
+            }
+        });
+
+        $this->getJson('/api/v1/growth/conversions')->assertOk()
+            ->assertJsonPath('data.totals.leads', 2)->assertJsonPath('data.totals.purchases', 2)
+            ->assertJsonPath('data.totals.revenue', [['currency' => 'AED', 'value' => 350]])->assertJsonPath('data.totals.sent_to_meta', 2)
+            ->assertJsonPath('data.ads.0.source_id', '120210000000000001')->assertJsonPath('data.ads.0.headline', 'Free trial class')
+            ->assertJsonPath('data.ads.0.leads', 1)->assertJsonPath('data.ads.0.purchases', 2)->assertJsonPath('data.ads.0.revenue.0.value', 350)
+            ->assertJsonPath('data.ads.1.headline', 'Summer offer')->assertJsonPath('data.ads.1.leads', 1)->assertJsonPath('data.ads.1.purchases', 0)
+            ->assertJsonMissingPath('data.ads.0.cost_per_result');
+
+        $this->getJson('/api/v1/growth/conversions?days=90')->assertJsonPath('data.totals.purchases', 3)->assertJsonPath('data.totals.revenue.0.value', 1349);
+        $day = now()->subDays(2)->toDateString();
+        $this->getJson("/api/v1/growth/conversions?since={$day}&until={$day}")->assertJsonPath('data.totals.leads', 1)->assertJsonPath('data.totals.purchases', 0);
+
+        $this->tenantContext()->run($this->tenant, fn () => ConversionsAccess::set($this->tenant, false));
+        $this->getJson('/api/v1/growth/conversions')->assertNotFound();
+    }
 }

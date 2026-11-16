@@ -159,10 +159,11 @@ final class ConversionsController extends Controller
             'to' => ['nullable', 'date'],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
+        $zone = $this->context->tenant()->timezone ?: 'UTC';
         $page = ConversionEvent::query()
             ->when($f['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
-            ->when($f['from'] ?? null, fn ($q, $d) => $q->where('event_time', '>=', Carbon::parse($d)->startOfDay()))
-            ->when($f['to'] ?? null, fn ($q, $d) => $q->where('event_time', '<=', Carbon::parse($d)->endOfDay()))
+            ->when($f['from'] ?? null, fn ($q, $d) => $q->where('event_time', '>=', Carbon::parse($d, $zone)->startOfDay()))
+            ->when($f['to'] ?? null, fn ($q, $d) => $q->where('event_time', '<=', Carbon::parse($d, $zone)->endOfDay()))
             ->orderByDesc('event_time')->paginate(25);
         $contacts = Contact::query()->whereIn('id', $page->pluck('contact_id')->filter()->unique()->all())->get()->keyBy('id');
         $clicks = AdClick::query()->whereIn('id', $page->pluck('ad_click_id')->filter()->unique()->all())->get()->keyBy('id');
@@ -185,6 +186,68 @@ final class ConversionsController extends Controller
             ])->values(),
             'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total()],
         ]);
+    }
+
+    /**
+     * Growth Hub › Meta conversions: leads, purchases and revenue per ad (the ad's source_id and
+     * headline), for a period in the workspace's time zone. Counts every real conversion recorded from
+     * an ad-started chat (test events never count), and how many of them reached Meta. No cost per
+     * result or return on ad spend: there is no ad spend data.
+     */
+    public function results(Request $request): JsonResponse
+    {
+        $this->ensureAllowed();
+        $f = $request->validate([
+            'days' => ['nullable', 'integer', 'in:7,30,90,365'],
+            'since' => ['nullable', 'date_format:Y-m-d', 'required_with:until'],
+            'until' => ['nullable', 'date_format:Y-m-d', 'required_with:since', 'after_or_equal:since'],
+        ]);
+        $zone = $this->context->tenant()->timezone ?: 'UTC';
+        [$from, $to] = isset($f['since'], $f['until'])
+            ? [Carbon::parse($f['since'], $zone)->startOfDay(), Carbon::parse($f['until'], $zone)->endOfDay()]
+            : [now($zone)->subDays((int) ($f['days'] ?? 30))->startOfDay(), now($zone)->endOfDay()];
+
+        $rows = DB::table('conversion_events as e')
+            ->join('ad_clicks as c', 'c.id', '=', 'e.ad_click_id')
+            ->where('e.is_test', false)
+            ->whereBetween('e.event_time', [$from, $to])
+            ->groupBy('c.source_id', 'e.currency')
+            ->selectRaw("c.source_id,
+                (array_agg(c.headline ORDER BY c.clicked_at DESC) FILTER (WHERE c.headline IS NOT NULL))[1] AS headline,
+                e.currency,
+                count(*) FILTER (WHERE e.event_name = ?) AS leads,
+                count(*) FILTER (WHERE e.event_name = ?) AS purchases,
+                coalesce(sum(e.value) FILTER (WHERE e.event_name = ?), 0) AS revenue,
+                count(*) FILTER (WHERE e.status = 'sent') AS sent,
+                max(e.event_time) AS last_at", [ConversionRule::LEAD, ConversionRule::PURCHASE, ConversionRule::PURCHASE])
+            ->get();
+
+        // One row per ad; revenue per currency (a workspace normally has one).
+        $ads = $rows->groupBy(fn ($r) => (string) ($r->source_id ?? ''))->map(function ($group, string $sourceId) {
+            $revenue = $group->filter(fn ($r) => $r->currency !== null && (float) $r->revenue > 0)
+                ->map(fn ($r) => ['currency' => (string) $r->currency, 'value' => round((float) $r->revenue, 2)])->values();
+
+            return [
+                'source_id' => $sourceId === '' ? null : $sourceId,
+                'headline' => $group->pluck('headline')->filter()->first(),
+                'leads' => (int) $group->sum('leads'),
+                'purchases' => (int) $group->sum('purchases'),
+                'revenue' => $revenue,
+                'sent_to_meta' => (int) $group->sum('sent'),
+                'last_at' => Carbon::parse((string) $group->max('last_at'))->toIso8601String(),
+            ];
+        })->sortByDesc(fn ($a) => [$a['purchases'], $a['leads']])->values();
+
+        $revenue = $rows->filter(fn ($r) => $r->currency !== null)->groupBy('currency')
+            ->map(fn ($g, $cur) => ['currency' => (string) $cur, 'value' => round((float) $g->sum('revenue'), 2)])
+            ->filter(fn ($r) => $r['value'] > 0)->values();
+
+        return response()->json(['data' => [
+            'from' => $from->toDateString(),
+            'to' => $to->toDateString(),
+            'totals' => ['leads' => $ads->sum('leads'), 'purchases' => $ads->sum('purchases'), 'revenue' => $revenue, 'sent_to_meta' => $ads->sum('sent_to_meta')],
+            'ads' => $ads,
+        ]]);
     }
 
     /** Recent chats that started from a Meta ad (with a click ID), to send a test event for. */
