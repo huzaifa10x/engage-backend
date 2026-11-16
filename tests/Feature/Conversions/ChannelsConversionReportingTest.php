@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace Tests\Feature\Conversions;
 
 use App\Domain\Conversions\ConversionsAccess;
+use App\Domain\Conversions\Models\ConversionEvent;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Models\MetaAccessToken;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
 
@@ -48,6 +51,9 @@ final class ChannelsConversionReportingTest extends TestCase
 
     private bool $debugFaked = false;
 
+    /** Whether debug_token lists whatsapp_business_manage_events when the token has it (Embedded Signup tokens may not). */
+    private bool $listed = true;
+
     /** @param list<string> $scopes the permissions debug_token reports from now on */
     private function fakeDebugToken(array $scopes): void
     {
@@ -56,9 +62,16 @@ final class ChannelsConversionReportingTest extends TestCase
             return;
         }
         $this->debugFaked = true;
-        Http::fake(['graph.facebook.com/*/debug_token*' => fn () => Http::response(['data' => ['is_valid' => true, 'type' => 'SYSTEM_USER', 'scopes' => $this->scopes,
-            'app_id' => '1234567890', 'user_id' => '9988776655', 'expires_at' => 0,
-            'granular_scopes' => array_map(fn ($s) => ['scope' => $s, 'target_ids' => [self::WABA]], $this->scopes)]])]);
+        Http::fake([
+            'graph.facebook.com/*/debug_token*' => fn () => Http::response(['data' => ['is_valid' => true, 'type' => 'SYSTEM_USER',
+                'scopes' => $this->listed ? $this->scopes : array_values(array_diff($this->scopes, ['whatsapp_business_manage_events'])),
+                'app_id' => '1234567890', 'user_id' => '9988776655', 'expires_at' => 0,
+                'granular_scopes' => array_map(fn ($s) => ['scope' => $s, 'target_ids' => [self::WABA]], $this->listed ? $this->scopes : array_values(array_diff($this->scopes, ['whatsapp_business_manage_events'])))]]),
+            // Meta's own answer: the dataset call works only when the token really has the permission.
+            'graph.facebook.com/*/dataset*' => fn () => in_array('whatsapp_business_manage_events', $this->scopes, true)
+                ? Http::response(['id' => '870951652773014'])
+                : Http::response(['error' => ['message' => '(#200) Permission denied', 'type' => 'OAuthException', 'code' => 200]], 403),
+        ]);
     }
 
     /** @return array<string, mixed> */
@@ -164,5 +177,32 @@ final class ChannelsConversionReportingTest extends TestCase
     private function sentTo(string $path, string $method = 'POST'): int
     {
         return Http::recorded(fn (Request $r) => $r->method() === $method && str_contains((string) parse_url($r->url(), PHP_URL_PATH), $path))->count();
+    }
+
+    public function test_a_token_that_has_the_permission_without_debug_token_listing_it_shows_enabled(): void
+    {
+        // What production showed: debug_token lists only management and messaging, but Meta accepts the dataset call.
+        $this->allow();
+        $this->listed = false;
+        $this->fakeDebugToken(['whatsapp_business_management', 'whatsapp_business_messaging', 'whatsapp_business_manage_events']);
+        $this->fakeGraph(self::WABA, self::PHONE);
+        $attempt = $this->postJson('/api/v1/whatsapp/signups', ['conversions' => true])->json('data.attempt.id');
+        $this->postJson("/api/v1/whatsapp/signups/{$attempt}/complete", $this->finish())->assertOk();
+
+        $this->getJson('/api/v1/whatsapp/accounts')->assertJsonPath('data.0.conversions.status', 'enabled');
+        $account = $this->getJson('/api/v1/whatsapp/accounts')->json('data.0.id');
+        $this->postJson("/api/v1/conversions/accounts/{$account}/reporting", ['enabled' => true])->assertOk()->assertJsonPath('data.dataset_id', '870951652773014');
+
+        // Meta later refuses the events themselves: "Not enabled", and a refresh does not flip it back.
+        $this->tenantContext()->bypass(fn () => DB::table('conversion_events')->insert(['id' => (string) Str::uuid7(), 'tenant_id' => $this->tenant->id, 'waba_id' => self::WABA,
+            'event_name' => 'LeadSubmitted', 'event_time' => now(), 'status' => ConversionEvent::SKIPPED, 'error_reason' => ConversionEvent::SKIP_REASONS['missing_permission'],
+            'meta_response' => json_encode(['code' => 200]), 'is_test' => true, 'created_at' => now(), 'updated_at' => now()->addSecond()]));
+        $this->postJson("/api/v1/whatsapp/accounts/{$account}/refresh")->assertOk()->assertJsonPath('data.conversions.status', 'not_enabled');
+
+        // Reconnecting gives a new token: Meta is asked again.
+        $this->travel(5)->seconds();
+        $again = $this->postJson('/api/v1/whatsapp/signups', ['conversions' => true])->json('data.attempt.id');
+        $this->postJson("/api/v1/whatsapp/signups/{$again}/complete", $this->finish())->assertOk();
+        $this->getJson('/api/v1/whatsapp/accounts')->assertJsonPath('data.0.conversions.status', 'enabled');
     }
 }

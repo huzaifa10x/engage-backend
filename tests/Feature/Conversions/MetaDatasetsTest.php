@@ -43,7 +43,7 @@ final class MetaDatasetsTest extends TestCase
                 return Http::response(['data' => ['is_valid' => true, 'type' => 'SYSTEM_USER', 'scopes' => $this->scopes,
                     'granular_scopes' => [['scope' => 'whatsapp_business_manage_events', 'target_ids' => ['102290129340398']]]]]);
             }
-            if ($this->datasetRefused) {
+            if ($this->datasetRefused || ! in_array('whatsapp_business_manage_events', $this->scopes, true)) {
                 return Http::response(['error' => ['message' => '(#200) Permission denied', 'type' => 'OAuthException', 'code' => 200]], 403);
             }
 
@@ -98,7 +98,7 @@ final class MetaDatasetsTest extends TestCase
         $this->assertSame(ConversionReporting::NOT_ENABLED, $this->enable());
         $this->assertSame([], $this->datasets());
         $this->assertFalse($this->tenantContext()->bypass(fn () => $this->waba->fresh()->events_permission));
-        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/dataset'));
+        // debug_token did not list it, so Meta was asked directly (and refused): nothing saved.
 
         // The token says yes but Meta refuses the dataset call: still nothing saved.
         $this->scopes[] = 'whatsapp_business_manage_events';

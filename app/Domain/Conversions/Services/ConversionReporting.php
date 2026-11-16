@@ -7,9 +7,11 @@ namespace App\Domain\Conversions\Services;
 use App\Application\WhatsApp\WhatsappCredentials;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Conversions\ConversionsAccess;
+use App\Domain\Conversions\Models\ConversionEvent;
 use App\Domain\Conversions\Models\MetaDataset;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\WhatsApp\Exceptions\WhatsappException;
+use App\Domain\WhatsApp\Models\MetaAccessToken;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use App\Infrastructure\Meta\GraphClient;
 use App\Infrastructure\Meta\MetaApiException;
@@ -85,13 +87,22 @@ final class ConversionReporting
     }
 
     /**
-     * Whether the account's token carries whatsapp_business_manage_events for this account (debug_token,
-     * granular target IDs when Meta lists them). The answer is stored on the account.
+     * Whether the account's token can report conversions for this account. The answer is stored on the
+     * account (Channels shows "Enabled" / "Not enabled").
+     *
+     *  1. debug_token lists whatsapp_business_manage_events for this account (granular target IDs when
+     *     Meta lists them): yes.
+     *  2. Otherwise Meta is asked directly: POST /{WABA_ID}/dataset with the token. Embedded Signup tokens
+     *     do not always list the permission in debug_token although Meta accepts the calls. The call is
+     *     safe to repeat: Meta returns the account's existing dataset. A permission error: no.
+     *  3. Once Meta refused this account's events for a missing permission, the dataset answer is not
+     *     enough: "Not enabled" until the account is reconnected (the refusal must be newer than the token).
      */
     public function checkPermission(WabaAccount $waba, ?string $token = null): bool
     {
         try {
-            $d = $this->graph->debugToken($token ?? $this->credentials->tokenFor($waba));
+            $token ??= $this->credentials->tokenFor($waba);
+            $d = $this->graph->debugToken($token);
         } catch (Throwable) {
             return (bool) $waba->events_permission; // Meta unreachable: keep what we last knew
         }
@@ -102,8 +113,34 @@ final class ConversionReporting
                 $has = $has && ($targets === [] || in_array($waba->waba_id, $targets, true));
             }
         }
+
+        if (! $has) {
+            if (self::refusedWhenSending($waba)) {
+                $has = false;
+            } else {
+                try {
+                    $this->graph->createDataset($waba->waba_id, $token);
+                    $has = true;
+                } catch (MetaApiException $e) {
+                    if (! WhatsappException::isPermissionError($e->metaCode)) {
+                        return (bool) $waba->events_permission; // not an answer about the permission
+                    }
+                }
+            }
+        }
+
         $waba->forceFill(['events_permission' => $has, 'events_permission_checked_at' => now()])->save();
 
         return $has;
+    }
+
+    /** Meta refused this account's events for a missing permission since its current token was saved. */
+    public static function refusedWhenSending(WabaAccount $waba): bool
+    {
+        $since = MetaAccessToken::query()->whereKey($waba->access_token_id)->value('created_at');
+
+        return ConversionEvent::query()->where('waba_id', $waba->waba_id)->where('status', ConversionEvent::SKIPPED)
+            ->where('error_reason', ConversionEvent::SKIP_REASONS['missing_permission'])->whereNotNull('meta_response')
+            ->when($since !== null, fn ($q) => $q->where('updated_at', '>=', $since))->exists();
     }
 }

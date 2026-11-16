@@ -46,7 +46,8 @@ final class ConversionsCardTest extends TestCase
 
             return match (true) {
                 str_contains($r->url(), 'debug_token') => Http::response(['data' => ['is_valid' => true, 'scopes' => $this->scopes]]),
-                str_ends_with($path, '/dataset') => Http::response(['id' => '1503923451234567']),
+                str_ends_with($path, '/dataset') => in_array('whatsapp_business_manage_events', $this->scopes, true) ? Http::response(['id' => '1503923451234567'])
+                    : Http::response(['error' => ['message' => '(#200) Permission denied', 'type' => 'OAuthException', 'code' => 200]], 403),
                 str_ends_with($path, '/events') => Http::response(['events_received' => count($r['data']), 'fbtrace_id' => 'AbC']),
                 default => Http::response(['messaging_product' => 'whatsapp', 'messages' => [['id' => 'wamid.OUT'.Str::random(6)]]]),
             };
