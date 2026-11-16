@@ -157,7 +157,7 @@ final class EmbeddedSignup
         } catch (MetaApiException $e) {
             $attempt->markStep('exchange_code', 'failed', $e->getMessage());
             $attempt->fail($e->getMessage(), (string) $e->metaCode);
-            throw WhatsappException::meta('Meta rejected the signup. Please run Connect WhatsApp again.', $e->metaCode, $e->fbtraceId);
+            throw WhatsappException::meta('Meta rejected the signup. Please run Connect WhatsApp again.', $e->metaCode, $e->fbtraceId, $e->metaSubcode);
         }
 
         // 2. The token must actually grant this WABA — never trust asset IDs from the browser.
@@ -299,7 +299,7 @@ final class EmbeddedSignup
             // Fail closed: without an answer from Meta we cannot know the number is free.
             $attempt->markStep('check_other_apps', 'failed', $e->getMessage());
             $attempt->fail($e->getMessage(), (string) ($e->metaCode ?? $e->httpStatus));
-            throw WhatsappException::meta('We could not check whether this number is already connected to another application. Please try again.', $e->metaCode, $e->fbtraceId);
+            throw WhatsappException::meta('We could not check whether this number is already connected to another application. Please try again.', $e->metaCode, $e->fbtraceId, $e->metaSubcode);
         }
 
         $attempt->forceFill(['session_payload' => ($attempt->session_payload ?? []) + ['subscribed_apps' => $apps]])->save();

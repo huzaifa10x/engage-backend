@@ -30,6 +30,12 @@ final class WabaAccountResource extends JsonResource
             'disconnected_at' => $this->disconnected_at?->toIso8601String(),
             // manual | partner_removed | offboarded | access_revoked
             'disconnect_reason' => $this->getAttribute('disconnect_reason'),
+            // Meta refused this account for a missing permission (error 200): reconnect to grant it again.
+            'needs_reconnect' => $this->permission_error_at === null ? null : [
+                'reason' => 'permission_missing',
+                'since' => $this->permission_error_at->toIso8601String(),
+                'meta_code' => $this->permission_error['code'] ?? null,
+            ],
             // Marketing Messages API. Read-only: only Meta (webhook / sync) moves it to onboarded.
             'marketing_messages' => [
                 'enabled' => MarketingMessages::enabled(),

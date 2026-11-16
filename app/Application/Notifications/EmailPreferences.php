@@ -53,7 +53,7 @@ final class EmailPreferences
         ],
         'whatsapp_numbers' => [
             'label' => 'WhatsApp numbers',
-            'description' => 'A number was connected, or must be reconnected to keep sending and receiving.',
+            'description' => 'A number was connected, must be reconnected to keep sending and receiving, or Meta lowered its quality rating or messaging limit.',
             'group' => 'Workspace',
             'owners_only' => true,
         ],

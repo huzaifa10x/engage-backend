@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Webhooks\Handlers;
 
 use App\Application\Campaigns\ManageCampaigns;
+use App\Application\WhatsApp\NumberQualityAlerts;
 use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Webhooks\Jobs\RefreshPhoneNumber;
 use App\Domain\Webhooks\ProcessResult;
@@ -66,9 +67,12 @@ final class PhoneNumberHealthHandler implements WebhookHandler
             RefreshPhoneNumber::dispatch($number->id)->delay(now()->addSeconds(30));
 
             // Meta flagged the number: stop running campaigns on it before quality falls further.
+            $paused = 0;
             if (strtoupper((string) ($v['event'] ?? '')) === 'FLAGGED') {
-                app(ManageCampaigns::class)->autoPauseForNumber($number, 'Paused automatically: Meta flagged this number for low quality');
+                $paused = app(ManageCampaigns::class)->autoPauseForNumber($number, 'Paused automatically: Meta flagged this number for low quality');
             }
+            // And the workspace's Owners are told (flagged, or the messaging limit lowered).
+            app(NumberQualityAlerts::class)->webhookEvent($number, (string) ($v['event'] ?? ''), isset($v['current_limit']) ? (string) $v['current_limit'] : null, $paused);
         }
 
         return ProcessResult::Processed;

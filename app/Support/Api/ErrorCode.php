@@ -37,6 +37,7 @@ enum ErrorCode: string
     case WabaAlreadyConnected = 'waba_already_connected';
     case SignupSessionInvalid = 'signup_session_invalid';
     case MetaApiError = 'meta_api_error';
+    case MetaPermissionMissing = 'meta_permission_missing';
     case NumberAccessDenied = 'number_access_denied';
     case NumberSubscribedElsewhere = 'number_subscribed_elsewhere';
 

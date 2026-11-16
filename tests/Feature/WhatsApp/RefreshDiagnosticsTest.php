@@ -43,7 +43,7 @@ final class RefreshDiagnosticsTest extends TestCase
         Log::spy();
 
         $this->actingAsMember($owner);
-        $this->postJson("/api/v1/whatsapp/accounts/{$waba->id}/refresh")->assertStatus(502);
+        $this->postJson("/api/v1/whatsapp/accounts/{$waba->id}/refresh")->assertStatus(403)->assertJsonPath('error.code', 'meta_permission_missing');
 
         Log::shouldHaveReceived('warning')->withArgs(function (string $message, array $context) use ($waba): bool {
             if ($message !== 'WhatsApp account refresh failed') {

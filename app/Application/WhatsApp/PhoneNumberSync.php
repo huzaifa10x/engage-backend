@@ -25,13 +25,18 @@ final class PhoneNumberSync
             'meta_business_id' => isset($owner['id']) ? (string) $owner['id'] : null,
             'business_name' => $owner['name'] ?? null,
             'health_status' => is_array($node['health_status'] ?? null) ? $node['health_status'] : null,
-        ], fn ($v) => $v !== null) + ['last_synced_at' => now()])->save();
+        ], fn ($v) => $v !== null) + [
+            'last_synced_at' => now(),
+            // Meta just answered for this account, so any earlier permission refusal is over.
+            'permission_error_at' => null, 'permission_error' => null,
+        ])->save();
     }
 
     /** @param array<string, mixed> $node GET /<PHONE_NUMBER_ID> */
     public function applyPhoneNumber(PhoneNumber $number, array $node): void
     {
         $oldLimit = $number->exists ? $number->messaging_limit_tier : null;
+        $oldQuality = $number->exists ? $number->quality_rating : null;
         $display = isset($node['display_phone_number']) ? (string) $node['display_phone_number'] : null;
         $digits = $display !== null ? preg_replace('/\D+/', '', $display) : null;
 
@@ -54,6 +59,11 @@ final class PhoneNumberSync
         // A new daily messaging limit applies to the whole business, and may let waiting campaigns go on.
         if ($number->messaging_limit_tier !== $oldLimit) {
             app(MessagingLimits::class)->limitChanged($number, $oldLimit, $number->messaging_limit_tier);
+        }
+
+        // Owners hear about a lower quality rating at once; Red also pauses running campaigns.
+        if ($number->exists && $oldQuality !== null && $number->quality_rating !== $oldQuality) {
+            app(NumberQualityAlerts::class)->ratingChanged($number, $oldQuality, $number->quality_rating);
         }
     }
 }

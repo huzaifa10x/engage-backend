@@ -51,7 +51,10 @@ final class ManageChannels
             }
         } catch (MetaApiException $e) {
             app(RefreshDiagnostics::class)->log($waba, $e, $token, 'channels_refresh');
-            throw WhatsappException::meta('Could not refresh from Meta: '.$e->getMessage(), $e->metaCode, $e->fbtraceId);
+            if (WhatsappException::isPermissionError($e->metaCode)) {
+                $waba->forceFill(['permission_error_at' => now(), 'permission_error' => array_filter(['code' => $e->metaCode, 'subcode' => $e->metaSubcode], fn ($v) => $v !== null)])->save();
+            }
+            throw WhatsappException::meta('Could not refresh from Meta: '.$e->getMessage(), $e->metaCode, $e->fbtraceId, $e->metaSubcode);
         }
 
         // Marketing Messages status too; a refusal here must not spoil the refresh.
