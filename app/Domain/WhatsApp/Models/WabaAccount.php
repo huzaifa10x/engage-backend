@@ -31,6 +31,8 @@ use Illuminate\Support\Carbon;
  * @property ?Carbon $mm_onboarded_at
  * @property ?Carbon $permission_error_at
  * @property ?array<string, mixed> $permission_error
+ * @property ?bool $events_permission
+ * @property ?Carbon $events_permission_checked_at
  */
 class WabaAccount extends Model
 {
@@ -41,7 +43,7 @@ class WabaAccount extends Model
         'message_template_namespace', 'account_review_status', 'ban_state', 'health_status', 'capabilities', 'status',
         'is_subscribed_to_webhooks', 'connected_at', 'disconnected_at', 'disconnect_reason', 'last_synced_at',
         'mm_status', 'mm_meta_status', 'mm_terms_status', 'mm_consent_source', 'mm_requested_at', 'mm_request_error',
-        'mm_onboarded_at', 'mm_status_synced_at', 'permission_error_at', 'permission_error',
+        'mm_onboarded_at', 'mm_status_synced_at', 'permission_error_at', 'permission_error', 'events_permission', 'events_permission_checked_at',
     ];
 
     protected function casts(): array
@@ -57,6 +59,8 @@ class WabaAccount extends Model
             'attention_since' => 'datetime',
             'permission_error_at' => 'datetime',
             'permission_error' => 'array',
+            'events_permission' => 'boolean',
+            'events_permission_checked_at' => 'datetime',
             'attention_detail' => 'array',
             'mm_status' => MarketingMessagesStatus::class,
             'mm_requested_at' => 'datetime',

@@ -10,6 +10,7 @@ use App\Domain\Billing\Models\Subscription;
 use App\Domain\Campaigns\Models\Campaign;
 use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Services\DataTriggers;
+use App\Domain\Conversions\Models\MetaDataset;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Developer\Services\EmitMessageWebhooks;
 use App\Domain\Growth\Models\GrowthSite;
@@ -108,6 +109,7 @@ class AppServiceProvider extends ServiceProvider
             'chatbot_flow' => ChatbotFlow::class,
             'inbox_team' => InboxTeam::class,
             'growth_site' => GrowthSite::class,
+            'meta_dataset' => MetaDataset::class,
         ]);
 
         // Strict mode minus preventAccessingMissingAttributes: freshly created models only hold the

@@ -106,6 +106,35 @@ final class GraphClient
         return is_array($body['data'] ?? null) ? $body['data'] : [];
     }
 
+    // ── Conversions to Meta (whatsapp_business_manage_events) ─────────────────────────────
+
+    /**
+     * POST /<WABA_ID>/dataset — the dataset this account reports conversion events to. Meta creates
+     * it the first time and returns the existing one after that.
+     */
+    public function createDataset(string $wabaId, string $token): string
+    {
+        $body = $this->send('POST', "{$wabaId}/dataset", $token);
+        $id = $body['id'] ?? null;
+        if (! is_scalar($id) || (string) $id === '') {
+            throw new MetaApiException('Meta did not return a dataset ID.', 200);
+        }
+
+        return (string) $id;
+    }
+
+    /**
+     * POST /<DATASET_ID>/events — up to 1,000 conversion events in one request. Returns Meta's answer
+     * (events_received, messages, fbtrace_id).
+     *
+     * @param  list<array<string, mixed>>  $events
+     * @return array<string, mixed>
+     */
+    public function sendConversionEvents(string $datasetId, array $events, string $token, string $partnerAgent = 'engageX'): array
+    {
+        return $this->send('POST', "{$datasetId}/events", $token, ['data' => $events, 'partner_agent' => $partnerAgent]);
+    }
+
     /** POST /<WABA_ID>/subscribed_apps */
     public function subscribeApp(string $wabaId, string $token): bool
     {
