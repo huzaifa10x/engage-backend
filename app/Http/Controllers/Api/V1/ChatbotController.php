@@ -810,7 +810,7 @@ final class ChatbotController extends Controller
             'test_endpoints' => $endpoints, 'max_live_calls' => 5,
         ]);
         if ($live) {
-            $this->audit->record('chatbot.test_live_calls', $flow, meta: ['test_id' => $testId, 'reason' => $data['live_reason'], 'endpoints' => $endpoints]);
+            $this->audit->record('chatbot.test_live_calls', $flow, meta: ['test_id' => $testId, 'is_test' => true, 'reason' => $data['live_reason'], 'endpoints' => $endpoints]);
         }
         $type = $data['type'] ?? 'text';
         $content = match ($type) {
@@ -857,13 +857,15 @@ final class ChatbotController extends Controller
         }
 
         foreach ($rt->liveCalls as $call) {
-            $this->audit->record('chatbot.test_live_call', $flow, meta: $call + ['test_id' => $testId, 'reason' => $data['live_reason'] ?? null]);
+            $this->audit->record('chatbot.test_live_call', $flow, meta: $call + ['test_id' => $testId, 'is_test' => true, 'reason' => $data['live_reason'] ?? null]);
         }
         Cache::put($key($testId), ['state' => $rt->state, 'contact' => $rt->contact], now()->addHours(2));
         $node = $graph->node($rt->state['current_node']);
 
         return response()->json(['data' => [
             'test_id' => $testId,
+            'is_test' => true,
+            'integrations' => $live ? 'live' : 'mock',
             'transcript' => $rt->transcript,
             'state' => [
                 'status' => $rt->state['status'],

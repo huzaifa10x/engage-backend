@@ -58,6 +58,9 @@ final class TestRuntime extends BotRuntime
             'current_node' => null, 'awaiting_input' => false, 'retry_count' => 0, 'vars' => [], 'status' => 'active',
             'steps' => 0, 'resume_at' => null, 'timeout_at' => null, 'ended_reason' => null, 'ended_node' => null,
         ];
+        // Every test run is marked, live-integration tests included: nothing it does is a real
+        // conversation (no session, message, contact change, lead, run or report row is written).
+        $this->state['is_test'] = true;
         $this->contact = $contact;
     }
 
