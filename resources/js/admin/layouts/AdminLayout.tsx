@@ -87,6 +87,12 @@ const NAV: NavSection[] = [
                 match: "/admin/webhooks",
             },
             {
+                label: "Conversions to Meta",
+                href: "/admin/conversions",
+                ability: "system.view",
+                match: "/admin/conversions",
+            },
+            {
                 label: "Platform team",
                 href: "/admin/team",
                 ability: "team.manage",

@@ -41,3 +41,5 @@ Schedule::command('engage:growth:website-maintenance')->everyFiveMinutes()->onOn
 
 // Conversions to Meta: send waiting conversion events (maintenance queue, per WhatsApp account).
 Schedule::command('engage:conversions:send')->everyMinute()->onOneServer()->withoutOverlapping();
+// Conversions to Meta: Sentry alert below a 90% success rate or when events wait more than 24 hours.
+Schedule::command('engage:conversions:monitor')->everyFifteenMinutes()->onOneServer()->withoutOverlapping();

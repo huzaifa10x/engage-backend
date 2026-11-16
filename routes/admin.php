@@ -6,6 +6,7 @@ use App\Http\Controllers\Admin\AuditLogController;
 use App\Http\Controllers\Admin\Auth\LoginController;
 use App\Http\Controllers\Admin\Auth\TwoFactorController;
 use App\Http\Controllers\Admin\CompanyController;
+use App\Http\Controllers\Admin\ConversionsMonitorController;
 use App\Http\Controllers\Admin\ImpersonationController;
 use App\Http\Controllers\Admin\InquiryController;
 use App\Http\Controllers\Admin\InvoiceController;
@@ -81,6 +82,7 @@ Route::middleware(['auth:admin', 'admin.context', TrackAdminSession::class])->gr
     Route::post('numbers/{number}/refresh', [NumberController::class, 'refresh'])->middleware(['admin.can:companies.manage', 'throttle:20,1'])->name('numbers.refresh');
 
     Route::get('webhooks', [WebhookLogController::class, 'index'])->middleware('admin.can:system.view')->name('webhooks.index');
+    Route::get('conversions', ConversionsMonitorController::class)->middleware('admin.can:system.view')->name('conversions.index');
     Route::post('webhooks/replay-failed', [WebhookLogController::class, 'replayFailed'])->middleware('admin.can:system.view')->name('webhooks.replay');
 
     Route::get('users', [UserController::class, 'index'])->middleware('admin.can:users.view')->name('users.index');
