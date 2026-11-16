@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\Chatbots;
 
 use App\Application\Messaging\ManageContacts;
+use App\Domain\Access\Models\Role;
+use App\Domain\Access\Permission;
 use App\Domain\Access\SystemRole;
 use App\Domain\Chatbots\Engine\Expression;
 use App\Domain\Chatbots\Engine\FlowEngine;
@@ -18,6 +20,7 @@ use App\Domain\Messaging\Models\ConsentEvent;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\ConversationNote;
+use App\Domain\Messaging\Models\MemberNotification;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -539,6 +542,47 @@ final class ChatbotBuilderV2Test extends TestCase
         $this->postJson("/api/v1/chatbots/{$id}/publish")->assertForbidden();
         $this->patchJson("/api/v1/chatbots/{$id}", ['name' => 'x'])->assertForbidden();
         $this->postJson("/api/v1/chatbots/{$id}/comments", ['node_id' => 'person', 'body' => 'Say good morning?'])->assertOk()->assertJsonPath('data.0.body', 'Say good morning?');
+    }
+
+    public function test_a_review_request_notifies_the_reviewers_and_the_decision_goes_back_to_the_requester(): void
+    {
+        $id = $this->flow('Bookings', [
+            self::node('start', 'start', ['any_message' => true], ['next' => 'person']),
+            self::node('person', 'handoff', ['text' => 'Hi']),
+        ], live: false);
+        $this->putJson('/api/v1/chatbots/workspace', ['approvals' => true])->assertOk();
+        $admin = $this->addMember($this->tenant, SystemRole::Admin);
+        // A flow editor: may edit flows and ask for a review, not publish.
+        $editorRole = $this->tenantContext()->bypass(fn () => Role::query()->create([
+            'tenant_id' => $this->tenant->id, 'key' => 'flow_editor', 'name' => 'Flow editor', 'is_system' => false,
+            'permissions' => [Permission::ChatbotsView->value, Permission::ChatbotsManage->value],
+        ]));
+        $marketing = $this->addMember($this->tenant, SystemRole::Viewer);
+        $this->tenantContext()->bypass(fn () => $marketing->forceFill(['role_id' => $editorRole->id])->save());
+        $agent = $this->addMember($this->tenant, SystemRole::Agent);
+        $bell = fn (TenantMembership $m) => $this->inTenant(fn () => MemberNotification::query()->where('membership_id', $m->id)->where('type', 'flow_review')->pluck('title')->all());
+
+        $this->actingAsMember($marketing);
+        $this->postJson("/api/v1/chatbots/{$id}/review", ['action' => 'request', 'note' => 'Ready for launch'])->assertOk()
+            ->assertJsonPath('data.review.requested_by', $marketing->user->name);
+
+        // Everyone who may approve is told, with a link to the flow; the requester and agents are not.
+        $name = $marketing->user->name;
+        $this->assertSame(["{$name} asked you to review “Bookings”"], $bell($this->owner));
+        $this->assertSame(["{$name} asked you to review “Bookings”"], $bell($admin));
+        $this->assertSame([], $bell($marketing));
+        $this->assertSame([], $bell($agent));
+        $this->assertSame("/chatbots/builder?id={$id}&review=1", $this->inTenant(fn () => MemberNotification::query()->where('membership_id', $admin->id)->value('url')));
+
+        // The decision goes back to the person who asked.
+        $this->actingAsMember($admin);
+        $this->postJson("/api/v1/chatbots/{$id}/review", ['action' => 'changes', 'note' => 'Add our opening hours'])->assertOk();
+        $this->assertSame(["{$admin->user->name} asked for changes to “Bookings”"], $bell($marketing));
+        $this->actingAsMember($marketing);
+        $this->postJson("/api/v1/chatbots/{$id}/review", ['action' => 'request'])->assertOk();
+        $this->actingAsMember($this->owner);
+        $this->postJson("/api/v1/chatbots/{$id}/review", ['action' => 'approve'])->assertOk();
+        $this->assertContains("{$this->owner->user->name} approved “Bookings”: it can be published", $bell($marketing));
     }
 
     public function test_comments_history_export_import_folders_archive_and_snippets(): void

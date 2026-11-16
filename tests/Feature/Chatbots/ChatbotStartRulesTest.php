@@ -34,6 +34,32 @@ final class ChatbotStartRulesTest extends TestCase
         ]], name: $name);
     }
 
+    public function test_a_start_rule_is_deleted_by_taking_the_flow_off_the_number_or_deleting_the_flow(): void
+    {
+        $offers = $this->flow('Offers', ['keywords' => ['price'], 'keyword_match' => 'contains'], 'Our offers');
+        $other = $this->flow('Other', ['keywords' => ['hello'], 'keyword_match' => 'exact'], 'Hi there');
+
+        // Removing the rule: the flow stops starting on the number and stays in My Flows, switched off.
+        $rules = $this->deleteJson("/api/v1/chatbots/start-rules/{$offers->id}")->assertOk()->json('data.0.rules');
+        $this->assertSame([$other->id], array_column($rules, 'flow_id'));
+        $this->inTenant(fn () => $offers->refresh());
+        $this->assertNull($offers->phone_number_id);
+        $this->assertFalse($offers->is_active);
+        $this->getJson("/api/v1/chatbots/{$offers->id}")->assertOk();
+        $this->assertContains('chatbot.start_rule_removed', collect($this->getJson("/api/v1/chatbots/{$offers->id}/history")->json('data'))->pluck('action'));
+        $this->says('price please', '971500000009');
+        $this->assertSame([], $this->texts(), 'nothing starts on that keyword any more');
+
+        // Deleting the flow with its rule.
+        $this->deleteJson("/api/v1/chatbots/start-rules/{$other->id}", ['delete_flow' => true])->assertOk()->assertJsonCount(0, 'data');
+        $this->getJson("/api/v1/chatbots/{$other->id}")->assertNotFound();
+
+        // Only people who may publish flows delete rules.
+        $agentFlow = $this->flow('Agents', ['keywords' => ['x'], 'keyword_match' => 'exact'], 'x');
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Agent));
+        $this->deleteJson("/api/v1/chatbots/start-rules/{$agentFlow->id}")->assertForbidden();
+    }
+
     public function test_two_keyword_flows_overlap_and_the_number_priority_decides_deterministically(): void
     {
         $offers = $this->flow('Offers', ['keywords' => ['price'], 'keyword_match' => 'contains'], 'Our offers');

@@ -34,6 +34,7 @@ use App\Domain\Identity\Models\User;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\InboxTeam;
 use App\Domain\Messaging\Models\Media;
+use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Templates\Models\MessageTemplate;
@@ -508,14 +509,46 @@ final class ChatbotController extends Controller
             ])->save();
         } elseif ($data['action'] === 'request') {
             $this->context->authorize(Permission::ChatbotsManage);
-            $flow->forceFill(['review_status' => 'requested', 'review_hash' => null, 'review_note' => $data['note'] ?? null, 'reviewed_by_membership_id' => null, 'reviewed_at' => null])->save();
+            $flow->forceFill(['review_status' => 'requested', 'review_hash' => null, 'review_note' => $data['note'] ?? null, 'reviewed_by_membership_id' => null, 'reviewed_at' => null,
+                'review_requested_by_membership_id' => $me, 'review_requested_at' => now()])->save();
         } else {
             $this->context->authorize(Permission::ChatbotsManage);
             $flow->forceFill(['review_status' => null, 'review_hash' => null, 'review_note' => null])->save();
         }
         $this->audit->record('chatbot.review_'.$data['action'], $flow, meta: ['note' => $data['note'] ?? null]);
+        $this->tellAboutReview($flow, $data['action'], $data['note'] ?? null);
 
         return response()->json(['data' => $this->present($flow, full: true)]);
+    }
+
+    /**
+     * The bell (and an email, per Settings › Email notifications): a review request goes to everyone
+     * who may approve flows (Owners, Admins and roles with "Publish chatbots"); the decision goes back
+     * to the person who asked.
+     */
+    private function tellAboutReview(ChatbotFlow $flow, string $action, ?string $note): void
+    {
+        $me = $this->context->membership();
+        $who = $me !== null ? ($this->memberNames([$me->id])[$me->id] ?? 'A teammate') : 'A teammate';
+        $url = "/chatbots/builder?id={$flow->id}&review=1";
+        $tools = app(InboxTools::class);
+
+        if ($action === 'request') {
+            $reviewers = TenantMembership::query()->active()->with('role')->get()
+                ->filter(fn (TenantMembership $m) => $m->id !== $me?->id && $m->role !== null && $m->role->grants(Permission::ChatbotsPublish));
+            foreach ($reviewers as $reviewer) {
+                $tools->notify($reviewer, 'flow_review', "{$who} asked you to review “{$flow->name}”", $note ?? 'Open the flow to approve it or ask for changes.', $url, email: true);
+            }
+
+            return;
+        }
+        if (in_array($action, ['approve', 'changes'], true) && $flow->review_requested_by_membership_id !== null && $flow->review_requested_by_membership_id !== $me?->id) {
+            $requester = TenantMembership::query()->active()->find($flow->review_requested_by_membership_id);
+            if ($requester !== null) {
+                $title = $action === 'approve' ? "{$who} approved “{$flow->name}”: it can be published" : "{$who} asked for changes to “{$flow->name}”";
+                $tools->notify($requester, 'flow_review', $title, $note, $url, email: true);
+            }
+        }
     }
 
     // ── Comments on blocks ───────────────────────────────────────────────────────────────────
@@ -588,6 +621,37 @@ final class ChatbotController extends Controller
     /** Every number's flows in routing order, what starts each, and the overlaps (chatbots.view). */
     public function startRules(StartRules $rules): JsonResponse
     {
+        return response()->json(['data' => $rules->overview()]);
+    }
+
+    /**
+     * Deletes a start rule: the flow stops answering on its number (switched off, taken off the number,
+     * conversations it was running end), and stays in My Flows to be reused or assigned again. With
+     * `delete_flow`, the flow itself is deleted too. Either way it is in the flow's history and audit log.
+     */
+    public function removeStartRule(Request $request, ChatbotFlow $flow, StartRules $rules): JsonResponse
+    {
+        $deleteFlow = (bool) ($request->validate(['delete_flow' => ['sometimes', 'boolean']])['delete_flow'] ?? false);
+        if ($flow->phone_number_id === null && ! $deleteFlow) {
+            throw ValidationException::withMessages(['flow' => 'This flow has no start rule on a number.']);
+        }
+
+        if ($deleteFlow) {
+            $this->context->authorize(Permission::ChatbotsManage);
+            $this->destroy($flow);
+
+            return response()->json(['data' => $rules->overview()]);
+        }
+
+        $number = $flow->phone_number_id;
+        $wasActive = $flow->is_active;
+        $flow->forceFill(['is_active' => false, 'phone_number_id' => null, 'activate_at' => null, 'deactivate_at' => null])->save();
+        if ($wasActive) {
+            $this->chatbots->stopFlow($flow, 'flow_disabled');
+        }
+        DataTriggers::forget($this->context->id());
+        $this->audit->record('chatbot.start_rule_removed', $flow, meta: ['phone_number_id' => $number, 'was_live' => $wasActive]);
+
         return response()->json(['data' => $rules->overview()]);
     }
 
@@ -1062,6 +1126,8 @@ final class ChatbotController extends Controller
                 'note' => $flow->review_note,
                 'reviewed_at' => $flow->reviewed_at?->toIso8601String(),
                 'reviewer' => $flow->reviewed_by_membership_id !== null ? ($this->memberNames([$flow->reviewed_by_membership_id])[$flow->reviewed_by_membership_id] ?? null) : null,
+                'requested_by' => $flow->review_requested_by_membership_id !== null ? ($this->memberNames([$flow->review_requested_by_membership_id])[$flow->review_requested_by_membership_id] ?? null) : null,
+                'requested_at' => $flow->review_requested_at?->toIso8601String(),
             ] : null,
             'created_at' => $flow->created_at?->toIso8601String(),
             'updated_at' => $flow->updated_at?->toIso8601String(),

@@ -210,6 +210,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::middleware('can:'.Permission::ChatbotsPublish->value)->prefix('chatbots')->name('chatbots.')->group(function () {
         Route::post('{flow}/publish', [ChatbotController::class, 'publish'])->whereUuid('flow')->name('publish');
         Route::post('{flow}/activate', [ChatbotController::class, 'activate'])->whereUuid('flow')->name('activate');
+        Route::delete('start-rules/{flow}', [ChatbotController::class, 'removeStartRule'])->whereUuid('flow')->name('start-rules.remove');
         Route::post('{flow}/versions/{version}/restore', [ChatbotController::class, 'restore'])->whereUuid('flow')->whereNumber('version')->name('versions.restore');
         Route::post('{flow}/webhook', [ChatbotController::class, 'webhookToken'])->whereUuid('flow')->name('webhook');
     });

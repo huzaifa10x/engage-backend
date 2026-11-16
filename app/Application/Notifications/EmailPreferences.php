@@ -46,6 +46,11 @@ final class EmailPreferences
             'description' => 'A customer’s 24-hour window is about to close, or a conversation was escalated because nobody replied.',
             'group' => 'Inbox',
         ],
+        'chatbot_reviews' => [
+            'label' => 'Chatbot reviews',
+            'description' => 'A chatbot flow is waiting for your review, or a reviewer approved your flow or asked for changes.',
+            'group' => 'Chatbots',
+        ],
         'whatsapp_numbers' => [
             'label' => 'WhatsApp numbers',
             'description' => 'A number was connected, or must be reconnected to keep sending and receiving.',
@@ -78,6 +83,7 @@ final class EmailPreferences
         return match ($type) {
             'assigned' => 'inbox_assigned',
             'mention' => 'inbox_mentions',
+            'flow_review' => 'chatbot_reviews',
             default => 'inbox_alerts',
         };
     }

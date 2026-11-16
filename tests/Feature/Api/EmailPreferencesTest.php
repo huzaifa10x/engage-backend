@@ -56,7 +56,7 @@ final class EmailPreferencesTest extends TestCase
     public function test_every_email_is_on_by_default_and_security_is_locked(): void
     {
         $data = $this->actingAsMember($this->owner)->getJson('/api/v1/me/email-preferences')->assertOk()->json('data');
-        $this->assertSame(['security', 'inbox_assigned', 'inbox_mentions', 'inbox_alerts', 'whatsapp_numbers', 'templates', 'developer', 'billing'], array_column($data, 'key'));
+        $this->assertSame(['security', 'inbox_assigned', 'inbox_mentions', 'inbox_alerts', 'chatbot_reviews', 'whatsapp_numbers', 'templates', 'developer', 'billing'], array_column($data, 'key'));
         foreach ($data as $row) {
             $this->assertTrue($row['enabled'], $row['key']);
             $this->assertSame($row['key'] === 'security', $row['locked'], $row['key']);
@@ -104,7 +104,7 @@ final class EmailPreferencesTest extends TestCase
 
         // Even if the stored value said otherwise, the sign-in code is sent.
         $user = $this->owner->user()->firstOrFail();
-        $user->forceFill(['email_preferences' => array_fill_keys(['security', 'inbox_assigned', 'inbox_mentions', 'inbox_alerts', 'whatsapp_numbers', 'templates', 'developer', 'billing'], false)])->save();
+        $user->forceFill(['email_preferences' => array_fill_keys(['security', 'inbox_assigned', 'inbox_mentions', 'inbox_alerts', 'chatbot_reviews', 'whatsapp_numbers', 'templates', 'developer', 'billing'], false)])->save();
         app(LoginVerification::class)->send($user);
         $this->assertCount(1, $this->mailTo($user->email));
     }

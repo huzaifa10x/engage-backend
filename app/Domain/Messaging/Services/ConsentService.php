@@ -76,7 +76,7 @@ final class ConsentService
      */
     public function customerOptOut(Contact $contact): ?string
     {
-        $event = ConsentEvent::query()->where('contact_id', $contact->id)->where('action', 'opted_out')->latest('created_at')->first();
+        $event = ConsentEvent::query()->where('contact_id', $contact->id)->where('action', 'opted_out')->latest('created_at')->latest('id')->first(); // ids are time-ordered (UUID v7)
         if ($event === null) {
             return null;
         }

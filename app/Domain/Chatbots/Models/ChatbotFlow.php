@@ -41,6 +41,8 @@ use Illuminate\Support\Carbon;
  * @property ?string $reviewed_by_membership_id
  * @property ?Carbon $reviewed_at
  * @property ?string $review_note
+ * @property ?string $review_requested_by_membership_id
+ * @property ?Carbon $review_requested_at
  * @property ?string $webhook_token
  * @property int $draft_revision bumped by every saved draft (conflict-safe editing)
  * @property ?string $draft_updated_by_membership_id
@@ -58,7 +60,7 @@ class ChatbotFlow extends Model
 
     protected $fillable = [
         'tenant_id', 'name', 'phone_number_id', 'is_active', 'draft', 'settings', 'published_version', 'published_at', 'draft_updated_at', 'created_by_membership_id',
-        'kind', 'folder', 'archived_at', 'activate_at', 'deactivate_at', 'editors', 'review_status', 'review_hash', 'reviewed_by_membership_id', 'reviewed_at', 'review_note', 'webhook_token',
+        'kind', 'folder', 'archived_at', 'activate_at', 'deactivate_at', 'editors', 'review_status', 'review_hash', 'reviewed_by_membership_id', 'reviewed_at', 'review_note', 'review_requested_by_membership_id', 'review_requested_at', 'webhook_token',
         'draft_revision', 'draft_updated_by_membership_id', 'start_priority',
     ];
 
@@ -78,6 +80,7 @@ class ChatbotFlow extends Model
             'deactivate_at' => 'datetime',
             'editors' => 'array',
             'reviewed_at' => 'datetime',
+            'review_requested_at' => 'datetime',
         ];
     }
 
