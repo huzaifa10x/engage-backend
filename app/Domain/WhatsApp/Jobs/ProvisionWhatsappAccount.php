@@ -7,6 +7,7 @@ namespace App\Domain\WhatsApp\Jobs;
 use App\Application\Notifications\WorkspaceMailer;
 use App\Application\WhatsApp\MarketingMessages;
 use App\Application\WhatsApp\PhoneNumberSync;
+use App\Application\WhatsApp\RefreshDiagnostics;
 use App\Application\WhatsApp\WhatsappCredentials;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Templates\Jobs\SyncMessageTemplates;
@@ -72,7 +73,12 @@ final class ProvisionWhatsappAccount implements ShouldQueue
             $token = $credentials->tokenFor($waba);
 
             $this->step($attempt, 'fetch_waba', function () use ($graph, $waba, $token, $sync) {
-                $sync->applyWaba($waba, $graph->getWaba($waba->waba_id, $token));
+                try {
+                    $sync->applyWaba($waba, $graph->getWaba($waba->waba_id, $token));
+                } catch (MetaApiException $e) {
+                    app(RefreshDiagnostics::class)->log($waba, $e, $token, 'signup_fetch_waba');
+                    throw $e;
+                }
             });
 
             $this->step($attempt, 'subscribe_webhooks', function () use ($graph, $waba, $token) {

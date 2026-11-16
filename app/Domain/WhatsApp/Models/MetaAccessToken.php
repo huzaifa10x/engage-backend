@@ -17,6 +17,7 @@ use Illuminate\Support\Carbon;
  * @property string $secret_id
  * @property ?Carbon $expires_at
  * @property ?Carbon $revoked_at
+ * @property ?Carbon $last_validated_at
  */
 class MetaAccessToken extends Model
 {

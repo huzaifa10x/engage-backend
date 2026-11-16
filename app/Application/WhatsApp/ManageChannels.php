@@ -33,7 +33,12 @@ final class ManageChannels
     /** Refresh WABA + known numbers from Meta. New numbers are NOT auto-added (plan slots). */
     public function refresh(WabaAccount $waba): WabaAccount
     {
-        $token = $this->credentials->tokenFor($waba);
+        try {
+            $token = $this->credentials->tokenFor($waba);
+        } catch (WhatsappException $e) {
+            app(RefreshDiagnostics::class)->logWithoutToken($waba, $e->getMessage(), 'channels_refresh');
+            throw $e;
+        }
 
         try {
             $this->sync->applyWaba($waba, $this->graph->getWaba($waba->waba_id, $token));
@@ -45,6 +50,7 @@ final class ManageChannels
                 }
             }
         } catch (MetaApiException $e) {
+            app(RefreshDiagnostics::class)->log($waba, $e, $token, 'channels_refresh');
             throw WhatsappException::meta('Could not refresh from Meta: '.$e->getMessage(), $e->metaCode, $e->fbtraceId);
         }
 
