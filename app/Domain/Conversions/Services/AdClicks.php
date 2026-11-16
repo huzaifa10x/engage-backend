@@ -58,6 +58,24 @@ final class AdClicks
         ]) > 0;
     }
 
+    /**
+     * Saves any ad click of these chats (or this contact) not saved yet. Conversions call this first:
+     * a flow can reach its lead step before the background job has saved the click of the very
+     * message that started it.
+     */
+    public function catchUp(?string $conversationId, ?string $contactId = null): void
+    {
+        if ($conversationId === null && $contactId === null) {
+            return;
+        }
+        Message::query()->where('direction', Message::INBOUND)
+            ->when($conversationId, fn ($q, $id) => $q->where('conversation_id', $id), fn ($q) => $q->where('contact_id', $contactId))
+            ->whereRaw("jsonb_typeof(content->'referral') = 'object'")
+            ->whereNotExists(fn ($q) => $q->from('ad_clicks')->whereColumn('ad_clicks.message_id', 'messages.id'))
+            ->limit(20)->get()
+            ->each(fn (Message $message) => $this->record($message));
+    }
+
     /** The most recent click on a chat, up to a moment (a conversion uses it). */
     public function latestForConversation(string $conversationId, ?Carbon $before = null): ?AdClick
     {

@@ -112,6 +112,8 @@ final class MetaDatasetsTest extends TestCase
         $this->artisan('engage:conversions', ['--enable' => '102290129340398'])->expectsOutputToContain('Not allowed')->assertSuccessful();
         $this->artisan('engage:conversions', ['--allow' => $this->tenant->id])->assertSuccessful();
         $this->artisan('engage:conversions', ['--enable' => '102290129340398'])->expectsOutputToContain('Reporting on for 102290129340398: dataset 1503923451234567.')->assertSuccessful();
-        $this->artisan('engage:conversions', ['--status' => true])->expectsOutputToContain('reporting on (dataset 1503923451234567)')->assertSuccessful();
+        $this->artisan('engage:conversions', ['--workspace' => $this->tenant->id, '--lead-tag' => 'Booked', '--purchases' => 'on'])->assertSuccessful();
+        $this->artisan('engage:conversions', ['--status' => true])->expectsOutputToContain('reporting on (dataset 1503923451234567)')
+            ->expectsOutputToContain('rule LeadSubmitted on tag booked')->expectsOutputToContain('rule Purchase on order')->assertSuccessful();
     }
 }

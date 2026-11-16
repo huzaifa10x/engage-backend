@@ -11,6 +11,7 @@ use App\Domain\Campaigns\Models\Campaign;
 use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Services\DataTriggers;
 use App\Domain\Conversions\Models\MetaDataset;
+use App\Domain\Conversions\Services\ConversionTriggers;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Developer\Services\EmitMessageWebhooks;
 use App\Domain\Growth\Models\GrowthSite;
@@ -83,6 +84,8 @@ class AppServiceProvider extends ServiceProvider
             } catch (Throwable $e) {
                 report($e);
             }
+            // Conversions to Meta: a tag that counts as a lead (flagged workspaces only; guarded inside).
+            ConversionTriggers::contactSaved($contact);
         });
 
         // Short, stable morph keys — class names never leak into the database.

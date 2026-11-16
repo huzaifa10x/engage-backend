@@ -13,6 +13,7 @@ use App\Domain\Chatbots\Models\ChatbotSecret;
 use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Chatbots\Services\ChatbotWorkspace;
 use App\Domain\Chatbots\Services\OrderLookup;
+use App\Domain\Conversions\Services\ConversionTriggers;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Growth\Services\Acquisition;
@@ -328,6 +329,10 @@ final class LiveRuntime extends BotRuntime
             'flow_id' => $this->session->flow_id, 'flow_version' => $this->session->flow_version, 'session_id' => $this->session->id,
             'node_id' => mb_substr($nodeId, 0, 64), 'kind' => $kind, 'detail' => $detail !== null ? mb_substr($detail, 0, 120) : null,
         ]);
+        // Conversions to Meta: a step that counts as a lead (real runs only; never fails the flow).
+        if ($kind === 'enter') {
+            ConversionTriggers::flowStepReached($this->conversation->id, $this->conversation->contact_id, $this->session->flow_id, $nodeId);
+        }
     }
 
     /**

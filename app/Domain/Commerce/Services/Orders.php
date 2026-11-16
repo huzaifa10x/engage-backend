@@ -9,6 +9,7 @@ use App\Domain\Automation\Scheduler;
 use App\Domain\Commerce\Models\CommerceLinkToken;
 use App\Domain\Commerce\Models\CommerceOrder;
 use App\Domain\Commerce\Models\CommerceOrderItem;
+use App\Domain\Conversions\Services\ConversionTriggers;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Crm\Services\ContactStages;
 use App\Domain\Growth\GrowthSettings;
@@ -271,6 +272,8 @@ final class Orders
         if ($order->contact_id === null) {
             return;
         }
+        // Conversions to Meta: a paid order linked to a chat is a purchase (once per order; guarded inside).
+        ConversionTriggers::orderChanged($order);
         if ($newlyLinked && ! in_array($order->status, ['cancelled', 'failed'], true)) {
             // "Stop when the customer … places an order": no more nudges to this person.
             $this->scheduler->cancelForContact($order->contact_id, 'order_placed', FollowUps::NUDGE_KINDS);
