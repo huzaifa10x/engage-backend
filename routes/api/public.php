@@ -28,6 +28,7 @@ Route::get('templates', [PublicApiController::class, 'templates'])->middleware($
 
 Route::post('media', [PublicApiController::class, 'uploadMedia'])->middleware($key('messages:send'))->name('media.upload');
 Route::post('messages', [PublicApiController::class, 'sendMessage'])->middleware($key('messages:send'))->name('messages.send');
+Route::post('bookings/completed', [PublicApiController::class, 'bookingCompleted'])->middleware($key('messages:send'))->name('bookings.completed');
 Route::get('messages/{id}', [PublicApiController::class, 'message'])->whereUuid('id')->middleware($key('messages:read'))->name('messages.show');
 Route::get('conversations', [PublicApiController::class, 'conversations'])->middleware($key('messages:read'))->name('conversations');
 Route::get('conversations/{id}/messages', [PublicApiController::class, 'conversationMessages'])->whereUuid('id')->middleware($key('messages:read'))->name('conversations.messages');

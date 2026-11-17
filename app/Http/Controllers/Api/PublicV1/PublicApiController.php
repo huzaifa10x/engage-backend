@@ -12,6 +12,7 @@ use App\Domain\Developer\Models\WebhookEndpoint;
 use App\Domain\Developer\Services\ApiMedia;
 use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Developer\Services\UrlGuard;
+use App\Domain\Feedback\FeedbackRequests;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
@@ -125,6 +126,28 @@ final class PublicApiController extends Controller
         $message = $send->toContact($number, $contact, $payload, MessageOrigin::Api, null, is_string($key) && $key !== '' ? mb_substr($key, 0, 128) : null);
 
         return response()->json(['data' => PublicPayload::message($message->load(['contact', 'media']))], 202);
+    }
+
+    /**
+     * A booking was completed in the client's booking tool: a feedback / review request goes out when
+     * it is switched on (Follow-ups & Alerts), at most once per booking and once per customer per 7 days.
+     */
+    public function bookingCompleted(Request $request, FeedbackRequests $feedback): JsonResponse
+    {
+        $data = $request->validate(['phone' => ['required', 'string', 'max:32'], 'reference' => ['required', 'string', 'max:100'], 'name' => ['nullable', 'string', 'max:120']]);
+        $waId = Contact::checkedPhone((string) $data['phone'], 'phone');
+        $contact = Contact::query()->withTrashed()->where('wa_id', $waId)->first()
+            ?? Contact::query()->create(['wa_id' => $waId, 'source' => 'api', 'name' => isset($data['name']) ? trim((string) $data['name']) : null]);
+        if ($contact->trashed()) {
+            $contact->restore();
+        }
+        $result = $feedback->forBooking($contact, (string) $data['reference']);
+
+        return response()->json(['data' => [
+            'contact_id' => $contact->id,
+            'status' => $result === null ? 'not_sent' : $result->status,
+            'reason' => $result === null ? 'Feedback requests after bookings are off, or this booking was already handled.' : $result->reason,
+        ]], 202);
     }
 
     /**

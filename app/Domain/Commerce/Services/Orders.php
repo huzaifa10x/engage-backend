@@ -12,6 +12,7 @@ use App\Domain\Commerce\Models\CommerceOrderItem;
 use App\Domain\Conversions\Services\ConversionTriggers;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Crm\Services\ContactStages;
+use App\Domain\Feedback\FeedbackRequests;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Services\Acquisition;
 use App\Domain\Integrations\Models\Integration;
@@ -139,6 +140,14 @@ final class Orders
         $order = $result['order'];
         if ($result['changed']) {
             $this->afterChange($integration, $order, ! $result['hadContact'] && $order->contact_id !== null, ! $result['wasPaid'] && $order->paid);
+            // Delivered (WooCommerce "completed", or a "delivered" status added by a plugin): ask for feedback once.
+            if ($integration->provider === Integration::WOOCOMMERCE && in_array($order->status, ['completed', 'delivered'], true)) {
+                try {
+                    app(FeedbackRequests::class)->forOrder($order);
+                } catch (Throwable $e) {
+                    Log::warning('Feedback request after a delivered order was not sent.', ['order_id' => $order->id, 'error' => $e->getMessage()]);
+                }
+            }
         }
 
         return ['order' => $order, 'duplicate' => false];

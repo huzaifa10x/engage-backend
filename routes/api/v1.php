@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\V1\Crm\StageController;
 use App\Http\Controllers\Api\V1\DeveloperController;
 use App\Http\Controllers\Api\V1\EmailPreferenceController;
 use App\Http\Controllers\Api\V1\EntitlementController;
+use App\Http\Controllers\Api\V1\FeedbackController;
 use App\Http\Controllers\Api\V1\Growth\LeadController;
 use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
 use App\Http\Controllers\Api\V1\Growth\MetaAdController;
@@ -235,6 +236,9 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
 
     Route::get('tenant/inbox-settings', [InboxToolsController::class, 'inboxSettings'])->name('tenant.inbox-settings');
+    Route::get('tenant/feedback', [FeedbackController::class, 'show'])->middleware('can:'.Permission::SettingsView->value)->name('tenant.feedback');
+    Route::put('tenant/feedback', [FeedbackController::class, 'update'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.feedback.update');
+    Route::get('analytics/feedback', [FeedbackController::class, 'report'])->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.feedback');
     Route::get('tenant/followups', [FollowUpController::class, 'show'])->middleware('can:'.Permission::SettingsView->value)->name('tenant.followups');
     Route::put('tenant/followups', [FollowUpController::class, 'update'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.followups.update');
     Route::put('tenant/inbox-settings', [InboxToolsController::class, 'updateInboxSettings'])

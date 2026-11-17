@@ -12,6 +12,7 @@ use App\Domain\Automation\Scheduler;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Developer\Services\WebhookDispatcher;
+use App\Domain\Feedback\FeedbackRequests;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Jobs\SendReadReceipt;
 use App\Domain\Messaging\Models\Conversation;
@@ -193,6 +194,9 @@ final class ConversationController extends Controller
         // Closing ends any chatbot session; the next customer message may start the bot again.
         if (($data['status'] ?? null) === ConversationStatus::Closed->value && $before['status'] !== 'closed') {
             app(Chatbots::class)->stop($conversation, 'closed');
+            $conversation->refresh();
+            // CSAT: a one-tap rating for a support chat, inside the 24-hour window only (Follow-ups & Alerts).
+            app(FeedbackRequests::class)->afterClose($conversation, $this->membership()->id);
             $conversation->refresh();
         }
 

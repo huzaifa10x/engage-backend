@@ -9,6 +9,7 @@ use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Conversions\Jobs\RecordAdClick;
 use App\Domain\Conversions\Services\AdClicks;
+use App\Domain\Feedback\FeedbackRequests;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Jobs\RecordMessageEvidence;
 use App\Domain\Growth\Links\LinkCode;
@@ -167,8 +168,15 @@ final class MessageRecorder
             // The number's chatbot answers in its own job, after this message is in the inbox. While
             // it handles the conversation, the generic auto-reply and auto-routing stay out of its way
             // (the bot routes to a person itself when it hands off).
-            $bot = $conversation !== null && app(Chatbots::class)->wantsMessage($conversation);
-            if ($bot) {
+            // A tap on a CSAT rating (Good / OK / Poor): saved and thanked; no chatbot, auto-reply or routing.
+            $rating = FeedbackRequests::isAnswer($message);
+            if ($rating) {
+                app(FeedbackRequests::class)->answer($message);
+            }
+            $bot = ! $rating && $conversation !== null && app(Chatbots::class)->wantsMessage($conversation);
+            if ($rating) {
+                // nothing else answers a rating
+            } elseif ($bot) {
                 RunChatbot::dispatch($message->id)->afterCommit();
             } else {
                 app(AutoReply::class)->handle($message, $contact);

@@ -6,6 +6,7 @@ namespace App\Domain\Messaging\Services;
 
 use App\Domain\Automation\Scheduler;
 use App\Domain\Chatbots\Services\Chatbots;
+use App\Domain\Feedback\FeedbackRequests;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Contact;
@@ -55,7 +56,11 @@ final class ConversationTracker
 
         $isNewest = $conversation->last_message_at === null || $at->gte($conversation->last_message_at);
         // Who the chat is waiting on (Needs reply / Waiting on customer), worked out before anything else changes.
-        $updates += ReplyState::forMessage($conversation, $message, Carbon::instance($at), $isNewest);
+        // A CSAT rating does not reopen the closed chat or ask the team for a reply.
+        $rating = FeedbackRequests::isAnswer($message);
+        if (! $rating) {
+            $updates += ReplyState::forMessage($conversation, $message, Carbon::instance($at), $isNewest);
+        }
         if ($isNewest && $message->type !== 'reaction') {
             $updates += [
                 'last_message_at' => $at,
@@ -69,10 +74,10 @@ final class ConversationTracker
                 $updates['last_inbound_at'] = $at;
                 $updates['window_expires_at'] = Carbon::instance($at)->addHours((int) config('engage.messaging.window_hours', 24));
             }
-            $updates['unread_count'] = $conversation->unread_count + 1;
+            $updates['unread_count'] = $conversation->unread_count + ($rating ? 0 : 1);
             // The customer wrote: pending automations that stop on a reply (nudges, reminders) are cancelled.
             app(Scheduler::class)->cancelForConversation((string) $conversation->id, 'customer_replied');
-            if ($conversation->status === ConversationStatus::Closed) {
+            if ($conversation->status === ConversationStatus::Closed && ! $rating) {
                 $updates += ['status' => ConversationStatus::Open, 'closed_at' => null];
             }
         }
