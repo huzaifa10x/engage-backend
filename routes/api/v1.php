@@ -26,6 +26,7 @@ use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
 use App\Http\Controllers\Api\V1\Growth\MetaAdController;
 use App\Http\Controllers\Api\V1\Growth\SalesController;
 use App\Http\Controllers\Api\V1\Growth\SiteController;
+use App\Http\Controllers\Api\V1\Growth\WaLinkController;
 use App\Http\Controllers\Api\V1\ImpersonationController;
 use App\Http\Controllers\Api\V1\IntegrationController;
 use App\Http\Controllers\Api\V1\InvitationController;
@@ -285,6 +286,13 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::get('phone-numbers/{phoneNumber}', [PhoneNumberController::class, 'show'])->name('phone-numbers.show');
     Route::get('phone-numbers/{phoneNumber}/quality', [PhoneNumberController::class, 'quality'])
         ->middleware('can:'.Permission::ChannelsView->value)->name('phone-numbers.quality');
+    // Channels → links and QR codes, website buttons (batch 5, item 2).
+    Route::get('wa-links', [WaLinkController::class, 'index'])->middleware('can:'.Permission::ChannelsView->value)->name('wa-links.index');
+    Route::middleware('can:'.Permission::ChannelsManage->value)->group(function () {
+        Route::post('wa-links', [WaLinkController::class, 'store'])->middleware('throttle:60,1')->name('wa-links.store');
+        Route::patch('wa-links/{waLink}', [WaLinkController::class, 'update'])->name('wa-links.update');
+        Route::delete('wa-links/{waLink}', [WaLinkController::class, 'destroy'])->name('wa-links.destroy');
+    });
     Route::get('phone-numbers/{phoneNumber}/profile-checklist', [PhoneNumberController::class, 'profileChecklist'])
         ->middleware(['can:'.Permission::ChannelsView->value, 'throttle:30,1,wa-profile-checklist'])->name('phone-numbers.profile-checklist');
 

@@ -27,6 +27,7 @@ use Illuminate\Validation\ValidationException;
  * @property ?string $bsuid
  * @property ?string $parent_bsuid
  * @property ?string $username
+ * @property ?string $source_detail the link that brought the contact in (source wa_link)
  * @property ?string $profile_name
  * @property ?string $name
  * @property ?string $email

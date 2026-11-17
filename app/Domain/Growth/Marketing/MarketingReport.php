@@ -264,9 +264,15 @@ final class MarketingReport
         $ids = array_values(array_filter(array_map(fn (string $k) => str_starts_with($k, 'meta:') ? substr($k, 5) : null, $keys)));
         $ads = $ids === [] ? collect() : DB::table('growth_meta_ads')->where('tenant_id', $this->tenant->id)->whereIn('id', $ids)->get(['id', 'headline', 'source_type'])->keyBy('id');
 
+        $linkIds = array_values(array_filter(array_map(fn (string $k) => str_starts_with($k, 'link:') ? substr($k, 5) : null, $keys)));
+        $links = $linkIds === [] ? collect() : DB::table('wa_links')->where('tenant_id', $this->tenant->id)->whereIn('id', $linkIds)->get(['id', 'name', 'kind'])->keyBy('id');
+
         $out = [];
         foreach ($keys as $k) {
-            if (str_starts_with($k, 'meta:')) {
+            if (str_starts_with($k, 'link:')) {
+                $link = $links[substr($k, 5)] ?? null;
+                $out[$k] = $link !== null ? $link->name.' ('.($link->kind === 'website_button' ? 'website button' : 'link or QR code').')' : 'Deleted link';
+            } elseif (str_starts_with($k, 'meta:')) {
                 $ad = $ads[substr($k, 5)] ?? null;
                 $kind = ($ad->source_type ?? null) === 'post' ? 'Meta boosted post' : 'Meta ad';
                 $out[$k] = $ad !== null && $ad->headline ? "\u{201C}{$ad->headline}\u{201D} ({$kind})" : "Untitled ad ({$kind})";

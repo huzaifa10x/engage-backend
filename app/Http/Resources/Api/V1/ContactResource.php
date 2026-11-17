@@ -32,6 +32,8 @@ final class ContactResource extends JsonResource
             'attributes' => (object) ($this->custom_fields ?? []),
             'tags' => $this->tags,
             'source' => $this->source,
+            // The link, QR code or website button that brought the contact in ("Shop window").
+            'source_detail' => $this->source_detail,
             // Set for contacts that came from a WhatsApp Business app sync: the number they were synced from.
             'synced_from' => $this->whenLoaded('syncedFrom', fn () => $this->syncedFrom === null ? null : [
                 'id' => $this->syncedFrom->id,

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Chatbots\Engine;
 
 use App\Domain\Growth\GrowthSettings;
+use App\Domain\Growth\Links\LinkCode;
 use App\Domain\Growth\Website\Reference;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\TenantContext;
@@ -47,7 +48,8 @@ final class BotInput
     {
         $tenant = app(TenantContext::class)->tenantOrNull();
         if ($tenant === null || $message->body === null || ! GrowthSettings::for($tenant)->stripReferenceBeforeFlows) {
-            return $message->body;
+            // A link's code ("… (Ref: EX-…)") is always left out: keyword triggers read the customer's words.
+            return LinkCode::clean($message->body);
         }
 
         return Reference::clean($message->body);

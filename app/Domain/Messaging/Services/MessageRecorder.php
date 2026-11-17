@@ -11,6 +11,8 @@ use App\Domain\Conversions\Jobs\RecordAdClick;
 use App\Domain\Conversions\Services\AdClicks;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Jobs\RecordMessageEvidence;
+use App\Domain\Growth\Links\LinkCode;
+use App\Domain\Growth\Links\RecordLinkChat;
 use App\Domain\Growth\Website\Reference;
 use App\Domain\Growth\Website\WebsiteMatcher;
 use App\Domain\Messaging\Enums\MessageOrigin;
@@ -56,6 +58,15 @@ final class MessageRecorder
             }
         } catch (\Throwable $e) {
             Log::warning('Ad click was not queued.', ['message_id' => $message->id, 'error' => $e->getMessage()]);
+        }
+
+        // A chat from one of the workspace's wa.me links, QR codes or website buttons ("… (Ref: EX-…)").
+        try {
+            if (LinkCode::extract($message->body) !== null) {
+                RecordLinkChat::dispatch($message->id)->afterCommit();
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Link chat was not queued.', ['message_id' => $message->id, 'error' => $e->getMessage()]);
         }
 
         try {

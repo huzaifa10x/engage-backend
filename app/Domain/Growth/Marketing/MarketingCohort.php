@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\DB;
  *  - number_id: the number that first message came in on;
  *  - bucket: exactly one source bucket from the original source (§4);
  *  - campaign_key: "meta:<growth_meta_ads.id>" for a Click-to-WhatsApp ad, "utm:<campaign>" for a
- *    website lead, "none" otherwise ("Campaign not available");
+ *    website lead, "link:<wa_links.id>" for a WhatsApp link / QR code / website button, "none" otherwise ("Campaign not available");
  *  - contacted / qualified: reached a mapped stage within 30 days of first_at (stage history).
  *    Qualified stages also count as Contacted ("Contacted or later").
  */
@@ -34,12 +34,13 @@ final class MarketingCohort
         'organic' => 'Organic',
         'direct' => 'Direct',
         'other_campaign' => 'Other campaign',
+        'wa_link' => 'WhatsApp link or QR code',
         'website_unavailable' => 'Website · details unavailable',
         'unattributed' => 'Unattributed',
     ];
 
     /** Buckets with confirmed evidence (reference matched, Meta ad, multiple sources). */
-    public const CONFIRMED = ['meta_instagram', 'meta_facebook', 'meta_unsplit', 'google_ads', 'google_organic', 'organic', 'direct', 'other_campaign'];
+    public const CONFIRMED = ['meta_instagram', 'meta_facebook', 'meta_unsplit', 'google_ads', 'google_organic', 'organic', 'direct', 'other_campaign', 'wa_link'];
 
     /**
      * @param  array{contacted: list<string>, qualified: list<string>}  $mapping
@@ -68,12 +69,15 @@ final class MarketingCohort
                            WHEN c.acquisition_original->>'source' = 'meta_ad' THEN
                                CASE c.acquisition_original->>'platform' WHEN 'instagram' THEN 'meta_instagram' WHEN 'facebook' THEN 'meta_facebook' ELSE 'meta_unsplit' END
                            WHEN c.acquisition_original->>'type' = 'website_unregistered' THEN 'website_unavailable'
+                           WHEN c.acquisition_original->>'source' = 'wa_link' THEN 'wa_link'
                            WHEN c.acquisition_original->>'source' IN ('google_ads', 'google_organic', 'organic', 'direct') THEN c.acquisition_original->>'source'
                            WHEN c.acquisition_original->>'source' IS NOT NULL THEN 'other_campaign'
                            ELSE 'unattributed'
                        END AS bucket,
                        CASE
                            WHEN c.acquisition_original->>'source' = 'meta_ad' AND ma.id IS NOT NULL THEN 'meta:' || ma.id::text
+                           WHEN c.acquisition_original->>'source' = 'wa_link' AND coalesce(c.acquisition_original->>'link_id', '') <> ''
+                               THEN 'link:' || (c.acquisition_original->>'link_id')
                            WHEN c.acquisition_original->>'source' <> 'meta_ad' AND coalesce(c.acquisition_original->>'campaign', '') <> ''
                                THEN 'utm:' || left(c.acquisition_original->>'campaign', 100)
                            ELSE 'none'

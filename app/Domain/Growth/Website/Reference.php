@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Growth\Website;
 
+use App\Domain\Growth\Links\LinkCode;
+
 /**
  * The website reference code (Technical Specification v1.2 §1): "XG-" + 10 characters from an alphabet
  * without I, L, O, 0 and 1, made by the visitor's browser at the moment of the tap and written at the end
@@ -45,12 +47,12 @@ final class Reference
         return ['token' => $token, 'clean' => $clean];
     }
 
-    /** The message as people and chatbots read it: without a valid terminal code. */
+    /** The message as people and chatbots read it: without a valid terminal website code, or a link's EX- code. */
     public static function clean(?string $text): ?string
     {
         $found = self::extract($text);
 
-        return $found === null ? $text : $found['clean'];
+        return LinkCode::clean($found === null ? $text : $found['clean']);
     }
 
     public static function valid(string $token): bool

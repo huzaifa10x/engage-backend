@@ -14,6 +14,7 @@ use App\Domain\Conversions\Models\MetaDataset;
 use App\Domain\Conversions\Services\ConversionTriggers;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Developer\Services\EmitMessageWebhooks;
+use App\Domain\Growth\Links\WaLink;
 use App\Domain\Growth\Models\GrowthSite;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Identity\Models\User;
@@ -113,6 +114,7 @@ class AppServiceProvider extends ServiceProvider
             'inbox_team' => InboxTeam::class,
             'growth_site' => GrowthSite::class,
             'meta_dataset' => MetaDataset::class,
+            'wa_link' => WaLink::class,
         ]);
 
         // Strict mode minus preventAccessingMissingAttributes: freshly created models only hold the
