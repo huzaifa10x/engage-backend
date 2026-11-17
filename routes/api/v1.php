@@ -46,6 +46,7 @@ use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
 use App\Http\Controllers\Api\V1\Templates\TemplateController;
 use App\Http\Controllers\Api\V1\TenantController;
+use App\Http\Controllers\Api\V1\TimelineController;
 use App\Http\Controllers\Api\V1\TrustedDeviceController;
 use App\Http\Controllers\Api\V1\TwoFactorController;
 use App\Http\Controllers\Api\V1\WhatsApp\AccountController as WhatsAppAccountController;
@@ -515,6 +516,12 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::post('contacts', [ContactController::class, 'store'])->middleware('can:'.Permission::ContactsCreate->value)->name('contacts.store');
     Route::patch('contacts/{contact}', [ContactController::class, 'update'])->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.update');
     Route::get('contacts/{contact}/consent-history', [ContactController::class, 'consentHistory'])->middleware('can:'.Permission::ContactsView->value)->name('contacts.consent-history');
+    // Contact timeline and enquiries (batch 6a, item 0).
+    Route::get('contacts/{contact}/timeline', [TimelineController::class, 'timeline'])->middleware('can:'.Permission::ContactsView->value)->name('contacts.timeline');
+    Route::get('contacts/{contact}/enquiries', [TimelineController::class, 'enquiries'])->middleware('can:'.Permission::ContactsView->value)->name('contacts.enquiries');
+    Route::post('contacts/{contact}/enquiries', [TimelineController::class, 'startEnquiry'])->middleware(['can:'.Permission::ContactsUpdate->value, 'throttle:30,1'])->name('contacts.enquiries.start');
+    Route::get('tenant/enquiry-settings', [TimelineController::class, 'settings'])->middleware('can:'.Permission::SettingsView->value)->name('tenant.enquiry-settings');
+    Route::put('tenant/enquiry-settings', [TimelineController::class, 'updateSettings'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.enquiry-settings.update');
     Route::post('contacts/{contact}/consent', [ContactController::class, 'consent'])->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.consent');
     Route::delete('contacts/{contact}', [ContactController::class, 'destroy'])->middleware('can:'.Permission::ContactsDelete->value)->name('contacts.destroy');
 

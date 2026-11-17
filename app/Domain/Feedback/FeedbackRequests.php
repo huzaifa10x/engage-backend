@@ -12,6 +12,7 @@ use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\Timeline\Timeline;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Database\QueryException;
@@ -131,6 +132,7 @@ final class FeedbackRequests
         $updated = FeedbackRequest::query()->whereKey($id)->where('contact_id', $message->contact_id)->where('kind', 'csat')->where('status', 'sent')
             ->update(['status' => 'answered', 'rating' => $rating, 'answered_at' => now()]);
         if ($updated === 1) {
+            Timeline::record((string) $message->contact_id, 'feedback.answered', Timeline::CUSTOMER, 'feedback_request', $id, ['rating' => FeedbackRequest::RATINGS[$rating]]);
             try {
                 $conversation = Conversation::query()->find($message->conversation_id);
                 if ($conversation !== null) {

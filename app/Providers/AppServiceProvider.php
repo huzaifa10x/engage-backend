@@ -31,6 +31,7 @@ use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\Models\Invitation;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\Timeline\TimelineHooks;
 use App\Domain\WhatsApp\Events\MetaAccessRejected;
 use App\Domain\WhatsApp\Jobs\VerifyMetaAccess;
 use App\Domain\WhatsApp\Models\EmbeddedSignupAttempt;
@@ -118,6 +119,9 @@ class AppServiceProvider extends ServiceProvider
             'wa_link' => WaLink::class,
             'form' => Form::class,
         ]);
+
+        // The contact timeline is written from the records that already exist (batch 6a).
+        TimelineHooks::register();
 
         // Strict mode minus preventAccessingMissingAttributes: freshly created models only hold the
         // columns they were inserted with, so nullable columns would throw on read after create().

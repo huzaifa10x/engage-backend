@@ -33,6 +33,7 @@ use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\Timeline\Timeline;
 use App\Infrastructure\Secrets\SecretStore;
 use App\Support\Api\ErrorCode;
 use Illuminate\Support\Carbon;
@@ -325,6 +326,11 @@ final class LiveRuntime extends BotRuntime
             'message_id' => $messageId, 'session_id' => $this->session->id,
             'answers' => json_encode($answers, JSON_UNESCAPED_UNICODE), 'saved' => json_encode($saved, JSON_UNESCAPED_UNICODE),
             'consent' => $consent, 'created_at' => now(),
+        ]);
+        // On the timeline as what the customer said (their answers, as they read them).
+        Timeline::record($this->contactModel->id, 'form.submitted', Timeline::CUSTOMER, 'form_version', $version->id, [
+            'form' => Form::query()->whereKey($version->form_id)->value('name'), 'version' => $version->version,
+            'answers' => array_map(fn (array $a) => ['label' => $a['label'], 'value' => $a['value']], $saved), 'consent' => $consent,
         ]);
     }
 
