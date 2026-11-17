@@ -74,6 +74,12 @@ final class TemplateSync
         $template ??= new MessageTemplate(['waba_account_id' => $waba->id, 'name' => $name, 'language' => $language]);
 
         $quality = $node['quality_score'] ?? null;
+        // An approved template Meta moved to another category (the webhook was missed): keep what it was.
+        $category = isset($node['category']) ? strtoupper((string) $node['category']) : null;
+        if ($template->exists && $category !== null && $template->category !== null && strtoupper((string) $template->category) !== $category
+            && $template->status === TemplateStatus::APPROVED) {
+            $template->forceFill(['previous_category' => strtoupper((string) $template->category), 'category_changed_at' => now()]);
+        }
 
         $template->fill(array_filter([
             'meta_template_id' => isset($node['id']) ? (string) $node['id'] : null,

@@ -69,6 +69,24 @@ final class PhoneNumbers
         return self::international($digits) !== null;
     }
 
+    /** The country (ISO 3166 alpha-2) of a valid number in WhatsApp digits, or null when it is not valid. */
+    public static function region(string $digits): ?string
+    {
+        if (strlen($digits) < 7 || strlen($digits) > 15 || str_starts_with($digits, '0')) {
+            return null;
+        }
+        for ($len = 1; $len <= 3; $len++) {
+            $code = (int) substr($digits, 0, $len);
+            foreach (self::byCode()[$code] ?? [] as $region) {
+                if (self::matches(substr($digits, $len), $region)) {
+                    return $region;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static function international(string $digits): ?string
     {
         if (strlen($digits) < 7 || strlen($digits) > 15 || str_starts_with($digits, '0')) {

@@ -65,7 +65,7 @@ class MessageTemplate extends Model
 
     protected function casts(): array
     {
-        return ['components' => 'array', 'last_synced_at' => 'datetime'];
+        return ['components' => 'array', 'last_synced_at' => 'datetime', 'category_changed_at' => 'datetime'];
     }
 
     /** @return BelongsTo<WabaAccount, $this> */

@@ -22,6 +22,7 @@ use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
+use App\Domain\Pricing\CostEstimator;
 use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
@@ -157,6 +158,11 @@ final class ManageCampaigns
         $audience = ['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'name' => $segment?->name, 'tag' => $campaign->audience_tag,
             'filter' => $campaign->getAttribute('audience_filter')];
 
+        // Meta may have re-categorised the template since the campaign was drafted: price and filter by what it is now.
+        if ($template->category !== null && strtoupper((string) $template->category) !== strtoupper((string) $campaign->template_category)) {
+            $campaign->forceFill(['template_category' => strtoupper((string) $template->category)]);
+        }
+
         $counts = $this->counts($audience, $campaign->template_category);
         if ($counts['eligible'] === 0) {
             throw CampaignException::cannot('Nobody in this audience can be messaged: '.($counts['matched'] === 0 ? 'no contact matches the segment.'
@@ -180,6 +186,8 @@ final class ManageCampaigns
             'scheduled_at' => $scheduled ? $at : null,
             'started_at' => $scheduled ? null : now(),
             'failure_reason' => null,
+            // What Meta will charge, as shown at launch, with the date of the rates used.
+            'cost_estimate' => app(CostEstimator::class)->estimate($this->eligibleQuery($audience, $campaign->template_category), $campaign->template_category, $number->id),
         ])->save();
 
         $this->audit->record($scheduled ? 'campaign.scheduled' : 'campaign.launched', $campaign, meta: ['matched' => $counts['matched'], 'eligible' => $counts['eligible']] + $counts['excluded']);

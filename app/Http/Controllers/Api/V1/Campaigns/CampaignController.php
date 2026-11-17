@@ -17,10 +17,12 @@ use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Messaging\Services\SendThroughput;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
+use App\Domain\Pricing\CostEstimator;
 use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
+use App\Http\Resources\Api\V1\TemplateResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -82,7 +84,8 @@ final class CampaignController extends Controller
         ]);
         $filter = app(SegmentQuery::class)->filter($data['filter'] ?? null);
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
-        $category = isset($data['template_id']) ? MessageTemplate::query()->find($data['template_id'])?->category : null;
+        $template = isset($data['template_id']) ? MessageTemplate::query()->find($data['template_id']) : null;
+        $category = $template?->category;
         $number = isset($data['phone_number_id']) ? PhoneNumber::query()->find($data['phone_number_id']) : null;
         $tenant = $context->tenant();
         $settings = ComplianceSettings::for($tenant);
@@ -110,6 +113,12 @@ final class CampaignController extends Controller
             'frequency_cap' => $marketing ? $settings->marketingFrequencyCap : 0,
             'quiet_until' => $marketing ? $settings->quietUntil(now(), $tenant->timezone ?: 'UTC')?->toIso8601String() : null,
             'quiet_hours' => $settings->quietHoursEnabled ? ['start' => $settings->quietHoursStart, 'end' => $settings->quietHoursEnd, 'timezone' => $tenant->timezone ?: 'UTC'] : null,
+            // What Meta will charge (USD, paid by the client to Meta), for the contacts that would receive it.
+            'cost_estimate' => $template !== null
+                ? app(CostEstimator::class)->estimate($this->campaigns->eligibleQuery(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null, 'filter' => $filter], $category), $category, $number?->id)
+                : null,
+            // Meta re-categorised the template recently: the price changed with it.
+            'category_change' => TemplateResource::categoryChange($template),
         ]]);
     }
 
@@ -305,6 +314,7 @@ final class CampaignController extends Controller
             'completed_at' => $c->completed_at?->toIso8601String(),
             'failure_reason' => $c->failure_reason,
             'stats' => $this->campaigns->stats($c),
+            'cost_estimate' => $c->cost_estimate,
             'created_at' => $c->created_at?->toIso8601String(),
         ];
     }

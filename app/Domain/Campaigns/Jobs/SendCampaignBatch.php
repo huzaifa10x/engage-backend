@@ -18,6 +18,7 @@ use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Support\Api\ErrorCode;
 use App\Support\Exceptions\DomainException;
+use App\Support\Phone\PhoneNumbers;
 use App\Support\Queue\QueueName;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -121,6 +122,8 @@ final class SendCampaignBatch implements ShouldQueue
             }
             // Consent can change between preparation and sending (a STOP reply): check again.
             $blocker = $contact === null || $contact->trashed() ? 'Contact was deleted' : $contact->campaignBlocker($campaign->template_category);
+            // A number that is not valid in its country never reaches Meta (and is left out of the cost estimate).
+            $blocker ??= $contact->wa_id !== null && ! PhoneNumbers::valid((string) $contact->wa_id) ? 'Not a valid WhatsApp number' : null;
             if ($blocker !== null || $contact === null) {
                 $recipient->forceFill(['status' => 'skipped', 'reason' => $blocker])->save();
 
