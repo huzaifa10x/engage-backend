@@ -7,6 +7,7 @@ namespace App\Infrastructure\Meta\Fake;
 use App\Domain\Messaging\Jobs\SimulateFakeDelivery;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
@@ -73,6 +74,17 @@ final class FakeMeta
         }
         if ($request->method() === 'GET' && str_contains((string) ($query['fields'] ?? ''), 'business_verification_status')) {
             return Http::response(['business_verification_status' => 'VERIFIED']);
+        }
+        // Welcome message and ice breakers: accepted, and read back as last set.
+        if (str_ends_with($path, '/conversational_automation') && $request->method() === 'POST') {
+            Cache::put('fake-meta:conversational-automation:'.basename(dirname('/'.$path)), $request->data(), 3600);
+
+            return Http::response(['success' => true]);
+        }
+        if ($request->method() === 'GET' && ($query['fields'] ?? null) === 'conversational_automation') {
+            $set = (array) Cache::get('fake-meta:conversational-automation:'.basename($path), []);
+
+            return Http::response(['id' => basename($path), 'conversational_automation' => ['enable_welcome_message' => (bool) ($set['enable_welcome_message'] ?? false), 'prompts' => $set['prompts'] ?? []]]);
         }
         if (str_ends_with($path, '/onboard_partners_to_mm_lite')) {
             return Http::response(['request_id' => 'local-mm-request']);

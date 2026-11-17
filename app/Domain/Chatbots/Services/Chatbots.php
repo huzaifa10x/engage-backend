@@ -139,11 +139,19 @@ final class Chatbots
             return;
         }
 
-        $picked = $this->pick($conversation, $contact, $input, $message);
+        // Meta's welcome message: someone opened the chat for the first time. The number's welcome flow answers.
+        if ($message->type === 'request_welcome') {
+            $picked = $this->welcomePick($conversation, $contact);
+            if ($picked === null) {
+                return;
+            }
+        } else {
+            $picked = $this->pick($conversation, $contact, $input, $message);
+        }
 
         // Back soon after leaving: continue where they left off (their message may be the answer),
         // unless the message itself starts another flow with a specific trigger.
-        if (! in_array($picked[2] ?? 'default', ['specific', 'after_hours', 'auto_reply'], true) && $this->resumeAbandoned($conversation, $contact, $input, $at)) {
+        if (! in_array($picked[2] ?? 'default', ['specific', 'after_hours', 'auto_reply', 'welcome'], true) && $this->resumeAbandoned($conversation, $contact, $input, $at)) {
             return;
         }
         if ($picked === null) {
@@ -203,6 +211,16 @@ final class Chatbots
             }
         }
         $firstTime = $isFirstMessage;
+
+        // An ice breaker tapped in a new chat: its words start the flow chosen for it (Bot settings › Welcome & ice breakers).
+        $iceBreaker = WelcomeAutomation::iceBreakerFlow($conversation->phone_number_id, $input->text);
+        if ($iceBreaker !== null) {
+            foreach ($candidates as [$flow, $version, $config]) {
+                if ($flow->id === $iceBreaker && $this->mayEnter($flow, $config, $contact)) {
+                    return [$flow, $version, 'specific'];
+                }
+            }
+        }
 
         // Outside business hours, an after-hours flow answers first — once per closed period; after
         // that the night's other messages wait for the team (no other flow, no auto-reply).
@@ -453,6 +471,32 @@ final class Chatbots
     }
 
     /** The number's default flow ("any message"), if one is live. */
+    /**
+     * The welcome flow of the conversation's number, when the welcome message is on.
+     *
+     * @return ?array{0: ChatbotFlow, 1: array{0: FlowGraph, 1: array<string, mixed>}, 2: string}
+     */
+    private function welcomePick(Conversation $conversation, Contact $contact): ?array
+    {
+        $number = PhoneNumber::query()->find($conversation->phone_number_id);
+        $settings = $number !== null ? WelcomeAutomation::settings($number) : null;
+        if ($settings === null || ! $settings['welcome_enabled'] || $settings['welcome_flow_id'] === null) {
+            return null;
+        }
+        foreach (ChatbotFlow::liveOn($conversation->phone_number_id) as $flow) {
+            if ($flow->id !== $settings['welcome_flow_id']) {
+                continue;
+            }
+            $version = $this->version($flow->id, (int) $flow->published_version);
+            $start = $version !== null ? $version[0]->start() : null;
+            if ($version !== null && $start !== null && $this->mayEnter($flow, $start['config'], $contact)) {
+                return [$flow, $version, 'welcome'];
+            }
+        }
+
+        return null;
+    }
+
     private function defaultFlow(string $phoneNumberId): ?ChatbotFlow
     {
         foreach (ChatbotFlow::liveOn($phoneNumberId) as $flow) {

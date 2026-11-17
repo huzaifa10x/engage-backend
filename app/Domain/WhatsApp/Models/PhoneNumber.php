@@ -25,6 +25,7 @@ use Illuminate\Support\Carbon;
  * @property string $waba_account_id
  * @property string $phone_number_id
  * @property ?string $display_phone_number
+ * @property ?array{welcome_enabled?: bool, welcome_flow_id?: ?string, ice_breakers?: list<array{text: string, flow_id: ?string}>, synced_at?: ?string} $conversational_automation
  * @property ?string $verified_name
  * @property ?string $quality_rating
  * @property ?string $messaging_limit_tier
@@ -59,6 +60,7 @@ class PhoneNumber extends Model
             'is_official_business_account' => 'boolean',
             'is_on_biz_app' => 'boolean',
             'capabilities' => 'array',
+            'conversational_automation' => 'array',
             'max_mps' => 'integer',
             'app_sync_started_at' => 'datetime',
             'disconnected_at' => 'datetime',

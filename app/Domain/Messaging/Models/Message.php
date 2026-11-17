@@ -137,6 +137,7 @@ class Message extends Model
             'contacts' => '👤 Contact',
             'template' => '📋 '.($this->template['name'] ?? 'Template'),
             'reaction' => 'Reacted '.($this->content['emoji'] ?? ''),
+            'request_welcome' => '👋 Opened the chat',
             'unsupported' => 'Unsupported message',
             default => ucfirst($this->type),
         };

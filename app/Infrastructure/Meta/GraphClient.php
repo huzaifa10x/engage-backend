@@ -583,6 +583,33 @@ final class GraphClient
         return is_array($first) ? $first : [];
     }
 
+    /**
+     * POST /<PHONE_NUMBER_ID>/conversational_automation: the welcome message on or off and the ice
+     * breakers (Meta: up to 4, 80 characters each, no emoji).
+     *
+     * @param  list<string>  $prompts
+     */
+    public function setConversationalAutomation(string $phoneNumberId, bool $welcome, array $prompts, string $token): bool
+    {
+        return (bool) ($this->send('POST', "{$phoneNumberId}/conversational_automation", $token,
+            ['enable_welcome_message' => $welcome, 'prompts' => $prompts])['success'] ?? false);
+    }
+
+    /**
+     * GET /<PHONE_NUMBER_ID>?fields=conversational_automation
+     *
+     * @return array{enable_welcome_message: ?bool, prompts: list<string>}
+     */
+    public function getConversationalAutomation(string $phoneNumberId, string $token): array
+    {
+        $c = (array) ($this->send('GET', $phoneNumberId, $token, ['fields' => 'conversational_automation'])['conversational_automation'] ?? []);
+
+        return [
+            'enable_welcome_message' => isset($c['enable_welcome_message']) ? (bool) $c['enable_welcome_message'] : null,
+            'prompts' => array_values(array_map('strval', (array) ($c['prompts'] ?? []))),
+        ];
+    }
+
     /** GET /<WABA_ID>?fields=business_verification_status — VERIFIED, UNVERIFIED, PENDING or REJECTED (null when Meta does not say). */
     public function getBusinessVerification(string $wabaId, string $token): ?string
     {

@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\V1\Billing\BillingController;
 use App\Http\Controllers\Api\V1\Campaigns\CampaignController;
 use App\Http\Controllers\Api\V1\ChatbotController;
 use App\Http\Controllers\Api\V1\ChatbotRunsController;
+use App\Http\Controllers\Api\V1\ChatbotWelcomeController;
 use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Conversions\ConversionsController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
@@ -193,6 +194,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::get('snippets', [ChatbotController::class, 'snippets'])->name('snippets');
         Route::get('runs', [ChatbotRunsController::class, 'index'])->name('runs');
         Route::get('start-rules', [ChatbotController::class, 'startRules'])->name('start-rules');
+        Route::get('welcome', [ChatbotWelcomeController::class, 'index'])->name('welcome');
         Route::post('start-rules/test', [ChatbotController::class, 'testStartRules'])->middleware('throttle:60,1')->name('start-rules.test');
         Route::get('runs/{session}', [ChatbotRunsController::class, 'show'])->whereUuid('session')->name('runs.show');
         Route::get('{flow}', [ChatbotController::class, 'show'])->whereUuid('flow')->name('show');
@@ -225,6 +227,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
     Route::middleware('can:'.Permission::ChatbotsPublish->value)->prefix('chatbots')->name('chatbots.')->group(function () {
         Route::post('{flow}/publish', [ChatbotController::class, 'publish'])->whereUuid('flow')->name('publish');
+        Route::put('welcome/{phoneNumber}', [ChatbotWelcomeController::class, 'update'])->middleware('throttle:30,1')->name('welcome.update');
         Route::post('{flow}/activate', [ChatbotController::class, 'activate'])->whereUuid('flow')->name('activate');
         Route::delete('start-rules/{flow}', [ChatbotController::class, 'removeStartRule'])->whereUuid('flow')->name('start-rules.remove');
         Route::post('{flow}/versions/{version}/restore', [ChatbotController::class, 'restore'])->whereUuid('flow')->whereNumber('version')->name('versions.restore');
