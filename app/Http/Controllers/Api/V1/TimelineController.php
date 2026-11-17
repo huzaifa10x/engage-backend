@@ -77,6 +77,7 @@ final class TimelineController extends Controller
                 'started_at' => $e->started_at->toIso8601String(),
                 'started_by' => $e->started_by,
                 'start_reason' => $e->start_reason,
+                'imported' => $e->isImported(),
                 'source' => $e->source,
                 'source_label' => Enquiries::label(['source' => $e->source, 'detail' => (array) $e->source_detail]),
                 'source_confidence' => $e->source_confidence,

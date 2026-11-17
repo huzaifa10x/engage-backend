@@ -30,6 +30,67 @@ final class Timeline
 
     public const SYSTEM = 'system';
 
+    public const BULK_UPDATE = 'bulk update';
+
+    public const IMPORT = 'import';
+
+    public const TAG_DELETED = 'tag deleted';
+
+    /** @var ?array{how: string, by: ?string} set while a bulk change runs (see bulk()) */
+    private static ?array $bulk = null;
+
+    /** @var ?array{membership: ?string, bulk: ?array{how: string, by: ?string}, at: string} set while a captured event is applied */
+    private static ?array $replaying = null;
+
+    /**
+     * Who and when, at the moment something happens: kept with a captured event so it is recorded
+     * in the background exactly as if it had been recorded then.
+     *
+     * @return array{membership: ?string, bulk: ?array{how: string, by: ?string}, at: string}
+     */
+    public static function moment(): array
+    {
+        return ['membership' => app(TenantContext::class)->membership()?->id, 'bulk' => self::$bulk, 'at' => now()->utc()->format('Y-m-d\TH:i:s.uP')];
+    }
+
+    /**
+     * Records with a captured moment (see moment()).
+     *
+     * @param  array{membership: ?string, bulk: ?array{how: string, by: ?string}, at: string}  $moment
+     */
+    public static function replay(array $moment, callable $fn): void
+    {
+        $outer = self::$replaying;
+        self::$replaying = $moment;
+        try {
+            $fn();
+        } finally {
+            self::$replaying = $outer;
+        }
+    }
+
+    /**
+     * Runs a change made to many contacts at once (table selection, CSV import, deleting a tag).
+     * Each contact still gets its own event, marked with how and by whom, so its history reads
+     * "Tag “VIP” added in a bulk update by Sara".
+     *
+     * @template T
+     *
+     * @param  callable(): T  $fn
+     * @return T
+     */
+    public static function bulk(string $how, callable $fn): mixed
+    {
+        $outer = self::$bulk;
+        $membershipId = app(TenantContext::class)->membership()?->id;
+        self::$bulk = ['how' => $how, 'by' => self::name($membershipId)];
+        try {
+            return $fn();
+        } finally {
+            self::$bulk = $outer;
+        }
+    }
+
     /**
      * @param  array<string, mixed>  $data  a short summary (never message text)
      * @param  'customer'|'agent'|'system'|null  $actor  null: an agent when a teammate is signed in, otherwise the system
@@ -51,9 +112,15 @@ final class Timeline
             if ($tenantId === null) {
                 return;
             }
-            $membershipId ??= $actor === null || $actor === self::AGENT ? $context->membership()?->id : null;
+            $current = self::$replaying !== null ? self::$replaying['membership'] : $context->membership()?->id;
+            $membershipId ??= $actor === null || $actor === self::AGENT ? $current : null;
+            $at ??= self::$replaying['at'] ?? null;
             $actor ??= $membershipId !== null ? self::AGENT : self::SYSTEM;
             $enquiryId ??= DB::table('contacts')->where('id', $contactId)->value('current_enquiry_id');
+            $bulk = self::$replaying !== null ? self::$replaying['bulk'] : self::$bulk;
+            if ($bulk !== null) {
+                $data += array_filter(['bulk' => $bulk['how'], 'bulk_by' => $bulk['by']]);
+            }
 
             DB::transaction(fn () => DB::table('timeline_events')->insert([
                 'id' => (string) Str::uuid7(),

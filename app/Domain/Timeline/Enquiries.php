@@ -51,7 +51,8 @@ final class Enquiries
         $current = $contact->getAttribute('current_enquiry_id') !== null ? Enquiry::query()->find($contact->getAttribute('current_enquiry_id')) : null;
 
         $reason = null;
-        if ($current === null) {
+        if ($current === null || $current->isImported()) {
+            // The first live message after imported history starts a live enquiry.
             $reason = 'first_message';
         } elseif ($source['click_hash'] !== null && ($current->source_detail['click_hash'] ?? null) !== $source['click_hash']) {
             $reason = 'ad_click';

@@ -13,6 +13,8 @@ use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\WhatsApp\Enums\CoexistenceStatus;
 use App\Domain\WhatsApp\Models\CoexistenceSyncJob;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Support\Queue\QueueName;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -136,7 +138,12 @@ final class CoexistenceImport
         if (DB::table('coexistence_sync_items')->where('phone_number_id', $number->id)->where('kind', 'message')->exists()) {
             return;
         }
+        $first = $history->status !== 'completed';
         $history->forceFill(['status' => 'completed', 'completed_at' => $history->completed_at ?? now()])->save();
+        if ($first) {
+            // The imported chats become "Imported" enquiries on the contacts' timelines (batch 6a, item 0).
+            Artisan::queue('engage:enquiries:backfill', ['--workspace' => $number->tenant_id])->onQueue(QueueName::Sync->value);
+        }
         if ($number->coexistence_status !== CoexistenceStatus::Synced) {
             $number->forceFill(['coexistence_status' => CoexistenceStatus::Synced])->save();
         }

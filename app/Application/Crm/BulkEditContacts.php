@@ -17,6 +17,7 @@ use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\Timeline\Timeline;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -81,53 +82,56 @@ final class BulkEditContacts
         $membershipId = $this->context->membership()?->id;
         $optedOut = [];
 
-        DB::transaction(function () use ($contacts, $add, $remove, $fieldKey, $fieldValue, $stage, $consent, $membershipId, &$updated, &$skipped, &$optedOut): void {
-            foreach ($contacts as $contact) {
-                $changed = false;
+        // A regular closure (not fn): the counts below are passed by reference.
+        Timeline::bulk(Timeline::BULK_UPDATE, function () use ($contacts, $add, $remove, $fieldKey, $fieldValue, $stage, $consent, $membershipId, &$updated, &$skipped, &$optedOut): void {
+            DB::transaction(function () use ($contacts, $add, $remove, $fieldKey, $fieldValue, $stage, $consent, $membershipId, &$updated, &$skipped, &$optedOut): void {
+                foreach ($contacts as $contact) {
+                    $changed = false;
 
-                if ($add !== [] || $remove !== []) {
-                    $tags = array_values(array_filter(array_unique(array_merge((array) $contact->tags, $add)), fn ($t) => ! in_array(mb_strtolower((string) $t), $remove, true)));
-                    if ($tags !== (array) $contact->tags) {
-                        $contact->tags = $tags;
-                    }
-                }
-                if ($fieldKey !== null) {
-                    $values = (array) ($contact->custom_fields ?? []);
-                    if ($fieldValue === null) {
-                        unset($values[$fieldKey]);
-                    } else {
-                        $values[$fieldKey] = $fieldValue;
-                    }
-                    $contact->custom_fields = $values === [] ? null : $values;
-                }
-                if ($contact->isDirty()) {
-                    $contact->save();
-                    $changed = true;
-                }
-
-                if ($stage !== null && $this->stages->move($contact, $stage['id']) !== null) {
-                    $changed = true;
-                }
-
-                if ($consent !== null) {
-                    if ($consent['state'] === 'opted_out') {
-                        if ($this->consent->optOut($contact, 'agent', $consent['note'], membershipId: $membershipId)) {
-                            $changed = true;
-                            $optedOut[] = $contact->id;
+                    if ($add !== [] || $remove !== []) {
+                        $tags = array_values(array_filter(array_unique(array_merge((array) $contact->tags, $add)), fn ($t) => ! in_array(mb_strtolower((string) $t), $remove, true)));
+                        if ($tags !== (array) $contact->tags) {
+                            $contact->tags = $tags;
                         }
-                    } elseif ($contact->consent_state === ConsentState::OptedOut) {
-                        // A customer who opted out comes back only by their own START, or one by one with care.
-                        $skipped['opted_out'] = ($skipped['opted_out'] ?? 0) + 1;
-                    } elseif ($this->consent->optIn($contact, 'agent', $consent['note'], membershipId: $membershipId)) {
+                    }
+                    if ($fieldKey !== null) {
+                        $values = (array) ($contact->custom_fields ?? []);
+                        if ($fieldValue === null) {
+                            unset($values[$fieldKey]);
+                        } else {
+                            $values[$fieldKey] = $fieldValue;
+                        }
+                        $contact->custom_fields = $values === [] ? null : $values;
+                    }
+                    if ($contact->isDirty()) {
+                        $contact->save();
                         $changed = true;
                     }
-                }
 
-                if ($changed) {
-                    $updated++;
-                    app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.updated', PublicPayload::contact($contact));
+                    if ($stage !== null && $this->stages->move($contact, $stage['id']) !== null) {
+                        $changed = true;
+                    }
+
+                    if ($consent !== null) {
+                        if ($consent['state'] === 'opted_out') {
+                            if ($this->consent->optOut($contact, 'agent', $consent['note'], membershipId: $membershipId)) {
+                                $changed = true;
+                                $optedOut[] = $contact->id;
+                            }
+                        } elseif ($contact->consent_state === ConsentState::OptedOut) {
+                            // A customer who opted out comes back only by their own START, or one by one with care.
+                            $skipped['opted_out'] = ($skipped['opted_out'] ?? 0) + 1;
+                        } elseif ($this->consent->optIn($contact, 'agent', $consent['note'], membershipId: $membershipId)) {
+                            $changed = true;
+                        }
+                    }
+
+                    if ($changed) {
+                        $updated++;
+                        app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.updated', PublicPayload::contact($contact));
+                    }
                 }
-            }
+            });
         });
 
         // Opted out: any chatbot conversation with them stops at once (as on the contact record).

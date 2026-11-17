@@ -52,7 +52,7 @@ class Message extends Model
     protected $fillable = [
         'tenant_id', 'conversation_id', 'phone_number_id', 'contact_id', 'direction', 'origin', 'type', 'status', 'wamid',
         'context_wamid', 'body', 'content', 'media_id', 'template', 'error_code', 'error_title', 'error_details', 'pricing',
-        'sent_by_membership_id', 'idempotency_key', 'meta_timestamp', 'sent_at', 'delivered_at', 'read_at', 'failed_at',
+        'sent_by_membership_id', 'idempotency_key', 'meta_timestamp', 'accepted_at', 'sent_at', 'delivered_at', 'read_at', 'failed_at',
         'edited_at', 'revoked_at', 'occurred_at', 'send_route',
     ];
 
@@ -81,6 +81,7 @@ class Message extends Model
             'pricing' => 'array',
             'meta_timestamp' => 'datetime',
             'occurred_at' => 'datetime',
+            'accepted_at' => 'datetime',
             'sent_at' => 'datetime',
             'delivered_at' => 'datetime',
             'read_at' => 'datetime',

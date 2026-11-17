@@ -18,6 +18,7 @@ use App\Domain\Messaging\Models\Contact;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\Timeline\Timeline;
 use App\Http\Controllers\Controller;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -61,8 +62,15 @@ final class CrmController extends Controller
     /** Deletes the tag and removes it from every contact. */
     public function destroyTag(ContactTag $tag): JsonResponse
     {
-        Contact::query()->withTrashed()->whereRaw('tags @> ARRAY[?]::text[]', [$tag->name])
-            ->update(['tags' => DB::raw('array_remove(tags, '.DB::getPdo()->quote($tag->name).')')]);
+        $tagged = Contact::query()->withTrashed()->whereRaw('tags @> ARRAY[?]::text[]', [$tag->name]);
+        $ids = (clone $tagged)->pluck('id')->all();
+        $tagged->update(['tags' => DB::raw('array_remove(tags, '.DB::getPdo()->quote($tag->name).')')]);
+        // One query removes it everywhere: each contact's history still shows the removal.
+        Timeline::bulk(Timeline::TAG_DELETED, function () use ($ids, $tag): void {
+            foreach ($ids as $id) {
+                Timeline::record((string) $id, 'tag.removed', null, 'contact', (string) $id, ['tag' => $tag->name]);
+            }
+        });
         $tag->delete();
         $this->audit->record('tag.deleted', null, meta: ['name' => $tag->name]);
 
@@ -82,9 +90,11 @@ final class CrmController extends Controller
         $remove = array_map(fn ($t) => trim((string) $t), (array) ($data['remove'] ?? []));
 
         $changed = 0;
-        Contact::query()->whereIn('id', $data['contact_ids'])->get()->each(function (Contact $contact) use ($add, $remove, &$changed): void {
-            $contact->tags = array_values(array_diff(array_unique(array_merge($contact->tags, $add)), $remove));
-            $changed += $contact->isDirty('tags') ? (int) $contact->save() : 0;
+        Timeline::bulk(Timeline::BULK_UPDATE, function () use ($data, $add, $remove, &$changed): void {
+            Contact::query()->whereIn('id', $data['contact_ids'])->get()->each(function (Contact $contact) use ($add, $remove, &$changed): void {
+                $contact->tags = array_values(array_diff(array_unique(array_merge($contact->tags, $add)), $remove));
+                $changed += $contact->isDirty('tags') ? (int) $contact->save() : 0;
+            });
         });
 
         return response()->json(['data' => ['updated' => $changed]]);
@@ -276,7 +286,7 @@ final class CrmController extends Controller
             'consent_source' => ['nullable', 'string', 'max:120'],
         ]);
 
-        return response()->json(['data' => $importer->import($data['file'], array_values((array) ($data['tags'] ?? [])), (bool) ($data['opted_in'] ?? false), $data['consent_source'] ?? null)]);
+        return response()->json(['data' => Timeline::bulk(Timeline::IMPORT, fn () => $importer->import($data['file'], array_values((array) ($data['tags'] ?? [])), (bool) ($data['opted_in'] ?? false), $data['consent_source'] ?? null))]);
     }
 
     /**

@@ -21,6 +21,10 @@ use Illuminate\Support\Facades\DB;
  * ones: a new enquiry after the workspace's quiet period or a new ad click. Their source comes from
  * the first message of each enquiry, with the same proof rules. Only contacts with no enquiry yet are
  * touched, so it is safe to run again. Store orders are attached to the enquiry they fall in.
+ *
+ * Enquiries that start with history imported from the WhatsApp Business app are "imported": labelled so,
+ * and left out of reply-time reports and the audit baseline. It also runs by itself for a workspace when
+ * its history import finishes.
  */
 final class BackfillEnquiries extends Command
 {
@@ -58,14 +62,18 @@ final class BackfillEnquiries extends Command
             $at = Carbon::parse($message->getAttribute('meta_timestamp') ?? $message->created_at);
             $source = $enquiries->sourceOf($message);
             $newClick = $current !== null && $source['click_hash'] !== null && ($current->source_detail['click_hash'] ?? null) !== $source['click_hash'];
-            if ($current === null || $newClick || $last->lt($at->copy()->subDays($quiet))) {
+            $imported = $message->origin === MessageOrigin::History;
+            // The first live message after imported history starts its own enquiry: live work is never labelled "Imported".
+            $live = $current !== null && ! $imported && $current->start_reason === Enquiry::IMPORTED;
+            if ($current === null || $newClick || $live || $last->lt($at->copy()->subDays($quiet))) {
+                $reason = $imported ? Enquiry::IMPORTED : ($newClick ? 'ad_click' : 'backfill');
                 $current = Enquiry::query()->create([
                     'contact_id' => $contact->id, 'number' => $made + 1, 'conversation_id' => $message->conversation_id, 'started_at' => $at,
-                    'started_by' => Timeline::CUSTOMER, 'start_reason' => $newClick ? 'ad_click' : 'backfill', 'source' => $source['source'],
+                    'started_by' => Timeline::CUSTOMER, 'start_reason' => $reason, 'source' => $source['source'],
                     'source_confidence' => $source['confidence'], 'source_detail' => $source['detail'] + array_filter(['click_hash' => $source['click_hash']]),
                     'stage_id' => null, 'last_activity_at' => $at,
                 ]);
-                Timeline::record($contact->id, 'enquiry.started', Timeline::SYSTEM, 'enquiry', $current->id, ['number' => $current->number, 'reason' => 'backfill',
+                Timeline::record($contact->id, 'enquiry.started', Timeline::SYSTEM, 'enquiry', $current->id, ['number' => $current->number, 'reason' => $reason,
                     'source' => $source['source'], 'confidence' => $source['confidence'], 'source_label' => Enquiries::label($source)], $at, $current->id);
                 $made++;
             }

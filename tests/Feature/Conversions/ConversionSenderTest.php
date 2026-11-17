@@ -149,6 +149,42 @@ final class ConversionSenderTest extends TestCase
         $this->assertSame(['Purchase', 'LeadSubmitted'], $sent, 'one Purchase for the order, one lead for the tag, nothing repeated');
     }
 
+    /**
+     * Batch 6a, item 0: the contact timeline keeps only a hash of the click ID, while the raw ctwa_clid
+     * stays on the ad click, where conversion reporting reads it. A Lead and a Purchase almost 7 days
+     * after the click are still sent to Meta with the raw ID.
+     */
+    public function test_with_the_timeline_on_the_raw_click_id_is_kept_and_lead_and_purchase_are_sent_up_to_7_days_after_the_click(): void
+    {
+        $this->travel(-6)->days();
+        $this->travel(-23)->hours();
+        $contact = $this->fromAd();
+        $this->travelBack();
+
+        $stored = $this->tenantContext()->bypass(fn () => [
+            DB::table('ad_clicks')->where('contact_id', $contact)->value('ctwa_clid'),
+            DB::table('enquiries')->where('contact_id', $contact)->value('source_detail'),
+            DB::table('timeline_events')->where('contact_id', $contact)->pluck('data')->implode(' '),
+        ]);
+        $this->assertSame(self::CLID, $stored[0], 'the raw click ID stays on the ad click record');
+        $this->assertStringNotContainsString(self::CLID, (string) $stored[1], 'the enquiry keeps a hash only');
+        $this->assertStringContainsString(substr(hash('sha256', self::CLID), 0, 32), (string) $stored[1]);
+        $this->assertStringNotContainsString(self::CLID, $stored[2], 'the timeline never holds the click ID');
+
+        $this->patchJson("/api/v1/contacts/{$contact}", ['tags' => ['booked']])->assertOk();
+        $order = $this->order($contact);
+        $this->tenantContext()->run($this->tenant, fn () => ConversionTriggers::orderChanged($order->fresh()));
+        $this->send();
+
+        $events = collect($this->eventRequests())->flatMap(fn (Request $r) => $r['data']);
+        $this->assertSame(['LeadSubmitted', 'Purchase'], $events->pluck('event_name')->sort()->values()->all());
+        $this->assertSame([self::CLID, self::CLID], $events->pluck('user_data.ctwa_clid')->all(), 'sent with the raw click ID');
+        $this->assertSame(2, $this->tenantContext()->bypass(fn () => DB::table('conversion_events')->where('status', 'sent')->count()));
+        $types = $this->tenantContext()->bypass(fn () => DB::table('timeline_events')->where('contact_id', $contact)->pluck('type')->all());
+        $this->assertContains('tag.added', $types);
+        $this->assertContains('payment.paid', $types);
+    }
+
     public function test_events_are_batched_per_dataset_up_to_1000_per_request(): void
     {
         $contact = $this->fromAd();

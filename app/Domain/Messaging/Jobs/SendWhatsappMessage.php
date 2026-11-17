@@ -184,7 +184,7 @@ final class SendWhatsappMessage implements ShouldQueue
             return;
         }
 
-        $message->forceFill(['wamid' => $result['wamid'], 'status' => MessageStatus::Accepted, 'send_route' => $route])->save();
+        $message->forceFill(['wamid' => $result['wamid'], 'status' => MessageStatus::Accepted, 'send_route' => $route, 'accepted_at' => now()])->save();
 
         // Learn identifiers Meta returns (phone for a BSUID send, or vice versa).
         $contact = $message->contact;
