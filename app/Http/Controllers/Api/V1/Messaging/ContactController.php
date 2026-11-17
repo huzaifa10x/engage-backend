@@ -139,6 +139,12 @@ final class ContactController extends Controller
      * opt-in / opt-out confirmation when a 24-hour window is open. `meta.confirmation` says what
      * happened to that message, so the inbox can tell the teammate.
      */
+    /** The contact's consent history, newest first: what, how (source, channel), the exact words shown, and when. */
+    public function consentHistory(Contact $contact, ConsentService $consent): JsonResponse
+    {
+        return response()->json(['data' => $consent->history($contact)]);
+    }
+
     public function consent(Request $request, Contact $contact, ConsentService $consent, TenantContext $context, ConsentAutoReply $replies): JsonResponse
     {
         $data = $request->validate([

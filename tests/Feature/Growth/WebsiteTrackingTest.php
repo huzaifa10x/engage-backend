@@ -284,6 +284,22 @@ final class WebsiteTrackingTest extends TestCase
         $this->assertSame(1, $health['matched_24h']);
     }
 
+    public function test_the_websites_marketing_consent_checkbox_records_an_opt_in_with_its_words(): void
+    {
+        $this->beacon(['marketing_consent' => true, 'marketing_consent_text' => 'Yes, send me offers on WhatsApp <b>now</b>'])->assertCreated();
+        $this->message('Hello (Ref: XG-7PK9M2Q8TD)');
+        $contact = $this->contact('971500000001');
+        $this->assertSame('opted_in', $contact->marketingConsent());
+        $history = $this->getJson("/api/v1/contacts/{$contact->id}/consent-history")->assertOk()->json('data.0');
+        $this->assertSame(['opted_in', 'website_form', 'Website form'], [$history['action'], $history['source'], $history['source_label']]);
+        $this->assertSame('Yes, send me offers on WhatsApp now', $history['wording']);
+
+        // Not ticked: nothing recorded.
+        $this->beacon(['reference' => 'XG-3HJ8K4M2RW', 'marketing_consent' => false, 'marketing_consent_text' => 'Yes, send me offers'])->assertCreated();
+        $this->message('Hello (Ref: XG-3HJ8K4M2RW)', '971500000009');
+        $this->assertSame('unknown', $this->contact('971500000009')->marketingConsent());
+    }
+
     public function test_the_same_code_is_redeemed_once(): void
     {
         $this->beacon()->assertCreated();

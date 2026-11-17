@@ -151,6 +151,12 @@ final class NodeConfig
                 'save_to' => self::varName($c['save_to'] ?? 'location') ?? 'location',
                 'error_text' => self::str($c['error_text'] ?? null, 300),
             ] + $input() + $fallback(),
+            // Empty text: the workspace's consent question (Consent & Privacy) is sent.
+            'consent' => [
+                'text' => $text(1024),
+                'yes_label' => self::str($c['yes_label'] ?? null, 20) ?: 'Yes',
+                'no_label' => self::str($c['no_label'] ?? null, 20) ?: 'No',
+            ] + $input(),
             'rating' => [
                 'text' => $text(1024),
                 'button_label' => self::str($c['button_label'] ?? null, 20) ?: 'Rate us',

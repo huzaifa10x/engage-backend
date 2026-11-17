@@ -41,6 +41,8 @@ use Illuminate\Support\Carbon;
  * @property ?string $audience_tag
  * @property ?int $batch_per_hour
  * @property ?array<string, mixed> $cost_estimate
+ * @property bool $opted_in_only marketing goes only to contacts with a recorded opt-in
+ * @property ?array{membership_id: ?string, at: string, unknown: int} $consent_confirmation
  * @property ?array{match: string, rules: list<array<string, mixed>>} $audience_filter extra conditions on top of the segment / tag
  * @property ?Carbon $next_batch_at
  * @property ?string $wait_reason quiet_hours | drip | daily_limit
@@ -60,7 +62,7 @@ class Campaign extends Model
         'tenant_id', 'name', 'phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category',
         'variables', 'media_id', 'segment_id', 'audience', 'audience_filter', 'status', 'scheduled_at', 'started_at', 'completed_at',
         'matched_count', 'eligible_count', 'failure_reason', 'created_by_membership_id',
-        'notes', 'objective', 'audience_tag', 'batch_per_hour', 'cost_estimate', 'next_batch_at', 'wait_reason', 'paused_at', 'pause_reason',
+        'notes', 'objective', 'audience_tag', 'batch_per_hour', 'cost_estimate', 'opted_in_only', 'consent_confirmation', 'next_batch_at', 'wait_reason', 'paused_at', 'pause_reason',
     ];
 
     protected function casts(): array
@@ -70,6 +72,8 @@ class Campaign extends Model
             'audience' => 'array',
             'audience_filter' => 'array',
             'cost_estimate' => 'array',
+            'opted_in_only' => 'boolean',
+            'consent_confirmation' => 'array',
             'status' => CampaignStatus::class,
             'scheduled_at' => 'datetime',
             'started_at' => 'datetime',

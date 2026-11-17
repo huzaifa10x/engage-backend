@@ -273,9 +273,10 @@ final class CrmController extends Controller
             'tags' => ['nullable', 'array', 'max:10'],
             'tags.*' => ['string', 'max:40'],
             'opted_in' => ['nullable', 'boolean'],
+            'consent_source' => ['nullable', 'string', 'max:120'],
         ]);
 
-        return response()->json(['data' => $importer->import($data['file'], array_values((array) ($data['tags'] ?? [])), (bool) ($data['opted_in'] ?? false))]);
+        return response()->json(['data' => $importer->import($data['file'], array_values((array) ($data['tags'] ?? [])), (bool) ($data['opted_in'] ?? false), $data['consent_source'] ?? null)]);
     }
 
     /**

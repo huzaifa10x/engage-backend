@@ -6,8 +6,10 @@ namespace App\Domain\Growth\Website;
 
 use App\Domain\Growth\Models\GrowthEvidence;
 use App\Domain\Growth\Services\EvidenceRecorder;
+use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Messaging\Services\ConsentService;
 use App\Domain\Tenancy\Models\Tenant;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -94,6 +96,7 @@ final class WebsiteMatcher
             DB::table('growth_pending_references')->where('tenant_id', $tenant->id)->where('destination_phone_number_id', $ref->destination_phone_number_id)
                 ->where('wa_message_id', $message->wamid)->update(['status' => 'matched']);
             $this->evidence($message, $tenant, $ref, 'confirmed', $found['token']);
+            $this->websiteConsent($message, $ref->click_id, $ref->site_id);
 
             return 'matched';
         });
@@ -338,5 +341,21 @@ final class WebsiteMatcher
         if ($updates !== []) {
             $contact->forceFill($updates)->save();
         }
+    }
+
+    /** The visitor ticked the website's marketing-consent checkbox before tapping: an opt-in, with the checkbox's words. */
+    private function websiteConsent(Message $message, string $clickId, string $siteId): void
+    {
+        $click = DB::table('growth_click_events')->where('id', $clickId)->first(['marketing_consent', 'marketing_consent_text', 'page_path']);
+        if ($click === null || $click->marketing_consent !== true) {
+            return;
+        }
+        $contact = Contact::query()->find($message->contact_id);
+        if ($contact === null || $contact->marketing_opted_out || $contact->consent_state === ConsentState::OptedOut) {
+            return; // an opt-out recorded since is never overridden by a website tick
+        }
+        $domain = DB::table('growth_sites')->where('id', $siteId)->value('domain');
+        app(ConsentService::class)->optIn($contact, ConsentService::SOURCE_WEBSITE_FORM, trim(($domain ?? 'Website').' '.($click->page_path ?? '')),
+            $message->id, wording: $click->marketing_consent_text ?? 'Marketing consent checkbox on the website');
     }
 }

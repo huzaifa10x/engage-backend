@@ -29,7 +29,7 @@ final class Collector
 {
     public const MAX_BYTES = 4096;
 
-    private const KEYS = ['site_key', 'config_version', 'event_id', 'reference', 'mapping_id', 'page_path', 'landing_path', 'language', 'campaign', 'collection_mode', 'source_of_campaign_params', 'occurred_at', 'referrer_host', 'sdk_version', 'tab_key'];
+    private const KEYS = ['site_key', 'config_version', 'event_id', 'reference', 'mapping_id', 'page_path', 'landing_path', 'language', 'campaign', 'collection_mode', 'source_of_campaign_params', 'occurred_at', 'referrer_host', 'sdk_version', 'tab_key', 'marketing_consent', 'marketing_consent_text'];
 
     private const BOT_UA = '/bot\b|crawl|spider|slurp|headless|phantomjs|puppeteer|playwright|selenium|lighthouse|pagespeed|gtmetrix|facebookexternalhit|whatsapp\/|preview|prefetch|curl\/|wget\/|python-requests|httpclient|okhttp|java\//i';
 
@@ -230,6 +230,10 @@ final class Collector
                 'campaign_json' => json_encode($campaign, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                 'campaign_params_origin' => $origin, 'collection_mode' => $mode,
                 'status' => $filtered !== null ? 'filtered' : 'registered', 'filtered_reason' => $filtered,
+                // The site's optional marketing-consent checkbox (data-xg-marketing-consent), and its words.
+                'marketing_consent' => is_bool($data['marketing_consent'] ?? null) ? $data['marketing_consent'] : null,
+                'marketing_consent_text' => is_string($data['marketing_consent_text'] ?? null)
+                    ? mb_substr(trim((string) preg_replace('/\s+/u', ' ', strip_tags($data['marketing_consent_text']))), 0, 300) ?: null : null,
             ];
 
             try {

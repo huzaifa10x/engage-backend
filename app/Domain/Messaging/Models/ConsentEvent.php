@@ -20,6 +20,8 @@ use Illuminate\Support\Carbon;
  * @property string $action
  * @property string $source
  * @property ?string $detail
+ * @property string $channel whatsapp
+ * @property ?string $wording the exact words the customer was shown
  * @property ?string $message_id
  * @property ?string $membership_id
  * @property ?Carbon $created_at
@@ -31,7 +33,7 @@ class ConsentEvent extends Model
 
     public const UPDATED_AT = null;
 
-    protected $fillable = ['tenant_id', 'contact_id', 'action', 'source', 'detail', 'message_id', 'membership_id'];
+    protected $fillable = ['tenant_id', 'contact_id', 'action', 'source', 'detail', 'message_id', 'membership_id', 'channel', 'wording'];
 
     /** @return BelongsTo<Contact, $this> */
     public function contact(): BelongsTo

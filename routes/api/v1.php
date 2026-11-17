@@ -489,6 +489,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     });
     Route::post('contacts', [ContactController::class, 'store'])->middleware('can:'.Permission::ContactsCreate->value)->name('contacts.store');
     Route::patch('contacts/{contact}', [ContactController::class, 'update'])->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.update');
+    Route::get('contacts/{contact}/consent-history', [ContactController::class, 'consentHistory'])->middleware('can:'.Permission::ContactsView->value)->name('contacts.consent-history');
     Route::post('contacts/{contact}/consent', [ContactController::class, 'consent'])->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.consent');
     Route::delete('contacts/{contact}', [ContactController::class, 'destroy'])->middleware('can:'.Permission::ContactsDelete->value)->name('contacts.destroy');
 

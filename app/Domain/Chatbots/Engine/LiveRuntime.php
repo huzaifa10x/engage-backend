@@ -283,6 +283,20 @@ final class LiveRuntime extends BotRuntime
         $this->contact = self::snapshot($this->contactModel);
     }
 
+    public function consentAnswer(bool $yes, string $wording): void
+    {
+        $consent = app(ConsentService::class);
+        $detail = $this->botName();
+        if ($yes) {
+            $consent->optIn($this->contactModel, ConsentService::SOURCE_FLOW_STEP, $detail, wording: $wording);
+            $consent->setMarketingPreference($this->contactModel, false, $detail, ConsentService::SOURCE_FLOW_STEP, $wording);
+        } else {
+            $consent->setMarketingPreference($this->contactModel, true, $detail, ConsentService::SOURCE_FLOW_STEP, $wording);
+        }
+        $this->contactModel->refresh();
+        $this->contact = self::snapshot($this->contactModel);
+    }
+
     public function order(string $number): ?array
     {
         return app(OrderLookup::class)->find($number, $this->contact['phone'], $this->contactModel->id);

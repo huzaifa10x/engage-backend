@@ -51,7 +51,7 @@ final class LaunchCampaign implements ShouldQueue
             $capped = $marketing ? $campaigns->cappedContactIds($contacts->modelKeys(), $campaign->id) : [];
             /** @var Contact $contact */
             foreach ($contacts as $contact) {
-                $blocker = $contact->campaignBlocker($campaign->template_category) ?? (isset($capped[$contact->id]) ? 'Frequency cap reached' : null);
+                $blocker = $contact->campaignBlocker($campaign->template_category, $campaign->opted_in_only) ?? (isset($capped[$contact->id]) ? 'Frequency cap reached' : null);
                 $matched++;
                 $eligible += $blocker === null ? 1 : 0;
                 $rows[] = [
@@ -61,6 +61,8 @@ final class LaunchCampaign implements ShouldQueue
                     'contact_id' => $contact->id,
                     'status' => $blocker === null ? 'pending' : 'skipped',
                     'reason' => $blocker,
+                    // Marketing consent when prepared: campaign results are split by it.
+                    'consent_state' => $marketing ? $contact->marketingConsent() : null,
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];

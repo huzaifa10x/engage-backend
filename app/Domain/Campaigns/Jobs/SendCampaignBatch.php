@@ -121,7 +121,7 @@ final class SendCampaignBatch implements ShouldQueue
                 continue;
             }
             // Consent can change between preparation and sending (a STOP reply): check again.
-            $blocker = $contact === null || $contact->trashed() ? 'Contact was deleted' : $contact->campaignBlocker($campaign->template_category);
+            $blocker = $contact === null || $contact->trashed() ? 'Contact was deleted' : $contact->campaignBlocker($campaign->template_category, $campaign->opted_in_only);
             // A number that is not valid in its country never reaches Meta (and is left out of the cost estimate).
             $blocker ??= $contact->wa_id !== null && ! PhoneNumbers::valid((string) $contact->wa_id) ? 'Not a valid WhatsApp number' : null;
             if ($blocker !== null || $contact === null) {

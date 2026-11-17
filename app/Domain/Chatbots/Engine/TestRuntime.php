@@ -244,6 +244,11 @@ final class TestRuntime extends BotRuntime
         $this->note($scope === 'all' ? '(Test) The customer would be opted out of all messages.' : '(Test) The customer would be opted out of marketing messages.');
     }
 
+    public function consentAnswer(bool $yes, string $wording): void
+    {
+        $this->note($yes ? '(Test) The customer would be opted in to marketing messages.' : '(Test) The customer would be opted out of marketing messages.');
+    }
+
     public function order(string $number): ?array
     {
         return $this->contact['id'] !== null ? app(OrderLookup::class)->find($number, $this->contact['phone'], $this->contact['id']) : null;

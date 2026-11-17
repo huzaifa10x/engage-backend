@@ -75,6 +75,9 @@ abstract class BotRuntime
     /** Marketing opt-out ("marketing") or a full opt-out ("all") through the consent service. */
     abstract public function optOut(string $scope): void;
 
+    /** "Ask for marketing consent": Yes = opted in for marketing, No = opted out of marketing, with the exact words shown. */
+    abstract public function consentAnswer(bool $yes, string $wording): void;
+
     /**
      * The status of one of this customer's orders in the connected store.
      *

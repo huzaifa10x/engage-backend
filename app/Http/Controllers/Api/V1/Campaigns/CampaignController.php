@@ -81,7 +81,9 @@ final class CampaignController extends Controller
             'filter' => ['nullable'],
             'template_id' => ['nullable', 'uuid'],
             'phone_number_id' => ['nullable', 'uuid'],
+            'opted_in_only' => ['nullable', 'boolean'],
         ]);
+        $optedInOnly = (bool) ($data['opted_in_only'] ?? false);
         $filter = app(SegmentQuery::class)->filter($data['filter'] ?? null);
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
         $template = isset($data['template_id']) ? MessageTemplate::query()->find($data['template_id']) : null;
@@ -92,7 +94,7 @@ final class CampaignController extends Controller
         $marketing = strtoupper((string) $category) === 'MARKETING';
         $daily = $number !== null ? app(MessagingLimits::class)->summary($number) : null;
 
-        $counts = $this->campaigns->counts(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null, 'filter' => $filter], $category);
+        $counts = $this->campaigns->counts(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null, 'filter' => $filter], $category, $optedInOnly);
         $reach = $entitlements->for($tenant)->get(FeatureKey::CampaignReachMonthly);
 
         return response()->json(['data' => $counts + [
@@ -115,7 +117,7 @@ final class CampaignController extends Controller
             'quiet_hours' => $settings->quietHoursEnabled ? ['start' => $settings->quietHoursStart, 'end' => $settings->quietHoursEnd, 'timezone' => $tenant->timezone ?: 'UTC'] : null,
             // What Meta will charge (USD, paid by the client to Meta), for the contacts that would receive it.
             'cost_estimate' => $template !== null
-                ? app(CostEstimator::class)->estimate($this->campaigns->eligibleQuery(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null, 'filter' => $filter], $category), $category, $number?->id)
+                ? app(CostEstimator::class)->estimate($this->campaigns->eligibleQuery(['match' => $segment->match ?? 'all', 'rules' => $segment->rules ?? [], 'tag' => $data['audience_tag'] ?? null, 'filter' => $filter], $category, $optedInOnly), $category, $number?->id)
                 : null,
             // Meta re-categorised the template recently: the price changed with it.
             'category_change' => TemplateResource::categoryChange($template),
@@ -214,9 +216,9 @@ final class CampaignController extends Controller
 
     public function launch(Request $request, Campaign $campaign): JsonResponse
     {
-        $data = $request->validate(['scheduled_at' => ['nullable', 'date', 'after:now', 'before:+6 months']]);
+        $data = $request->validate(['scheduled_at' => ['nullable', 'date', 'after:now', 'before:+6 months'], 'consent_confirmed' => ['nullable', 'boolean']]);
 
-        $campaign = $this->campaigns->launch($campaign, isset($data['scheduled_at']) ? Carbon::parse($data['scheduled_at']) : null);
+        $campaign = $this->campaigns->launch($campaign, isset($data['scheduled_at']) ? Carbon::parse($data['scheduled_at']) : null, (bool) ($data['consent_confirmed'] ?? false));
 
         return response()->json(['data' => $this->present($campaign->load('phoneNumber'))]);
     }
@@ -262,6 +264,7 @@ final class CampaignController extends Controller
             'filter' => ['nullable'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'objective' => ['nullable', Rule::in(['promo', 'announcement', 're_engagement', 'reminder', 'update', 'other'])],
+            'opted_in_only' => ['nullable', 'boolean'],
             'media_id' => ['nullable', 'uuid'],
             'variables' => ['nullable', 'array'],
             'variables.header' => ['nullable', 'array', 'max:1'],
@@ -315,6 +318,8 @@ final class CampaignController extends Controller
             'failure_reason' => $c->failure_reason,
             'stats' => $this->campaigns->stats($c),
             'cost_estimate' => $c->cost_estimate,
+            'opted_in_only' => $c->opted_in_only,
+            'consent_confirmation' => $c->consent_confirmation,
             'created_at' => $c->created_at?->toIso8601String(),
         ];
     }

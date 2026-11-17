@@ -6,6 +6,7 @@ namespace App\Domain\Messaging\Services;
 
 use App\Domain\Chatbots\Jobs\RunChatbot;
 use App\Domain\Chatbots\Services\Chatbots;
+use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Conversions\Jobs\RecordAdClick;
 use App\Domain\Conversions\Services\AdClicks;
 use App\Domain\Growth\GrowthSettings;
@@ -226,17 +227,21 @@ final class MessageRecorder
         }
         // A tapped button (our in-chat "Subscribe" request) is recorded apart from a typed keyword.
         $source = $message->type === 'text' ? 'keyword' : 'in_chat_button';
+        // The exact words: the consent question the customer answered (with the button tapped), or the keyword.
+        $wording = $source === 'in_chat_button'
+            ? ComplianceSettings::for(app(TenantContext::class)->tenantOrNull())->consentRequestText.' ['.trim((string) $text).']'
+            : trim((string) $text);
 
         if ($intent === 'decline') {
-            $this->consent->recordDecline($contact, $source, $text, $message->id);
+            $this->consent->recordDecline($contact, $source, $text, $message->id, $wording);
 
             return; // nothing is sent back: "No thanks" is an answer, not a request
         }
 
         if ($intent === 'opt_out') {
-            $changed = $this->consent->optOut($contact, $source, $text, $message->id);
+            $changed = $this->consent->optOut($contact, $source, $text, $message->id, wording: $wording);
         } else {
-            $changed = $this->consent->optIn($contact, $source, $text, $message->id);
+            $changed = $this->consent->optIn($contact, $source, $text, $message->id, wording: $wording);
             // An explicit Subscribe also lifts an earlier "stop marketing" (Meta preference or a bot block).
             if ($contact->marketing_opted_out) {
                 $this->consent->setMarketingPreference($contact, false, $text, $source);

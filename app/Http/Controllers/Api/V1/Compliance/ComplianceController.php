@@ -140,6 +140,8 @@ final class ComplianceController extends Controller
                 'action' => $e->action,
                 'source' => $e->source,
                 'detail' => $e->detail,
+                'wording' => $e->getAttribute('wording'),
+                'channel' => $e->getAttribute('channel') ?? 'whatsapp',
                 'created_at' => $e->created_at?->toIso8601String(),
                 'contact' => $e->contact !== null ? ['id' => $e->contact->id, 'display_name' => $e->contact->displayName(), 'phone' => $e->contact->wa_id !== null ? '+'.$e->contact->wa_id : null] : null,
             ]),
@@ -160,16 +162,18 @@ final class ComplianceController extends Controller
             if ($out === false) {
                 return;
             }
-            fputcsv($out, ['time_utc', 'phone', 'name', 'event', 'source', 'detail'], ',', '"', '');
+            fputcsv($out, ['time_utc', 'phone', 'name', 'event', 'source', 'detail', 'channel', 'wording'], ',', '"', '');
             $query->chunk(1000, function ($events) use ($out): void {
                 /** @var ConsentEvent $e */
                 foreach ($events as $e) {
                     $name = (string) ($e->contact->name ?? $e->contact->profile_name ?? '');
                     $detail = (string) $e->detail;
+                    $wording = (string) $e->getAttribute('wording');
                     fputcsv($out, [
                         $e->created_at?->utc()->format('Y-m-d H:i:s'), $e->contact?->wa_id !== null ? '+'.$e->contact->wa_id : '',
                         preg_match('/^[=+\-@]/', $name) === 1 ? "'".$name : $name, $e->action, $e->source,
                         preg_match('/^[=+\-@]/', $detail) === 1 ? "'".$detail : $detail,
+                        (string) ($e->getAttribute('channel') ?? 'whatsapp'), preg_match('/^[=+\-@]/', $wording) === 1 ? "'".$wording : $wording,
                     ], ',', '"', '');
                 }
             });

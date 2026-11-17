@@ -17,7 +17,7 @@ use SplFileObject;
 
 /**
  * CSV import. Columns are recognised by their header: phone (required), name, email, tags,
- * opted_in, plus one column per custom field key. Existing contacts are matched by number and
+ * opted_in (consent status: opted in / opted out), plus one column per custom field key. Existing contacts are matched by number and
  * updated, never duplicated; an opt-out is never overridden by an import.
  */
 final class ContactImporter
@@ -29,7 +29,7 @@ final class ContactImporter
         'name' => ['name', 'full name', 'full_name', 'contact name', 'customer name'],
         'email' => ['email', 'e-mail', 'email address'],
         'tags' => ['tags', 'tag', 'labels'],
-        'opted_in' => ['opted_in', 'opt_in', 'opt-in', 'opted in', 'consent', 'marketing consent'],
+        'opted_in' => ['opted_in', 'opt_in', 'opt-in', 'opted in', 'consent', 'marketing consent', 'consent status', 'consent_status'],
     ];
 
     public function __construct(
@@ -43,9 +43,10 @@ final class ContactImporter
     /**
      * @param  list<string>  $extraTags  added to every imported contact
      * @param  bool  $optedIn  the uploader confirms every contact in the file gave marketing consent
+     * @param  ?string  $consentSource  where the client collected the consent ("collected at store"), kept with each record
      * @return array{created: int, updated: int, skipped: int, total: int, errors: list<array{row: int, message: string}>}
      */
-    public function import(UploadedFile $file, array $extraTags = [], bool $optedIn = false): array
+    public function import(UploadedFile $file, array $extraTags = [], bool $optedIn = false, ?string $consentSource = null): array
     {
         $csv = new SplFileObject($file->getRealPath());
         $csv->setFlags(SplFileObject::READ_CSV | SplFileObject::SKIP_EMPTY | SplFileObject::READ_AHEAD | SplFileObject::DROP_NEW_LINE);
@@ -146,9 +147,15 @@ final class ContactImporter
                 }
                 $contact->save();
 
-                $rowConsent = isset($columns['opted_in']) && in_array(mb_strtolower(trim((string) ($line[$columns['opted_in']] ?? ''))), ['1', 'yes', 'y', 'true', 'opted_in', 'opted in'], true);
-                if (($optedIn || $rowConsent) && $contact->consent_state === ConsentState::Unknown) {
-                    $this->consent->optIn($contact, 'import', 'Consent confirmed by the uploader at import', membershipId: $membershipId);
+                // The consent column: opted in / yes, or opted out / no (opted out of marketing). Never overrides an opt-out.
+                $cell = isset($columns['opted_in']) ? mb_strtolower(trim((string) ($line[$columns['opted_in']] ?? ''))) : '';
+                $rowConsent = in_array($cell, ['1', 'yes', 'y', 'true', 'opted_in', 'opted in', 'opt in'], true);
+                $rowRefusal = in_array($cell, ['0', 'no', 'n', 'false', 'opted_out', 'opted out', 'opt out'], true);
+                $source = $consentSource !== null && trim($consentSource) !== '' ? 'Imported – '.trim($consentSource) : 'Consent confirmed by the uploader at import';
+                if ($rowRefusal) {
+                    $this->consent->setMarketingPreference($contact, true, $source, ConsentService::SOURCE_IMPORT, $source);
+                } elseif (($optedIn || $rowConsent) && $contact->consent_state === ConsentState::Unknown && ! $contact->marketing_opted_out) {
+                    $this->consent->optIn($contact, ConsentService::SOURCE_IMPORT, $source, membershipId: $membershipId, wording: $source);
                 }
 
                 $isNew ? $result['created']++ : $result['updated']++;

@@ -386,6 +386,7 @@ final class FlowEngine
             case 'ask_media':
             case 'location':
             case 'rating':
+            case 'consent':
                 $rt->state['awaiting_input'] = true;
                 $rt->state['retry_count'] = 0;
                 $this->prompt($run, $node);
@@ -840,6 +841,20 @@ final class FlowEngine
                 ]));
                 break;
 
+            case 'consent':
+                // The workspace's consent question when the block has no text of its own; the exact words are recorded with the answer.
+                $question = trim($text) !== '' ? $text : ComplianceSettings::for(app(TenantContext::class)->tenantOrNull())->consentRequestText;
+                $rt->state['vars']['_consent_wording'] = $question;
+                $rt->send(['type' => 'interactive', 'content' => [
+                    'type' => 'button',
+                    'body' => ['text' => $question],
+                    'action' => ['buttons' => [
+                        ['type' => 'reply', 'reply' => ['id' => $id('yes'), 'title' => $c['yes_label']]],
+                        ['type' => 'reply', 'reply' => ['id' => $id('no'), 'title' => $c['no_label']]],
+                    ]],
+                ]]);
+                break;
+
             case 'list':
                 $rt->send($this->interactive($c, $rt, [
                     'type' => 'list',
@@ -1035,6 +1050,22 @@ final class FlowEngine
                 }
 
                 return null;
+
+            case 'consent':
+                $choice = match (true) {
+                    $payload === 'yes' || $input->number() === 1 || ($words !== '' && $words === $this->plain((string) $c['yes_label'])) => 'yes',
+                    $payload === 'no' || $input->number() === 2 || ($words !== '' && $words === $this->plain((string) $c['no_label'])) => 'no',
+                    default => null,
+                };
+                if ($choice === null) {
+                    return null;
+                }
+                $wording = (string) ($rt->state['vars']['_consent_wording'] ?? $c['text'] ?? '');
+                $rt->consentAnswer($choice === 'yes', $wording.' ['.($choice === 'yes' ? $c['yes_label'] : $c['no_label']).']');
+                $rt->state['vars'][$node['id']] = $choice === 'yes' ? $c['yes_label'] : $c['no_label'];
+                $rt->note($choice === 'yes' ? 'The customer agreed to marketing messages (opted in).' : 'The customer said no to marketing messages (opted out of marketing).');
+
+                return $choice;
 
             case 'rating':
                 $n = $payload !== null && preg_match('/^r([1-5])$/', $payload, $m) === 1 ? (int) $m[1]

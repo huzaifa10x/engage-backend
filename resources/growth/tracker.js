@@ -98,6 +98,17 @@
         return l.indexOf('ar') === 0 ? 'ar' : 'en';
     }
 
+    function consentBox(el) {
+        var scope = el && el.closest ? el.closest('form') : null;
+        var sel = 'input[type=checkbox][data-xg-marketing-consent]';
+        return (scope && scope.querySelector(sel)) || d.querySelector(sel);
+    }
+    function consentText(box) {
+        var own = box.getAttribute('data-xg-consent-text');
+        var label = own || (box.id && d.querySelector('label[for="' + box.id + '"]') || box.closest && box.closest('label') || {}).textContent || '';
+        return String(label).replace(/\s+/g, ' ').trim().slice(0, 300) || null;
+    }
+
     // Rewrites one WhatsApp link with a fresh reference and sends the tap in the background.
     // Returns the new link, or null to leave the original untouched (fail open).
     function track(href, el) {
@@ -135,6 +146,14 @@
             referrer_host: (landing && landing.r) || refHost(), occurred_at: new Date().toISOString(), sdk_version: X.v,
             tab_key: tabKey()
         };
+        // Optional marketing consent: a checkbox the site marks with data-xg-marketing-consent (in the
+        // button's form, or anywhere on the page). Ticked: the chat is recorded as opted in, with the
+        // checkbox's own words (its label, or data-xg-consent-text).
+        var box = consentBox(el);
+        if (box) {
+            event.marketing_consent = !!box.checked;
+            event.marketing_consent_text = consentText(box);
+        }
         var body = JSON.stringify(event), url = cfg.endpoint || BASE + '/v1/c';
         // Queued in the background (sendBeacon / keepalive fetch): nothing waits for the network, and
         // the request survives the page leaving for WhatsApp.

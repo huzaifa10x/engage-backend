@@ -22,6 +22,27 @@ final class ConsentService
 {
     public function __construct(private readonly AuditLogger $audit, private readonly TenantContext $context) {}
 
+    /**
+     * Where a consent was recorded (consent_events.source). Older values stay valid: keyword (STOP /
+     * START), in_chat_button (the Inbox consent question), chatbot (an Opt-in / Opt-out block),
+     * agent (manual), api, integration, meta_preference (the customer's WhatsApp setting).
+     */
+    public const SOURCE_FLOW_STEP = 'flow_step';
+
+    public const SOURCE_WEBSITE_FORM = 'website_form';
+
+    public const SOURCE_AD = 'ad';
+
+    public const SOURCE_QR_LINK = 'qr_link';
+
+    public const SOURCE_IMPORT = 'import';
+
+    public const SOURCE_LABELS = [
+        'flow_step' => 'Flow step', 'chatbot' => 'Flow step', 'website_form' => 'Website form', 'ad' => 'Ad', 'qr_link' => 'QR code or link',
+        'import' => 'Import', 'agent' => 'Manual', 'keyword' => 'Keyword', 'in_chat_button' => 'Consent question', 'api' => 'API',
+        'integration' => 'Store checkout', 'meta_preference' => 'WhatsApp setting',
+    ];
+
     /** Button ids of the in-chat consent request (Inbox → Ask for consent). */
     public const BUTTON_OPT_IN = 'consent_opt_in';
 
@@ -64,10 +85,12 @@ final class ConsentService
      * The customer tapped "No thanks" on the consent request: kept in the ledger as an answer. Their
      * consent state does not change (declining marketing is not an opt-out of the conversation).
      */
-    public function recordDecline(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null): void
+    public function recordDecline(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null, ?string $wording = null): void
     {
         $contact->forceFill(['consent_requested_at' => null])->save();
-        $this->record($contact, 'consent_declined', $source, $detail, $messageId, null);
+        $this->record($contact, 'consent_declined', $source, $detail, $messageId, null, $wording);
+        // "No" to the consent question: opted out of marketing (other messages still allowed).
+        $this->setMarketingPreference($contact, true, $detail, $source, $wording, $messageId);
     }
 
     /**
@@ -122,45 +145,66 @@ final class ConsentService
     }
 
     /** @return bool whether the state changed (false = the contact had already opted out) */
-    public function optOut(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null, ?string $membershipId = null): bool
+    public function optOut(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null, ?string $membershipId = null, ?string $wording = null): bool
     {
         if ($contact->consent_state === ConsentState::OptedOut) {
             return false;
         }
 
         $contact->forceFill(['consent_state' => ConsentState::OptedOut, 'opted_out_at' => now(), 'consent_requested_at' => null])->save();
-        $this->record($contact, 'opted_out', $source, $detail, $messageId, $membershipId);
+        $this->record($contact, 'opted_out', $source, $detail, $messageId, $membershipId, $wording);
         app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.opted_out', PublicPayload::contact($contact) + ['source' => $source]);
 
         return true;
     }
 
     /** @return bool whether the state changed (false = the contact had already opted in) */
-    public function optIn(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null, ?string $membershipId = null): bool
+    public function optIn(Contact $contact, string $source, ?string $detail = null, ?string $messageId = null, ?string $membershipId = null, ?string $wording = null): bool
     {
         if ($contact->consent_state === ConsentState::OptedIn) {
             return false;
         }
 
         $contact->forceFill(['consent_state' => ConsentState::OptedIn, 'opted_in_at' => now(), 'opted_out_at' => null, 'consent_requested_at' => null])->save();
-        $this->record($contact, 'opted_in', $source, $detail, $messageId, $membershipId);
+        $this->record($contact, 'opted_in', $source, $detail, $messageId, $membershipId, $wording);
         app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.opted_in', PublicPayload::contact($contact) + ['source' => $source]);
 
         return true;
     }
 
     /** Meta user_preferences webhook (or a chatbot Opt-out block): the user stopped / resumed marketing messages. */
-    public function setMarketingPreference(Contact $contact, bool $optedOut, ?string $detail = null, string $source = 'meta_preference'): void
+    public function setMarketingPreference(Contact $contact, bool $optedOut, ?string $detail = null, string $source = 'meta_preference', ?string $wording = null, ?string $messageId = null): void
     {
         if ($contact->marketing_opted_out === $optedOut) {
             return;
         }
 
         $contact->forceFill(['marketing_opted_out' => $optedOut])->save();
-        $this->record($contact, $optedOut ? 'marketing_opted_out' : 'marketing_opted_in', $source, $detail, null, null);
+        $this->record($contact, $optedOut ? 'marketing_opted_out' : 'marketing_opted_in', $source, $detail, $messageId, null, $wording);
     }
 
-    private function record(Contact $contact, string $action, string $source, ?string $detail, ?string $messageId, ?string $membershipId): void
+    /**
+     * The contact's consent ledger, newest first: what was recorded, how (source and channel), the
+     * exact words the customer was shown, and when.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function history(Contact $contact, int $limit = 100): array
+    {
+        return ConsentEvent::query()->where('contact_id', $contact->id)->orderByDesc('created_at')->orderByDesc('id')->limit($limit)->get()
+            ->map(fn (ConsentEvent $e) => [
+                'id' => $e->id,
+                'action' => $e->action,
+                'source' => $e->source,
+                'source_label' => self::SOURCE_LABELS[$e->source] ?? ucfirst(str_replace('_', ' ', $e->source)),
+                'channel' => $e->getAttribute('channel') ?? 'whatsapp',
+                'detail' => $e->detail,
+                'wording' => $e->getAttribute('wording'),
+                'created_at' => $e->created_at?->toIso8601String(),
+            ])->all();
+    }
+
+    private function record(Contact $contact, string $action, string $source, ?string $detail, ?string $messageId, ?string $membershipId, ?string $wording = null): void
     {
         ConsentEvent::query()->create([
             'contact_id' => $contact->id,
@@ -169,6 +213,8 @@ final class ConsentService
             'detail' => $detail !== null ? mb_substr($detail, 0, 190) : null,
             'message_id' => $messageId,
             'membership_id' => $membershipId,
+            'channel' => 'whatsapp',
+            'wording' => $wording !== null && trim($wording) !== '' ? mb_substr($wording, 0, 2000) : null,
         ]);
 
         $this->audit->record("contact.{$action}", $contact, meta: ['source' => $source]);

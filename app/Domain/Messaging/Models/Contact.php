@@ -117,7 +117,7 @@ class Contact extends Model
      * out (STOP) or stopped marketing messages in WhatsApp; Unknown and opted-in contacts receive it.
      * Utility and authentication templates (order updates, codes) go to every contact with a number.
      */
-    public function campaignBlocker(?string $category): ?string
+    public function campaignBlocker(?string $category, bool $optedInOnly = false): ?string
     {
         if ($this->wa_id === null && $this->bsuid === null) {
             return 'No WhatsApp number';
@@ -127,11 +127,27 @@ class Contact extends Model
                 return 'Opted out';
             }
             if ($this->marketing_opted_out) {
-                return 'Stopped marketing messages in WhatsApp';
+                return 'Opted out of marketing';
+            }
+            if ($optedInOnly && $this->consent_state !== ConsentState::OptedIn) {
+                return 'No consent record (this campaign sends only to opted-in contacts)';
             }
         }
 
         return null;
+    }
+
+    /**
+     * Consent for marketing, in three states: opted_in (a recorded opt-in), opted_out (STOP, the
+     * WhatsApp setting, manual, or "No" to the consent question) or unknown (no record either way).
+     */
+    public function marketingConsent(): string
+    {
+        return match (true) {
+            $this->consent_state === ConsentState::OptedOut || $this->marketing_opted_out => 'opted_out',
+            $this->consent_state === ConsentState::OptedIn => 'opted_in',
+            default => 'unknown',
+        };
     }
 
     public function isOptedOut(): bool

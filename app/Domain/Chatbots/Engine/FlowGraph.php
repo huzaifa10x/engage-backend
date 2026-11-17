@@ -20,24 +20,24 @@ final class FlowGraph
     /** The block library, by group (see the builder's palette). */
     public const GROUPS = [
         'send' => ['message', 'media', 'buttons', 'list', 'product', 'template', 'url', 'form'],
-        'capture' => ['question', 'ask_media', 'location', 'rating'],
+        'capture' => ['question', 'ask_media', 'location', 'rating', 'consent'],
         'logic' => ['condition', 'setfield', 'calculate', 'delay', 'tag', 'optin', 'optout', 'hours', 'split'],
         'connect' => ['http', 'order', 'sheets'],
         'control' => ['start', 'goto', 'subflow', 'note', 'handoff', 'end'],
     ];
 
     public const TYPES = [
-        'start', 'message', 'media', 'buttons', 'list', 'product', 'template', 'url', 'form', 'question', 'ask_media', 'location', 'rating',
+        'start', 'message', 'media', 'buttons', 'list', 'product', 'template', 'url', 'form', 'question', 'ask_media', 'location', 'rating', 'consent',
         'condition', 'setfield', 'calculate', 'delay', 'tag', 'optin', 'optout', 'hours', 'split', 'http', 'order', 'sheets', 'goto', 'subflow', 'note', 'handoff', 'end',
     ];
 
     /** Blocks that stop and wait for the customer's answer. */
-    public const INPUT = ['buttons', 'list', 'question', 'product', 'form', 'ask_media', 'location', 'rating'];
+    public const INPUT = ['buttons', 'list', 'question', 'product', 'form', 'ask_media', 'location', 'rating', 'consent'];
 
     public const TERMINAL = ['handoff', 'end', 'goto'];
 
     /** Blocks that send a normal (free-form) message, which needs the 24-hour window. */
-    public const FREE_FORM = ['message', 'media', 'buttons', 'list', 'product', 'url', 'form', 'question', 'ask_media', 'location', 'rating', 'optin', 'optout'];
+    public const FREE_FORM = ['message', 'media', 'buttons', 'list', 'product', 'url', 'form', 'question', 'ask_media', 'location', 'rating', 'consent', 'optin', 'optout'];
 
     public const MAX_NODES = 200;
 
@@ -251,6 +251,8 @@ final class FlowGraph
             'buttons' => [...$choices($config['buttons'] ?? []), ...$extra],
             'list' => [...$choices(array_merge(...array_map(fn ($s) => $s['rows'], $config['sections'] ?? [['rows' => []]]))), ...$extra],
             'question', 'ask_media', 'location', 'rating' => [['id' => 'next', 'label' => 'Answered'], ...$extra],
+            // Yes = opted in for marketing, No = opted out of marketing (recorded in the consent ledger).
+            'consent' => [['id' => 'yes', 'label' => (string) ($config['yes_label'] ?? 'Yes')], ['id' => 'no', 'label' => (string) ($config['no_label'] ?? 'No')], ...$extra],
             'form' => [['id' => 'next', 'label' => 'Submitted'], ...$extra],
             'product' => ($config['mode'] ?? 'cards') === 'cards' ? [['id' => 'next', 'label' => 'Next']] : [['id' => 'next', 'label' => 'Product chosen'], ...$extra],
             'condition' => [['id' => 'yes', 'label' => 'Yes'], ['id' => 'no', 'label' => 'No / else']],
@@ -278,6 +280,7 @@ final class FlowGraph
             'ask_media' => 'Ask for a photo or file',
             'location' => 'Ask for location',
             'rating' => 'Rating',
+            'consent' => 'Ask for marketing consent',
             'condition' => 'Condition',
             'setfield' => 'Set field',
             'calculate' => 'Calculate',

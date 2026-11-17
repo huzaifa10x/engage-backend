@@ -108,7 +108,7 @@ final class CampaignsTest extends TestCase
 
         $id = $this->draft(['segment_id' => $segment, 'filter' => $filter]);
         $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.audience_filter.rules.0.field', 'attr:city');
-        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
+        $this->postJson("/api/v1/campaigns/{$id}/launch", ['consent_confirmed' => true])->assertOk();
         $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.stats.sent', 1)->assertJsonPath('data.stats.matched', 1);
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110001');
         Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110002');
@@ -124,10 +124,10 @@ final class CampaignsTest extends TestCase
 
         $this->getJson("/api/v1/campaigns/audience?segment_id={$segment}&template_id={$this->templates['summer_offer']}")
             ->assertOk()->assertJsonPath('data.matched', 4)->assertJsonPath('data.eligible', 3)->assertJsonPath('data.reach_limit', 100000)
-            ->assertJsonPath('data.excluded', ['no_number' => 0, 'opted_out' => 1, 'stopped_marketing' => 0, 'frequency_cap' => 0]);
+            ->assertJsonPath('data.excluded', ['no_number' => 0, 'opted_out' => 1, 'stopped_marketing' => 0, 'frequency_cap' => 0, 'no_consent_record' => 0]);
 
         $id = $this->draft(['segment_id' => $segment]);
-        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
+        $this->postJson("/api/v1/campaigns/{$id}/launch", ['consent_confirmed' => true])->assertOk();
 
         $this->getJson("/api/v1/campaigns/{$id}")->assertOk()
             ->assertJsonPath('data.status', 'completed')
@@ -170,7 +170,7 @@ final class CampaignsTest extends TestCase
             ->assertJsonPath('data.excluded', ['no_number' => 0, 'opted_out' => 0, 'stopped_marketing' => 0, 'frequency_cap' => 0]);
 
         $id = $this->draft(['name' => 'Reminder', 'template_id' => $this->templates['class_reminder'], 'variables' => []]);
-        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
+        $this->postJson("/api/v1/campaigns/{$id}/launch", ['consent_confirmed' => true])->assertOk();
 
         $this->getJson("/api/v1/campaigns/{$id}")
             ->assertJsonPath('data.stats.matched', 5)->assertJsonPath('data.stats.eligible', 5)->assertJsonPath('data.stats.sent', 5)->assertJsonPath('data.stats.skipped', 0);
@@ -201,20 +201,20 @@ final class CampaignsTest extends TestCase
 
         $this->getJson("/api/v1/campaigns/audience?segment_id={$segment}&template_id={$this->templates['summer_offer']}")
             ->assertJsonPath('data.matched', 4)->assertJsonPath('data.eligible', 2)
-            ->assertJsonPath('data.excluded', ['no_number' => 0, 'opted_out' => 1, 'stopped_marketing' => 1, 'frequency_cap' => 0]);
+            ->assertJsonPath('data.excluded', ['no_number' => 0, 'opted_out' => 1, 'stopped_marketing' => 1, 'frequency_cap' => 0, 'no_consent_record' => 0]);
 
         $id = $this->draft(['segment_id' => $segment]);
-        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
+        $this->postJson("/api/v1/campaigns/{$id}/launch", ['consent_confirmed' => true])->assertOk();
         $recipients = collect($this->getJson("/api/v1/campaigns/{$id}/recipients")->json('data'))->keyBy('contact.phone');
         $this->assertSame('Opted out', $recipients['+971501110004']['reason']);
-        $this->assertSame('Stopped marketing messages in WhatsApp', $recipients['+971501110002']['reason']);
+        $this->assertSame('Opted out of marketing', $recipients['+971501110002']['reason']);
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['to'] === '971501110003');
     }
 
     public function test_a_scheduled_campaign_starts_when_due_and_can_be_stopped_before(): void
     {
         $id = $this->draft();
-        $this->postJson("/api/v1/campaigns/{$id}/launch", ['scheduled_at' => now()->addHour()->toIso8601String()])
+        $this->postJson("/api/v1/campaigns/{$id}/launch", ['scheduled_at' => now()->addHour()->toIso8601String(), 'consent_confirmed' => true])
             ->assertOk()->assertJsonPath('data.status', 'scheduled');
 
         Artisan::call('engage:campaigns:dispatch');
@@ -227,7 +227,7 @@ final class CampaignsTest extends TestCase
 
         // Stopping a scheduled campaign returns it to draft.
         $second = $this->draft(['name' => 'Second']);
-        $this->postJson("/api/v1/campaigns/{$second}/launch", ['scheduled_at' => now()->addDay()->toIso8601String()])->assertOk();
+        $this->postJson("/api/v1/campaigns/{$second}/launch", ['scheduled_at' => now()->addDay()->toIso8601String(), 'consent_confirmed' => true])->assertOk();
         $this->postJson("/api/v1/campaigns/{$second}/cancel")->assertOk()->assertJsonPath('data.status', 'draft');
     }
 
@@ -278,7 +278,7 @@ final class CampaignsTest extends TestCase
     public function test_analytics_reports_the_delivery_funnel_per_number_and_template(): void
     {
         $id = $this->draft();
-        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk(); // 4 marketing sends (unknown consent included, the opted-out not)
+        $this->postJson("/api/v1/campaigns/{$id}/launch", ['consent_confirmed' => true])->assertOk(); // 4 marketing sends (unknown consent included, the opted-out not)
         $this->postWebhook($this->webhookBody('messages', $this->inboundValue()))->assertOk(); // 1 inbound
 
         $this->getJson('/api/v1/analytics/overview?days=7')->assertOk()
