@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\WhatsApp;
 
 use App\Application\WhatsApp\NumberAccess;
 use App\Application\WhatsApp\NumberHealth;
+use App\Application\WhatsApp\ProfileChecklist;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -41,6 +42,14 @@ final class PhoneNumberController extends Controller
         $access->ensureCanAccess($context->membership()?->loadMissing('role') ?? abort(403), $phoneNumber);
 
         return response()->json(['data' => $health->for($phoneNumber)]);
+    }
+
+    /** Channels › the business profile checklist (what Meta looks at for the blue tick), read live from Meta. */
+    public function profileChecklist(Request $request, PhoneNumber $phoneNumber, TenantContext $context, NumberAccess $access, ProfileChecklist $checklist): JsonResponse
+    {
+        $access->ensureCanAccess($context->membership()?->loadMissing('role') ?? abort(403), $phoneNumber);
+
+        return response()->json(['data' => $checklist->for($phoneNumber, $request->boolean('fresh'))]);
     }
 
     /** GET /team/members/{member}/numbers */

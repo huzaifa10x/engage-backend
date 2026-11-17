@@ -568,6 +568,36 @@ final class GraphClient
         return $this->getWithFieldFallback($phoneNumberId, self::PHONE_FIELDS_COMPAT, ['id', 'display_phone_number', 'verified_name', 'quality_rating', 'code_verification_status'], $token);
     }
 
+    /**
+     * GET /<PHONE_NUMBER_ID>/whatsapp_business_profile — the profile customers see: photo, about,
+     * description, address, email, websites and category.
+     *
+     * @return array<string, mixed>
+     */
+    public function getBusinessProfile(string $phoneNumberId, string $token): array
+    {
+        $body = $this->send('GET', "{$phoneNumberId}/whatsapp_business_profile", $token,
+            ['fields' => 'about,address,description,email,profile_picture_url,websites,vertical']);
+        $first = $body['data'][0] ?? null;
+
+        return is_array($first) ? $first : [];
+    }
+
+    /** GET /<WABA_ID>?fields=business_verification_status — VERIFIED, UNVERIFIED, PENDING or REJECTED (null when Meta does not say). */
+    public function getBusinessVerification(string $wabaId, string $token): ?string
+    {
+        try {
+            $body = $this->send('GET', $wabaId, $token, ['fields' => 'id,business_verification_status']);
+        } catch (MetaApiException $e) {
+            if ($e->isUnknownField()) {
+                return null;
+            }
+            throw $e;
+        }
+
+        return isset($body['business_verification_status']) ? strtoupper((string) $body['business_verification_status']) : null;
+    }
+
     /** @return list<array<string, mixed>> GET /<WABA_ID>/phone_numbers */
     public function listPhoneNumbers(string $wabaId, string $token): array
     {

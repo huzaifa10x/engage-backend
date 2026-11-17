@@ -285,6 +285,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::get('phone-numbers/{phoneNumber}', [PhoneNumberController::class, 'show'])->name('phone-numbers.show');
     Route::get('phone-numbers/{phoneNumber}/quality', [PhoneNumberController::class, 'quality'])
         ->middleware('can:'.Permission::ChannelsView->value)->name('phone-numbers.quality');
+    Route::get('phone-numbers/{phoneNumber}/profile-checklist', [PhoneNumberController::class, 'profileChecklist'])
+        ->middleware(['can:'.Permission::ChannelsView->value, 'throttle:30,1,wa-profile-checklist'])->name('phone-numbers.profile-checklist');
 
     Route::middleware('can:'.Permission::TeamManage->value)->group(function () {
         Route::get('team/members/{member}/numbers', [PhoneNumberController::class, 'grants'])->name('team.members.numbers');

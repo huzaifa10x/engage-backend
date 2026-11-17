@@ -66,6 +66,14 @@ final class FakeMeta
         if ($request->method() === 'GET' && str_contains((string) ($query['fields'] ?? ''), 'marketing_messages')) {
             return Http::response(['marketing_messages_onboarding_status' => 'ONBOARDED']);
         }
+        // Business profile checklist: a complete local profile, except the website, on a verified business.
+        if (str_ends_with($path, '/whatsapp_business_profile') && $request->method() === 'GET') {
+            return Http::response(['data' => [['about' => 'Local demo', 'description' => 'A local demo business', 'websites' => [],
+                'profile_picture_url' => 'https://example.test/profile.jpg', 'vertical' => 'RETAIL']]]);
+        }
+        if ($request->method() === 'GET' && str_contains((string) ($query['fields'] ?? ''), 'business_verification_status')) {
+            return Http::response(['business_verification_status' => 'VERIFIED']);
+        }
         if (str_ends_with($path, '/onboard_partners_to_mm_lite')) {
             return Http::response(['request_id' => 'local-mm-request']);
         }
