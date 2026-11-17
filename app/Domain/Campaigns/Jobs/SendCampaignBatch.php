@@ -31,6 +31,8 @@ use Illuminate\Validation\ValidationException;
  * the same send queue, per-number rate limit and retries as an inbox message — a campaign can
  * never outrun Meta's limits. Stops as soon as the campaign is no longer "sending".
  *
+ * Spread: at most the workspace's share of the daily messaging limit per hour (default 25%).
+ *
  * Meta's daily messaging limit: the campaign sends only as many as the business has room for in
  * the moving 24 hours, then waits (wait_reason "daily_limit") until room frees up — or until Meta
  * raises the limit — and carries on by itself.
@@ -93,6 +95,12 @@ final class SendCampaignBatch implements ShouldQueue
         // Pace: `batch_per_hour` messages per hour (set from the plan at launch), in slices of at most
         // 1,000 so no single job runs long; the wait after a slice is proportional to its size.
         $rate = $campaign->batch_per_hour !== null ? max(1, $campaign->batch_per_hour) : null;
+        // Spread: one campaign never uses more than the workspace's share (default 25%) of the daily
+        // messaging limit in an hour, so one large send cannot take the whole day's room at once.
+        $cap = ComplianceSettings::for($tenant)->campaignHourlyCap($limits->limitFor($number));
+        if ($cap !== null) {
+            $rate = $rate === null ? $cap : min($rate, $cap);
+        }
         $limit = $rate !== null ? min($rate, 1000) : self::BATCH;
         $recipients = CampaignRecipient::query()->with('contact')->where('campaign_id', $campaign->id)
             ->where('status', 'pending')->orderBy('id')->limit($limit)->get();
@@ -154,7 +162,7 @@ final class SendCampaignBatch implements ShouldQueue
 
         $remaining = CampaignRecipient::query()->where('campaign_id', $campaign->id)->where('status', 'pending')->exists();
         if ($remaining) {
-            if ($limitReached) {
+            if ($limitReached || $limits->summary($number)['remaining'] === 0) { // room used up in this slice
                 $this->waitForDailyLimit($campaign, $limits, $number);
             } elseif ($rate !== null) {
                 $wait = (int) ceil(3600 * $handled / $rate); // seconds until the next slice

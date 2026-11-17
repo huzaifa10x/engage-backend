@@ -97,6 +97,7 @@ final class ComplianceController extends Controller
             'quiet_hours_enabled' => ['sometimes', 'boolean'],
             'quiet_hours_start' => ['sometimes', 'date_format:H:i'],
             'quiet_hours_end' => ['sometimes', 'date_format:H:i'],
+            'campaign_hourly_share' => ['sometimes', 'integer', 'min:5', 'max:100'],
         ]);
         if (isset($data['opt_out_keywords'])) {
             $data['opt_out_keywords'] = ComplianceSettings::keywords($data['opt_out_keywords'], ComplianceSettings::LOCKED_OPT_OUT);

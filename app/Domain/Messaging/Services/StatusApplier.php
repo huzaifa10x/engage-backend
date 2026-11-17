@@ -11,6 +11,7 @@ use App\Domain\Messaging\Events\MessageStored;
 use App\Domain\Messaging\Exceptions\MessageNotYetKnown;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Models\MessageStatusEvent;
+use App\Support\Meta\MetaErrorCatalog;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 
@@ -64,7 +65,7 @@ final class StatusApplier
                     'status' => MessageStatus::Failed,
                     'failed_at' => $at,
                     'error_code' => isset($error['code']) ? (string) $error['code'] : null,
-                    'error_title' => isset($error['title']) ? mb_substr((string) $error['title'], 0, 255) : null,
+                    'error_title' => ($title = MetaErrorCatalog::title($error['code'] ?? null, isset($error['title']) ? (string) $error['title'] : null)) !== null ? mb_substr($title, 0, 255) : null,
                     'error_details' => $error ?: null,
                 ];
             }

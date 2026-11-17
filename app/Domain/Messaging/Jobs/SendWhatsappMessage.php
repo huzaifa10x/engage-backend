@@ -19,6 +19,7 @@ use App\Domain\WhatsApp\Exceptions\WhatsappException;
 use App\Infrastructure\Meta\GraphClient;
 use App\Infrastructure\Meta\MetaApiException;
 use App\Infrastructure\Meta\MetaUsage;
+use App\Support\Meta\MetaErrorCatalog;
 use App\Support\Queue\QueueName;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -235,7 +236,7 @@ final class SendWhatsappMessage implements ShouldQueue
             'status' => MessageStatus::Failed,
             'failed_at' => now(),
             'error_code' => mb_substr($code, 0, 32),
-            'error_title' => mb_substr($title, 0, 255),
+            'error_title' => mb_substr((string) MetaErrorCatalog::title($code, $title), 0, 255),
             'error_details' => $details ?: null,
         ])->save();
 

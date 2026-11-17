@@ -26,6 +26,7 @@ use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Support\Meta\MetaErrorCatalog;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
@@ -398,6 +399,9 @@ final class ManageCampaigns
             ->selectRaw('status, count(*) AS total')->groupBy('status')->pluck('total', 'status');
 
         $m = fn (string ...$statuses) => (int) array_sum(array_map(fn (string $s) => (int) ($messages[$s] ?? 0), $statuses));
+        // Meta's per-person marketing limit: not a failure of the business or the number, shown on its own.
+        $marketingLimit = Message::query()->where('campaign_id', $campaign->id)->where('status', 'failed')
+            ->where('error_code', MetaErrorCatalog::PER_PERSON_MARKETING_LIMIT)->count();
 
         return [
             'matched' => $campaign->matched_count,
@@ -408,7 +412,8 @@ final class ManageCampaigns
             'sent' => $m('accepted', 'sent', 'delivered', 'read'),
             'delivered' => $m('delivered', 'read'),
             'read' => $m('read'),
-            'failed' => $m('failed') + (int) ($recipients['failed'] ?? 0),
+            'failed' => $m('failed') - $marketingLimit + (int) ($recipients['failed'] ?? 0),
+            'marketing_limit' => $marketingLimit,
             'replied' => $this->replied($campaign),
             // Which API delivered the campaign's messages (Marketing Messages API vs Cloud API).
             'routes' => $this->routes($campaign),
@@ -448,7 +453,8 @@ final class ManageCampaigns
             ->map(fn (object $r) => ['reason' => (string) $r->reason, 'code' => null, 'count' => (int) $r->total, 'stage' => $r->status === 'skipped' ? 'skipped' : 'not_sent']);
         $after = Message::query()->where('campaign_id', $campaign->id)->where('status', 'failed')
             ->selectRaw("coalesce(error_title, 'Rejected by WhatsApp') AS reason, error_code, count(*) AS total")->groupBy('error_title', 'error_code')->toBase()->get()
-            ->map(fn (object $r) => ['reason' => (string) $r->reason, 'code' => $r->error_code !== null ? (string) $r->error_code : null, 'count' => (int) $r->total, 'stage' => 'failed']);
+            ->map(fn (object $r) => ['reason' => (string) $r->reason, 'code' => $r->error_code !== null ? (string) $r->error_code : null, 'count' => (int) $r->total,
+                'stage' => (string) $r->error_code === MetaErrorCatalog::PER_PERSON_MARKETING_LIMIT ? 'marketing_limit' : 'failed']);
 
         return $before->concat($after)->sortByDesc('count')->values()->all();
     }

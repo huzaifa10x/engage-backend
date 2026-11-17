@@ -10,6 +10,21 @@ namespace App\Support\Meta;
  */
 final class MetaErrorCatalog
 {
+    /**
+     * Meta's per-person marketing limit ("This message was not delivered to maintain healthy ecosystem
+     * engagement"): Meta caps how many marketing messages one person receives. Says nothing about the
+     * business: never retried, never counted as a failure of the number.
+     */
+    public const PER_PERSON_MARKETING_LIMIT = '131049';
+
+    public const PER_PERSON_MARKETING_LIMIT_LABEL = 'Not delivered: Meta’s per-person marketing limit';
+
+    /** The title we store for a refusal (ours for the per-person marketing limit, Meta's otherwise). */
+    public static function title(int|string|null $code, ?string $metaTitle): ?string
+    {
+        return (string) $code === self::PER_PERSON_MARKETING_LIMIT ? self::PER_PERSON_MARKETING_LIMIT_LABEL : $metaTitle;
+    }
+
     private const HINTS = [
         3 => 'The connected app is missing a permission. Reconnect the number from Channels.',
         10 => 'Permission denied by Meta. Reconnect the number from Channels and accept all requested permissions.',
@@ -33,7 +48,7 @@ final class MetaErrorCatalog
         131045 => 'This number is not registered correctly with the Cloud API. Reconnect it from Channels.',
         131047 => 'More than 24 hours have passed since the customer last replied. Send an approved template to restart the conversation.',
         131048 => 'Meta is limiting this number because of spam signals. Slow down and check the quality rating in WhatsApp Manager.',
-        131049 => 'Meta chose not to deliver this marketing message to keep the recipient from receiving too many. Try again later (do not resend immediately).',
+        131049 => 'Meta limits how many marketing messages one person receives from all businesses. This person has had enough for now. It is not retried and does not affect your number’s quality.',
         131050 => 'The recipient has stopped marketing messages from this business.',
         131051 => 'This message type is not supported.',
         131052 => 'The attachment could not be processed by WhatsApp. Check the file type and size.',

@@ -24,6 +24,18 @@ final class ComplianceSettings
     public const MIN_MEDIA_DAYS = 14;
 
     /**
+     * Messages one campaign may send per hour: its share of the business's daily messaging limit
+     * (rounded up). Null when the limit is unlimited.
+     */
+    public function campaignHourlyCap(int $dailyLimit): ?int
+    {
+        return $dailyLimit >= PHP_INT_MAX ? null : max(1, (int) ceil($dailyLimit * $this->campaignHourlyShare / 100));
+    }
+
+    /** One campaign may use at most this share of the daily messaging limit in an hour (percent). */
+    public const DEFAULT_CAMPAIGN_HOURLY_SHARE = 25;
+
+    /**
      * @param  list<string>  $optOutKeywords
      * @param  list<string>  $optInKeywords
      */
@@ -42,6 +54,7 @@ final class ComplianceSettings
         public readonly bool $quietHoursEnabled = true,
         public readonly string $quietHoursStart = '22:00',
         public readonly string $quietHoursEnd = '08:00',
+        public readonly int $campaignHourlyShare = self::DEFAULT_CAMPAIGN_HOURLY_SHARE,
     ) {}
 
     public static function for(?Tenant $tenant): self
@@ -64,6 +77,7 @@ final class ComplianceSettings
             (bool) ($stored['quiet_hours_enabled'] ?? true),
             self::clock($stored['quiet_hours_start'] ?? null, '22:00'),
             self::clock($stored['quiet_hours_end'] ?? null, '08:00'),
+            min(100, max(5, (int) ($stored['campaign_hourly_share'] ?? self::DEFAULT_CAMPAIGN_HOURLY_SHARE))),
         );
     }
 
@@ -136,6 +150,7 @@ final class ComplianceSettings
             'quiet_hours_enabled' => $this->quietHoursEnabled,
             'quiet_hours_start' => $this->quietHoursStart,
             'quiet_hours_end' => $this->quietHoursEnd,
+            'campaign_hourly_share' => $this->campaignHourlyShare,
         ];
     }
 }

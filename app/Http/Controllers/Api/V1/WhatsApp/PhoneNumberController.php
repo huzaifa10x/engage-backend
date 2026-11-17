@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\WhatsApp;
 
 use App\Application\WhatsApp\NumberAccess;
+use App\Application\WhatsApp\NumberHealth;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -32,6 +33,14 @@ final class PhoneNumberController extends Controller
         $access->ensureCanAccess($context->membership()?->loadMissing('role') ?? abort(403), $phoneNumber);
 
         return PhoneNumberResource::make($phoneNumber);
+    }
+
+    /** Channels › "Quality and limits": rating, daily limit used, Meta's latest warning, 30 days of changes. */
+    public function quality(PhoneNumber $phoneNumber, TenantContext $context, NumberAccess $access, NumberHealth $health): JsonResponse
+    {
+        $access->ensureCanAccess($context->membership()?->loadMissing('role') ?? abort(403), $phoneNumber);
+
+        return response()->json(['data' => $health->for($phoneNumber)]);
     }
 
     /** GET /team/members/{member}/numbers */

@@ -36,7 +36,9 @@ final class PhoneNumberHealthHandler implements WebhookHandler
         [$type, $old, $new] = match ($change->field) {
             'phone_number_quality_update' => ['quality.'.mb_strtolower((string) ($v['event'] ?? 'update')), $number?->messaging_limit_tier, $v['current_limit'] ?? null],
             'phone_number_name_update' => ['name.'.mb_strtolower((string) ($v['decision'] ?? 'update')), $number?->verified_name, $v['requested_verified_name'] ?? null],
-            default => ['alert.'.mb_strtolower((string) ($v['alert_type'] ?? $v['entity_type'] ?? 'account')), null, $v['alert_severity'] ?? null],
+            // account_alerts: the details are in alert_info (older payloads had them at the top level).
+            default => ['alert.'.mb_strtolower((string) ($v['alert_info']['alert_type'] ?? $v['alert_type'] ?? $v['entity_type'] ?? 'account')), null,
+                $v['alert_info']['alert_severity'] ?? $v['alert_severity'] ?? null],
         };
 
         if ($number !== null && $change->field === 'phone_number_quality_update' && ($tier = MessagingLimits::tierName($v['current_limit'] ?? null)) !== null) {

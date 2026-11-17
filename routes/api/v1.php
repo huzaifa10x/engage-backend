@@ -283,6 +283,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     // Scoped to the member's granted numbers (owners/admins: all).
     Route::get('phone-numbers', [PhoneNumberController::class, 'index'])->name('phone-numbers.index');
     Route::get('phone-numbers/{phoneNumber}', [PhoneNumberController::class, 'show'])->name('phone-numbers.show');
+    Route::get('phone-numbers/{phoneNumber}/quality', [PhoneNumberController::class, 'quality'])
+        ->middleware('can:'.Permission::ChannelsView->value)->name('phone-numbers.quality');
 
     Route::middleware('can:'.Permission::TeamManage->value)->group(function () {
         Route::get('team/members/{member}/numbers', [PhoneNumberController::class, 'grants'])->name('team.members.numbers');

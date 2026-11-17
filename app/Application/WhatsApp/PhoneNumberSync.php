@@ -6,7 +6,10 @@ namespace App\Application\WhatsApp;
 
 use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\WhatsApp\Models\PhoneNumber;
+use App\Domain\WhatsApp\Models\QualityEvent;
 use App\Domain\WhatsApp\Models\WabaAccount;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /** Maps Graph API node payloads onto our rows. Pure mapping — no HTTP. */
 final class PhoneNumberSync
@@ -56,6 +59,14 @@ final class PhoneNumberSync
             'is_on_biz_app' => isset($node['is_on_biz_app']) ? (bool) $node['is_on_biz_app'] : null,
         ], fn ($v) => $v !== null) + ['last_synced_at' => now()])->save();
 
+        // The Channels panel shows the last 30 days of changes; the webhooks do not carry the rating.
+        if ($number->exists && $oldQuality !== null && $number->quality_rating !== null && $number->quality_rating !== $oldQuality) {
+            $this->history($number, 'rating.changed', $oldQuality, $number->quality_rating);
+        }
+        if ($number->exists && $oldLimit !== null && $number->messaging_limit_tier !== null && $number->messaging_limit_tier !== $oldLimit) {
+            $this->history($number, 'limit.changed', $oldLimit, $number->messaging_limit_tier);
+        }
+
         // A new daily messaging limit applies to the whole business, and may let waiting campaigns go on.
         if ($number->messaging_limit_tier !== $oldLimit) {
             app(MessagingLimits::class)->limitChanged($number, $oldLimit, $number->messaging_limit_tier);
@@ -64,6 +75,19 @@ final class PhoneNumberSync
         // Owners hear about a lower quality rating at once; Red also pauses running campaigns.
         if ($number->exists && $oldQuality !== null && $number->quality_rating !== $oldQuality) {
             app(NumberQualityAlerts::class)->ratingChanged($number, $oldQuality, $number->quality_rating);
+        }
+    }
+
+    private function history(PhoneNumber $number, string $type, string $old, string $new): void
+    {
+        try {
+            QualityEvent::query()->create([
+                'tenant_id' => $number->tenant_id, 'waba_account_id' => $number->waba_account_id, 'phone_number_id' => $number->id,
+                'event_type' => $type, 'old_value' => mb_substr($old, 0, 64), 'new_value' => mb_substr($new, 0, 64),
+                'payload' => ['source' => 'api'], 'occurred_at' => now(),
+            ]);
+        } catch (Throwable $e) {
+            Log::warning('Quality history not recorded', ['phone_number_id' => $number->id, 'error' => $e->getMessage()]);
         }
     }
 }

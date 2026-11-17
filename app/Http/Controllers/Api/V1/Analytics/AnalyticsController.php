@@ -27,12 +27,15 @@ use Illuminate\Validation\Rule;
  */
 final class AnalyticsController extends Controller
 {
-    /** Cumulative funnel: a read message was also delivered and sent. */
+    /**
+     * Cumulative funnel: a read message was also delivered and sent. Meta's per-person marketing limit
+     * (131049) is not counted as failed: it says nothing about the number's quality.
+     */
     private const FUNNEL = "
         count(*) FILTER (WHERE status IN ('accepted','sent','delivered','read')) AS sent,
         count(*) FILTER (WHERE status IN ('delivered','read')) AS delivered,
         count(*) FILTER (WHERE status = 'read') AS read,
-        count(*) FILTER (WHERE status = 'failed') AS failed";
+        count(*) FILTER (WHERE status = 'failed' AND error_code IS DISTINCT FROM '131049') AS failed";
 
     public function overview(Request $request, NumberAccess $access, TenantContext $context): JsonResponse
     {

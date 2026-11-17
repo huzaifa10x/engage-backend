@@ -49,7 +49,7 @@ final class DailyMessagingLimitTest extends TestCase
         parent::setUp();
         $this->configureMeta();
         $this->tenant = $this->createTenant();
-        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['settings' => ['compliance' => ['quiet_hours_enabled' => false]]])->save());
+        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['settings' => ['compliance' => ['quiet_hours_enabled' => false, 'campaign_hourly_share' => 100]]])->save());
         $this->subscribe($this->tenant, 'pro');
         $this->owner = $this->addMember($this->tenant);
         $this->number = $this->connectNumber($this->tenant);
