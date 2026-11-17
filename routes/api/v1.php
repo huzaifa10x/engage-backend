@@ -371,6 +371,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::post('campaigns/{campaign}/cancel', [CampaignController::class, 'cancel'])->name('campaigns.cancel');
         Route::post('campaigns/{campaign}/pause', [CampaignController::class, 'pause'])->name('campaigns.pause');
         Route::post('campaigns/{campaign}/resume', [CampaignController::class, 'resume'])->name('campaigns.resume');
+        Route::post('campaigns/{campaign}/send-rest', [CampaignController::class, 'sendRest'])->name('campaigns.send-rest');
     });
     Route::get('analytics/overview', [AnalyticsController::class, 'overview'])
         ->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.overview');

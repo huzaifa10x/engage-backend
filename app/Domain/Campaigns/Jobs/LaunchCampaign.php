@@ -7,6 +7,7 @@ namespace App\Domain\Campaigns\Jobs;
 use App\Application\Campaigns\ManageCampaigns;
 use App\Domain\Campaigns\Enums\CampaignStatus;
 use App\Domain\Campaigns\Models\Campaign;
+use App\Domain\Campaigns\Services\AbTest;
 use App\Domain\Messaging\Models\Contact;
 use App\Support\Queue\QueueName;
 use Illuminate\Bus\Queueable;
@@ -70,6 +71,11 @@ final class LaunchCampaign implements ShouldQueue
             // insertOrIgnore: a re-run never adds a contact twice (unique campaign + contact).
             DB::table('campaign_recipients')->insertOrIgnore($rows);
         });
+
+        // A/B test: split the recipients who can receive it, randomly and evenly (and hold back the rest of a 20% test).
+        if (AbTest::enabled($campaign)) {
+            app(AbTest::class)->assign($campaign);
+        }
 
         $campaign->forceFill(['matched_count' => $matched, 'eligible_count' => $eligible, 'started_at' => $campaign->started_at ?? now()])->save();
 

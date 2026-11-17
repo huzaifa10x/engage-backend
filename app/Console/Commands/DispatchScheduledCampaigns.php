@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Application\Campaigns\ManageCampaigns;
 use App\Domain\Campaigns\Enums\CampaignStatus;
+use App\Domain\Campaigns\Exceptions\CampaignException;
 use App\Domain\Campaigns\Jobs\LaunchCampaign;
 use App\Domain\Campaigns\Jobs\SendCampaignBatch;
 use App\Domain\Campaigns\Models\Campaign;
+use App\Domain\Campaigns\Services\AbTest;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Console\Command;
@@ -57,7 +60,32 @@ final class DispatchScheduledCampaigns extends Command
             });
         }
 
-        $this->components->info("Started {$started} scheduled campaign(s); continued {$continued} waiting campaign(s).");
+        // A/B tests on 20% of the list with "send the winner automatically": once the test is sent and a
+        // winner is clear, the other 80% receive it. Without a clear winner they keep waiting.
+        $tests = $context->bypass(fn () => Campaign::query()->where('status', CampaignStatus::Completed->value)
+            ->where('completed_at', '>=', now()->subDays(14))
+            ->whereRaw("(ab_test->>'auto_send_winner')::boolean IS TRUE AND (ab_test->'rest' IS NULL OR ab_test->'rest' = 'null'::jsonb)")
+            ->limit(100)->get());
+        $winners = 0;
+        foreach ($tests as $campaign) {
+            $tenant = $context->bypass(fn () => Tenant::query()->find($campaign->tenant_id));
+            if ($tenant === null) {
+                continue;
+            }
+            $context->run($tenant, function () use ($campaign, &$winners): void {
+                $winner = app(AbTest::class)->results($campaign)['winner'];
+                if ($winner !== null) {
+                    try {
+                        app(ManageCampaigns::class)->sendRest($campaign, $winner, auto: true);
+                        $winners++;
+                    } catch (CampaignException) {
+                        // The number was disconnected: the owner can send it from the campaign later.
+                    }
+                }
+            });
+        }
+
+        $this->components->info("Started {$started} scheduled campaign(s); continued {$continued} waiting campaign(s); sent {$winners} A/B winner(s) to the rest of the list.");
 
         return self::SUCCESS;
     }

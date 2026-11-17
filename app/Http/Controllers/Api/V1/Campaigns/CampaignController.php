@@ -273,7 +273,33 @@ final class CampaignController extends Controller
             'variables.body.*' => ['nullable', 'string', 'max:1024'],
             'variables.buttons' => ['nullable', 'array', 'max:10'],
             'variables.buttons.*' => ['nullable', 'string', 'max:2000'],
+            // A/B test (validated in full by ManageCampaigns).
+            'ab_test' => ['nullable', 'array'],
+            'ab_test.enabled' => ['nullable', 'boolean'],
+            'ab_test.kind' => ['nullable', 'string', 'max:20'],
+            'ab_test.goal' => ['nullable', 'string', 'max:20'],
+            'ab_test.min_sample' => ['nullable', 'integer', 'min:10', 'max:100000'],
+            'ab_test.test_percent' => ['nullable', 'integer'],
+            'ab_test.auto_send_winner' => ['nullable', 'boolean'],
+            'ab_test.b_delay_hours' => ['nullable', 'integer'],
+            'ab_test.template_id' => ['nullable', 'uuid'],
+            'ab_test.media_id' => ['nullable', 'uuid'],
+            'ab_test.variables' => ['nullable', 'array'],
+            'ab_test.variables.header' => ['nullable', 'array', 'max:1'],
+            'ab_test.variables.header.*' => ['nullable', 'string', 'max:60'],
+            'ab_test.variables.body' => ['nullable', 'array', 'max:50'],
+            'ab_test.variables.body.*' => ['nullable', 'string', 'max:1024'],
+            'ab_test.variables.buttons' => ['nullable', 'array', 'max:10'],
+            'ab_test.variables.buttons.*' => ['nullable', 'string', 'max:2000'],
         ]);
+    }
+
+    /** A/B test on 20%: send the winner (or the owner's choice) to the rest of the list. */
+    public function sendRest(Request $request, Campaign $campaign): JsonResponse
+    {
+        $data = $request->validate(['variant' => ['required', Rule::in(['A', 'B'])]]);
+
+        return response()->json(['data' => $this->present($this->campaigns->sendRest($campaign, $data['variant'])->load('phoneNumber'))]);
     }
 
     private function routeOf(Campaign $c): string
@@ -320,6 +346,7 @@ final class CampaignController extends Controller
             'cost_estimate' => $c->cost_estimate,
             'opted_in_only' => $c->opted_in_only,
             'consent_confirmation' => $c->consent_confirmation,
+            'ab_test' => $c->ab_test,
             'created_at' => $c->created_at?->toIso8601String(),
         ];
     }

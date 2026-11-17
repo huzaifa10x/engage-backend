@@ -10,6 +10,7 @@ use App\Domain\Tenancy\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * One contact in one campaign. `status` covers what happens before WhatsApp is involved
@@ -22,6 +23,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property ?string $message_id
  * @property string $status
  * @property ?string $reason
+ * @property ?string $variant A | B (A/B test)
+ * @property ?string $phase test | rest (A/B test on part of the list)
+ * @property ?Carbon $not_before variant B of a send-time test waits until then
  */
 class CampaignRecipient extends Model
 {
@@ -29,7 +33,12 @@ class CampaignRecipient extends Model
 
     protected $attributes = ['status' => 'pending'];
 
-    protected $fillable = ['tenant_id', 'campaign_id', 'contact_id', 'message_id', 'status', 'reason'];
+    protected $fillable = ['tenant_id', 'campaign_id', 'contact_id', 'message_id', 'status', 'reason', 'variant', 'phase', 'not_before'];
+
+    protected function casts(): array
+    {
+        return ['not_before' => 'datetime'];
+    }
 
     /** @return BelongsTo<Contact, $this> */
     public function contact(): BelongsTo

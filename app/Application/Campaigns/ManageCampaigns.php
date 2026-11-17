@@ -13,6 +13,7 @@ use App\Domain\Campaigns\Jobs\LaunchCampaign;
 use App\Domain\Campaigns\Jobs\SendCampaignBatch;
 use App\Domain\Campaigns\Models\Campaign;
 use App\Domain\Campaigns\Models\CampaignRecipient;
+use App\Domain\Campaigns\Services\AbTest;
 use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\SegmentQuery;
@@ -72,42 +73,9 @@ final class ManageCampaigns
             }
         }
 
-        /** @var ?MessageTemplate $template */
-        $template = MessageTemplate::query()->where('waba_account_id', $number->waba_account_id)->find($data['template_id']);
-        if ($template === null) {
-            throw ValidationException::withMessages(['template_id' => 'Choose a template of this WhatsApp number.']);
-        }
-        if (! $template->isSendable()) {
-            throw ValidationException::withMessages(['template_id' => 'Only approved templates can be sent in a campaign.']);
-        }
-
-        $definition = $template->variables();
-        $variables = [
-            'header' => array_values(array_map('strval', (array) ($data['variables']['header'] ?? []))),
-            'body' => array_values(array_map('strval', (array) ($data['variables']['body'] ?? []))),
-            'buttons' => array_map('strval', (array) ($data['variables']['buttons'] ?? [])),
-        ];
-        foreach (['header', 'body'] as $part) {
-            $filled = array_filter($variables[$part], fn (string $v) => trim($v) !== '');
-            if (count($filled) !== count($definition[$part]) || count($variables[$part]) !== count($definition[$part])) {
-                throw ValidationException::withMessages(["variables.{$part}" => "Fill in every {$part} variable of the template (you can use contact fields such as {{first_name}})."]);
-            }
-        }
-        foreach ($definition['buttons'] as $button) {
-            if ($button['variable'] && $button['type'] === 'URL' && trim((string) ($variables['buttons'][(string) $button['index']] ?? '')) === '') {
-                throw ValidationException::withMessages(['variables.buttons' => "Fill in the link value for the \"{$button['text']}\" button."]);
-            }
-        }
-
-        $mediaId = null;
-        $headerMedia = self::MEDIA_HEADERS[$definition['header_format'] ?? ''] ?? null;
-        if ($headerMedia !== null) {
-            $media = isset($data['media_id']) ? Media::query()->find($data['media_id']) : null;
-            if ($media === null || Media::whatsappTypeFor((string) $media->mime_type) !== $headerMedia) {
-                throw ValidationException::withMessages(['media_id' => "This template needs a header {$headerMedia}. Attach one."]);
-            }
-            $mediaId = $media->id;
-        }
+        $message = $this->message($number, $data['template_id'] ?? null, (array) ($data['variables'] ?? []), $data['media_id'] ?? null);
+        $template = $message['template'];
+        $abTest = $this->abTest($number, $template, $data['ab_test'] ?? null);
 
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
 
@@ -119,19 +87,125 @@ final class ManageCampaigns
             'template_name' => $template->name,
             'template_language' => $template->language,
             'template_category' => $template->category,
-            'variables' => $variables,
-            'media_id' => $mediaId,
+            'variables' => $message['variables'],
+            'media_id' => $message['media_id'],
             'segment_id' => $segment?->id,
             'audience_tag' => isset($data['audience_tag']) && trim((string) $data['audience_tag']) !== '' ? trim((string) $data['audience_tag']) : null,
             'audience_filter' => $this->segments->filter($data['filter'] ?? null),
             'notes' => isset($data['notes']) && trim((string) $data['notes']) !== '' ? trim((string) $data['notes']) : null,
             'objective' => $data['objective'] ?? null,
             'opted_in_only' => (bool) ($data['opted_in_only'] ?? false),
+            'ab_test' => $abTest,
         ])->save();
 
         $this->audit->record($campaign->wasRecentlyCreated ? 'campaign.created' : 'campaign.updated', $campaign, after: ['name' => $campaign->name]);
 
         return $campaign;
+    }
+
+    /**
+     * One message of a campaign (the campaign's own, or variant B of an A/B test): an approved template
+     * of the number's account with every variable filled in and the header file it needs.
+     *
+     * @param  array<string, mixed>  $input
+     * @return array{template: MessageTemplate, variables: array{header: list<string>, body: list<string>, buttons: array<string, string>}, media_id: ?string}
+     */
+    private function message(PhoneNumber $number, mixed $templateId, array $input, mixed $mediaInput, string $prefix = ''): array
+    {
+        /** @var ?MessageTemplate $template */
+        $template = MessageTemplate::query()->where('waba_account_id', $number->waba_account_id)->find($templateId);
+        if ($template === null) {
+            throw ValidationException::withMessages([$prefix.'template_id' => 'Choose a template of this WhatsApp number.']);
+        }
+        if (! $template->isSendable()) {
+            throw ValidationException::withMessages([$prefix.'template_id' => 'Only approved templates can be sent in a campaign.']);
+        }
+
+        $definition = $template->variables();
+        $variables = [
+            'header' => array_values(array_map('strval', (array) ($input['header'] ?? []))),
+            'body' => array_values(array_map('strval', (array) ($input['body'] ?? []))),
+            'buttons' => array_map('strval', (array) ($input['buttons'] ?? [])),
+        ];
+        foreach (['header', 'body'] as $part) {
+            $filled = array_filter($variables[$part], fn (string $v) => trim($v) !== '');
+            if (count($filled) !== count($definition[$part]) || count($variables[$part]) !== count($definition[$part])) {
+                throw ValidationException::withMessages([$prefix."variables.{$part}" => "Fill in every {$part} variable of the template (you can use contact fields such as {{first_name}})."]);
+            }
+        }
+        foreach ($definition['buttons'] as $button) {
+            if ($button['variable'] && $button['type'] === 'URL' && trim((string) ($variables['buttons'][(string) $button['index']] ?? '')) === '') {
+                throw ValidationException::withMessages([$prefix.'variables.buttons' => "Fill in the link value for the \"{$button['text']}\" button."]);
+            }
+        }
+
+        $mediaId = null;
+        $headerMedia = self::MEDIA_HEADERS[$definition['header_format'] ?? ''] ?? null;
+        if ($headerMedia !== null) {
+            $media = $mediaInput !== null ? Media::query()->find($mediaInput) : null;
+            if ($media === null || Media::whatsappTypeFor((string) $media->mime_type) !== $headerMedia) {
+                throw ValidationException::withMessages([$prefix.'media_id' => "This template needs a header {$headerMedia}. Attach one."]);
+            }
+            $mediaId = $media->id;
+        }
+
+        return ['template' => $template, 'variables' => $variables, 'media_id' => $mediaId];
+    }
+
+    /**
+     * The A/B test settings, validated: variant B uses its own approved template of the same category
+     * (so both go to the same audience), except a send-time test, which sends the same template later.
+     *
+     * @return ?array<string, mixed>
+     */
+    private function abTest(PhoneNumber $number, MessageTemplate $templateA, mixed $input): ?array
+    {
+        if (! is_array($input) || ! ($input['enabled'] ?? false)) {
+            return null;
+        }
+        $kind = (string) ($input['kind'] ?? '');
+        if (! in_array($kind, AbTest::KINDS, true)) {
+            throw ValidationException::withMessages(['ab_test.kind' => 'Choose what to test: template text, button or send time.']);
+        }
+        $goal = (string) ($input['goal'] ?? 'reply');
+        if (! in_array($goal, AbTest::GOALS, true)) {
+            throw ValidationException::withMessages(['ab_test.goal' => 'Choose the goal: reply rate, button click rate, leads or purchases.']);
+        }
+        $percent = (int) ($input['test_percent'] ?? 100);
+        if (! in_array($percent, [20, 100], true)) {
+            throw ValidationException::withMessages(['ab_test.test_percent' => 'Test on the whole list, or on 20% and send the winner to the other 80%.']);
+        }
+
+        $b = null;
+        $delay = null;
+        if ($kind === 'send_time') {
+            $delay = (int) ($input['b_delay_hours'] ?? 0);
+            if ($delay < 1 || $delay > 72) {
+                throw ValidationException::withMessages(['ab_test.b_delay_hours' => 'Send variant B between 1 and 72 hours after variant A.']);
+            }
+        } else {
+            $message = $this->message($number, $input['template_id'] ?? null, (array) ($input['variables'] ?? []), $input['media_id'] ?? null, 'ab_test.');
+            $tb = $message['template'];
+            if (strtoupper((string) $tb->category) !== strtoupper((string) $templateA->category)) {
+                throw ValidationException::withMessages(['ab_test.template_id' => 'Both variants need templates of the same category, so they go to the same audience.']);
+            }
+            if ($tb->id === $templateA->id) {
+                throw ValidationException::withMessages(['ab_test.template_id' => 'Choose a different template for variant B.']);
+            }
+            $b = ['message_template_id' => $tb->id, 'template_name' => $tb->name, 'template_language' => $tb->language, 'template_category' => $tb->category,
+                'variables' => $message['variables'], 'media_id' => $message['media_id']];
+        }
+
+        return [
+            'kind' => $kind,
+            'goal' => $goal,
+            'min_sample' => max(10, min(100000, (int) ($input['min_sample'] ?? AbTest::DEFAULT_MIN_SAMPLE))),
+            'test_percent' => $percent,
+            'auto_send_winner' => $percent < 100 && (bool) ($input['auto_send_winner'] ?? false),
+            'b' => $b,
+            'b_delay_hours' => $delay,
+            'rest' => null,
+        ];
     }
 
     /** Send now, or at $at (which requires the scheduling feature). */
@@ -218,16 +292,20 @@ final class ManageCampaigns
     /** Stops a scheduled campaign, or a running one: messages already handed to WhatsApp still go out. */
     public function cancel(Campaign $campaign): Campaign
     {
-        if (! in_array($campaign->status, [CampaignStatus::Scheduled, CampaignStatus::Sending, CampaignStatus::Paused], true)) {
+        $holding = $campaign->status === CampaignStatus::Completed && CampaignRecipient::query()->where('campaign_id', $campaign->id)->where('status', 'held')->exists();
+        if (! $holding && ! in_array($campaign->status, [CampaignStatus::Scheduled, CampaignStatus::Sending, CampaignStatus::Paused], true)) {
             throw CampaignException::cannot('Only a scheduled, sending or paused campaign can be stopped.');
         }
 
         $wasScheduled = $campaign->status === CampaignStatus::Scheduled;
-        CampaignRecipient::query()->where('campaign_id', $campaign->id)->where('status', 'pending')
+        CampaignRecipient::query()->where('campaign_id', $campaign->id)->whereIn('status', ['pending', 'held'])
             ->update(['status' => 'skipped', 'reason' => 'Campaign stopped', 'updated_at' => now()]);
-        $campaign->forceFill($wasScheduled
-            ? ['status' => CampaignStatus::Draft, 'scheduled_at' => null]
-            : ['status' => CampaignStatus::Cancelled, 'completed_at' => now()])->save();
+        $campaign->forceFill(match (true) {
+            $wasScheduled => ['status' => CampaignStatus::Draft, 'scheduled_at' => null],
+            // A/B test: the test was sent; the rest of the list will not be.
+            $holding => ['ab_test' => array_merge((array) $campaign->ab_test, ['rest' => ['variant' => null, 'at' => now()->toIso8601String(), 'stopped' => true]])],
+            default => ['status' => CampaignStatus::Cancelled, 'completed_at' => now()],
+        })->save();
         $this->audit->record('campaign.cancelled', $campaign);
 
         return $campaign;
@@ -274,6 +352,46 @@ final class ManageCampaigns
         return $campaign;
     }
 
+    /**
+     * A/B test on 20% of the list: send one variant to the 80% held back. Normally the declared winner;
+     * the owner may choose a variant without a clear winner (recorded as their choice in the Audit log).
+     */
+    public function sendRest(Campaign $campaign, string $variant, bool $auto = false): Campaign
+    {
+        $ab = $campaign->ab_test;
+        if (! AbTest::enabled($campaign) || (int) ($ab['test_percent'] ?? 100) >= 100) {
+            throw CampaignException::cannot('This campaign has no list held back for the winner.');
+        }
+        if (($ab['rest'] ?? null) !== null) {
+            throw CampaignException::cannot('The rest of the list was already sent variant '.$ab['rest']['variant'].'.');
+        }
+        if (! in_array($variant, ['A', 'B'], true)) {
+            throw ValidationException::withMessages(['variant' => 'Choose variant A or B.']);
+        }
+        if ($campaign->status !== CampaignStatus::Completed) {
+            throw CampaignException::cannot('Wait until the test has been sent to everyone in it.');
+        }
+        $results = app(AbTest::class)->results($campaign);
+        $number = PhoneNumber::query()->find($campaign->phone_number_id);
+        if ($number === null || $number->status !== PhoneNumberStatus::Connected) {
+            throw CampaignException::cannot('The WhatsApp number of this campaign is not connected.');
+        }
+
+        $held = CampaignRecipient::query()->where('campaign_id', $campaign->id)->where('status', 'held')
+            ->update(['status' => 'pending', 'variant' => $variant, 'updated_at' => now()]);
+        $campaign->forceFill([
+            'ab_test' => array_merge((array) $ab, ['rest' => ['variant' => $variant, 'at' => now()->toIso8601String(), 'recipients' => $held,
+                'winner' => $results['winner'], 'chosen_by' => $auto ? null : $this->context->membership()?->id, 'auto' => $auto]]),
+            'status' => CampaignStatus::Sending,
+            'completed_at' => null,
+        ])->save();
+        $this->audit->record('campaign.ab_rest_sent', $campaign, meta: ['variant' => $variant, 'recipients' => $held,
+            'winner' => $results['winner'], 'reason' => $auto ? 'Winner sent automatically' : ($results['winner'] === $variant ? 'Winner' : 'Chosen by the owner without a clear winner')]);
+        SendCampaignBatch::dispatch($campaign->id)->afterCommit();
+
+        return $campaign;
+    }
+
     /** Quality protection: stop every running campaign on a number Meta has just flagged. */
     public function autoPauseForNumber(PhoneNumber $number, string $reason): int
     {
@@ -291,7 +409,8 @@ final class ManageCampaigns
         $this->entitlements->ensureEnabled($this->context->tenant(), FeatureKey::Broadcasts);
 
         $copy = Campaign::query()->create(array_merge(
-            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'audience_filter', 'notes', 'objective']),
+            $campaign->only(['phone_number_id', 'message_template_id', 'template_name', 'template_language', 'template_category', 'variables', 'media_id', 'segment_id', 'audience_tag', 'audience_filter', 'notes', 'objective', 'opted_in_only']),
+            ['ab_test' => is_array($campaign->ab_test) ? array_merge($campaign->ab_test, ['rest' => null]) : null],
             ['name' => mb_substr($campaign->name, 0, 112).' (copy)', 'status' => CampaignStatus::Draft, 'created_by_membership_id' => $this->context->membership()?->id],
         ));
         $this->audit->record('campaign.duplicated', $copy, meta: ['from' => $campaign->id]);
@@ -441,6 +560,8 @@ final class ManageCampaigns
             'eligible' => $campaign->eligible_count,
             'pending' => (int) ($recipients['pending'] ?? 0),
             'skipped' => (int) ($recipients['skipped'] ?? 0),
+            // A/B test on 20%: the rest of the list, waiting for the winner.
+            'held' => (int) ($recipients['held'] ?? 0),
             'queued' => $m('queued'),
             'sent' => $m('accepted', 'sent', 'delivered', 'read'),
             'delivered' => $m('delivered', 'read'),
@@ -452,6 +573,8 @@ final class ManageCampaigns
             'routes' => $this->routes($campaign),
             // Marketing: delivery, blocks and replies by the contact's consent when the campaign was prepared.
             'by_consent' => strtoupper((string) $campaign->template_category) === 'MARKETING' ? $this->byConsent($campaign) : null,
+            // A/B test: per-variant results of the test recipients, and the verdict.
+            'ab' => AbTest::enabled($campaign) ? app(AbTest::class)->results($campaign) : null,
         ];
     }
 

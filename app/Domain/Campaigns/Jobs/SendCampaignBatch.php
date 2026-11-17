@@ -9,6 +9,7 @@ use App\Application\Messaging\SendMessage;
 use App\Domain\Campaigns\Enums\CampaignStatus;
 use App\Domain\Campaigns\Models\Campaign;
 use App\Domain\Campaigns\Models\CampaignRecipient;
+use App\Domain\Campaigns\Services\AbTest;
 use App\Domain\Campaigns\Services\Personalizer;
 use App\Domain\Compliance\ComplianceSettings;
 use App\Domain\Messaging\Enums\MessageOrigin;
@@ -24,6 +25,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -104,7 +106,10 @@ final class SendCampaignBatch implements ShouldQueue
         }
         $limit = $rate !== null ? min($rate, 1000) : self::BATCH;
         $recipients = CampaignRecipient::query()->with('contact')->where('campaign_id', $campaign->id)
-            ->where('status', 'pending')->orderBy('id')->limit($limit)->get();
+            ->where('status', 'pending')->where(fn ($q) => $q->whereNull('not_before')->orWhere('not_before', '<=', now()))
+            ->orderBy('id')->limit($limit)->get();
+        // A/B test: variant B's own template (a send-time test sends A's template, later).
+        $b = AbTest::enabled($campaign) && is_array($campaign->ab_test['b'] ?? null) ? $campaign->ab_test['b'] : null;
         $capped = $marketing ? $campaigns->cappedContactIds($recipients->pluck('contact_id')->all(), $campaign->id) : [];
         if ($campaign->next_batch_at !== null || $campaign->getAttribute('wait_reason') !== null) {
             $campaign->forceFill(['next_batch_at' => null, 'wait_reason' => null])->save();
@@ -130,7 +135,8 @@ final class SendCampaignBatch implements ShouldQueue
                 continue;
             }
 
-            $variables = $campaign->variables ?? [];
+            $useB = $b !== null && $recipient->variant === 'B';
+            $variables = $useB ? (array) ($b['variables'] ?? []) : ($campaign->variables ?? []);
             $resolved = [
                 'header' => array_map(fn (string $v) => $personalizer->resolve($v, $contact), ($variables['header'] ?? [])),
                 'body' => array_map(fn (string $v) => $personalizer->resolve($v, $contact), ($variables['body'] ?? [])),
@@ -145,8 +151,10 @@ final class SendCampaignBatch implements ShouldQueue
             try {
                 $message = $send->toContact($number, $contact, [
                     'type' => 'template',
-                    'media_id' => $campaign->media_id,
-                    'template' => ['name' => $campaign->template_name, 'language' => $campaign->template_language, 'variables' => $resolved],
+                    'media_id' => $useB ? ($b['media_id'] ?? null) : $campaign->media_id,
+                    'template' => $useB
+                        ? ['name' => (string) $b['template_name'], 'language' => (string) $b['template_language'], 'variables' => $resolved]
+                        : ['name' => $campaign->template_name, 'language' => $campaign->template_language, 'variables' => $resolved],
                 ], MessageOrigin::Campaign, null, "campaign:{$campaign->id}:{$contact->id}");
 
                 $message->forceFill(['campaign_id' => $campaign->id])->save();
@@ -163,7 +171,16 @@ final class SendCampaignBatch implements ShouldQueue
             }
         }
 
-        $remaining = CampaignRecipient::query()->where('campaign_id', $campaign->id)->where('status', 'pending')->exists();
+        $pending = CampaignRecipient::query()->where('campaign_id', $campaign->id)->where('status', 'pending');
+        $remaining = (clone $pending)->where(fn ($q) => $q->whereNull('not_before')->orWhere('not_before', '<=', now()))->exists();
+        // A send-time test: only variant B is left, and it is not due yet.
+        $later = $remaining ? null : (clone $pending)->min('not_before');
+        if ($later !== null) {
+            Campaign::query()->whereKey($campaign->id)->where('status', CampaignStatus::Sending->value)
+                ->update(['next_batch_at' => Carbon::parse((string) $later), 'wait_reason' => 'send_time']);
+
+            return;
+        }
         if ($remaining) {
             if ($limitReached || $limits->summary($number)['remaining'] === 0) { // room used up in this slice
                 $this->waitForDailyLimit($campaign, $limits, $number);
