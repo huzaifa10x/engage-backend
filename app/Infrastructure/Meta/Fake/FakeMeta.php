@@ -75,6 +75,25 @@ final class FakeMeta
         if ($request->method() === 'GET' && str_contains((string) ($query['fields'] ?? ''), 'business_verification_status')) {
             return Http::response(['business_verification_status' => 'VERIFIED']);
         }
+        // WhatsApp forms (Flows API): created as drafts, updated, published and read back.
+        if (str_ends_with($path, '/flows') && $request->method() === 'POST') {
+            $id = (string) random_int(100000000000000, 999999999999999);
+            Cache::put("fake-meta:flow:{$id}", 'DRAFT', 86400);
+
+            return Http::response(['id' => $id, 'success' => true, 'validation_errors' => []]);
+        }
+        if (str_ends_with($path, '/assets') && $request->method() === 'POST') {
+            return Http::response(['success' => true, 'validation_errors' => []]);
+        }
+        if ((str_ends_with($path, '/publish') || str_ends_with($path, '/deprecate')) && $request->method() === 'POST') {
+            Cache::put('fake-meta:flow:'.basename(dirname('/'.$path)), str_ends_with($path, '/publish') ? 'PUBLISHED' : 'DEPRECATED', 86400);
+
+            return Http::response(['success' => true]);
+        }
+        if ($request->method() === 'GET' && str_contains((string) ($query['fields'] ?? ''), 'validation_errors')) {
+            return Http::response(['id' => basename($path), 'status' => Cache::get('fake-meta:flow:'.basename($path), 'DRAFT'), 'validation_errors' => []]);
+        }
+
         // Welcome message and ice breakers: accepted, and read back as last set.
         if (str_ends_with($path, '/conversational_automation') && $request->method() === 'POST') {
             Cache::put('fake-meta:conversational-automation:'.basename(dirname('/'.$path)), $request->data(), 3600);

@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\V1\DeveloperController;
 use App\Http\Controllers\Api\V1\EmailPreferenceController;
 use App\Http\Controllers\Api\V1\EntitlementController;
 use App\Http\Controllers\Api\V1\FeedbackController;
+use App\Http\Controllers\Api\V1\FormController;
 use App\Http\Controllers\Api\V1\Growth\LeadController;
 use App\Http\Controllers\Api\V1\Growth\LeadEvidenceController;
 use App\Http\Controllers\Api\V1\Growth\MetaAdController;
@@ -196,6 +197,9 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::get('runs', [ChatbotRunsController::class, 'index'])->name('runs');
         Route::get('start-rules', [ChatbotController::class, 'startRules'])->name('start-rules');
         Route::get('welcome', [ChatbotWelcomeController::class, 'index'])->name('welcome');
+        Route::get('forms', [FormController::class, 'index'])->name('forms.index');
+        Route::get('forms/{form}', [FormController::class, 'show'])->whereUuid('form')->name('forms.show');
+        Route::get('forms/{form}/submissions', [FormController::class, 'submissions'])->whereUuid('form')->name('forms.submissions');
         Route::post('start-rules/test', [ChatbotController::class, 'testStartRules'])->middleware('throttle:60,1')->name('start-rules.test');
         Route::get('runs/{session}', [ChatbotRunsController::class, 'show'])->whereUuid('session')->name('runs.show');
         Route::get('{flow}', [ChatbotController::class, 'show'])->whereUuid('flow')->name('show');
@@ -218,6 +222,9 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::delete('secrets/{name}', [ChatbotController::class, 'deleteSecret'])->name('secrets.delete');
         Route::put('workspace', [ChatbotController::class, 'saveWorkspace'])->name('workspace.save');
         Route::put('start-rules/order', [ChatbotController::class, 'orderStartRules'])->name('start-rules.order');
+        Route::post('forms', [FormController::class, 'store'])->middleware('throttle:30,1')->name('forms.store');
+        Route::patch('forms/{form}', [FormController::class, 'update'])->whereUuid('form')->middleware('throttle:60,1')->name('forms.update');
+        Route::post('forms/{form}/refresh', [FormController::class, 'refresh'])->whereUuid('form')->middleware('throttle:30,1')->name('forms.refresh');
         Route::put('snippets', [ChatbotController::class, 'saveSnippet'])->name('snippets.save');
         Route::delete('snippets/{snippet}', [ChatbotController::class, 'deleteSnippet'])->whereUuid('snippet')->name('snippets.delete');
         Route::patch('{flow}', [ChatbotController::class, 'update'])->whereUuid('flow')->name('update');
@@ -229,6 +236,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::middleware('can:'.Permission::ChatbotsPublish->value)->prefix('chatbots')->name('chatbots.')->group(function () {
         Route::post('{flow}/publish', [ChatbotController::class, 'publish'])->whereUuid('flow')->name('publish');
         Route::put('welcome/{phoneNumber}', [ChatbotWelcomeController::class, 'update'])->middleware('throttle:30,1')->name('welcome.update');
+        Route::post('forms/{form}/publish', [FormController::class, 'publish'])->whereUuid('form')->middleware('throttle:20,1')->name('forms.publish');
+        Route::delete('forms/{form}', [FormController::class, 'destroy'])->whereUuid('form')->name('forms.destroy');
         Route::post('{flow}/activate', [ChatbotController::class, 'activate'])->whereUuid('flow')->name('activate');
         Route::delete('start-rules/{flow}', [ChatbotController::class, 'removeStartRule'])->whereUuid('flow')->name('start-rules.remove');
         Route::post('{flow}/versions/{version}/restore', [ChatbotController::class, 'restore'])->whereUuid('flow')->whereNumber('version')->name('versions.restore');

@@ -300,6 +300,72 @@ final class GraphClient
         return (string) $body['id'];
     }
 
+    // ── WhatsApp Flows (forms) ─────────────────────────────────────────────────────────────
+
+    /**
+     * POST /<WABA_ID>/flows with its Flow JSON: a new draft flow.
+     *
+     * @param  list<string>  $categories  e.g. APPOINTMENT_BOOKING, LEAD_GENERATION, OTHER
+     * @return array{id: string, validation_errors: list<array<string, mixed>>}
+     */
+    public function createFlow(string $wabaId, string $name, array $categories, string $flowJson, string $token): array
+    {
+        $body = $this->send('POST', "{$wabaId}/flows", $token, ['name' => $name, 'categories' => $categories, 'flow_json' => $flowJson]);
+        if (! isset($body['id'])) {
+            throw new MetaApiException('Meta did not return the new form’s id.', 200);
+        }
+
+        return ['id' => (string) $body['id'], 'validation_errors' => array_values((array) ($body['validation_errors'] ?? []))];
+    }
+
+    /**
+     * POST /<FLOW_ID>/assets (multipart flow.json): replaces a draft flow's Flow JSON.
+     *
+     * @return list<array<string, mixed>> Meta's validation errors (empty when the JSON is valid)
+     */
+    public function updateFlowJson(string $flowId, string $flowJson, string $token): array
+    {
+        $this->assertConfigured();
+        try {
+            $response = Http::baseUrl($this->baseUrl)->acceptJson()->timeout(max($this->timeout, 30))->withToken($token)
+                ->withQueryParameters(['appsecret_proof' => hash_hmac('sha256', $token, $this->appSecret)])
+                ->attach('file', $flowJson, 'flow.json', ['Content-Type' => 'application/json'])
+                ->post("{$this->version}/{$flowId}/assets", ['name' => 'flow.json', 'asset_type' => 'FLOW_JSON']);
+        } catch (ConnectionException|RequestException $e) {
+            throw self::transportError('Could not reach Meta: ', $e);
+        }
+        $body = $response->json();
+        if ($response->failed() || isset($body['error'])) {
+            throw MetaApiException::fromResponse($response->status(), is_array($body) ? $body : null);
+        }
+
+        return array_values((array) ($body['validation_errors'] ?? []));
+    }
+
+    /** POST /<FLOW_ID>/publish — a published flow can no longer change. */
+    public function publishFlow(string $flowId, string $token): bool
+    {
+        return (bool) ($this->send('POST', "{$flowId}/publish", $token)['success'] ?? false);
+    }
+
+    /** POST /<FLOW_ID>/deprecate — a published flow is retired (it can no longer be sent). */
+    public function deprecateFlow(string $flowId, string $token): bool
+    {
+        return (bool) ($this->send('POST', "{$flowId}/deprecate", $token)['success'] ?? false);
+    }
+
+    /**
+     * GET /<FLOW_ID>?fields=id,name,status,validation_errors
+     *
+     * @return array{status: string, validation_errors: list<array<string, mixed>>}
+     */
+    public function getFlow(string $flowId, string $token): array
+    {
+        $body = $this->send('GET', $flowId, $token, ['fields' => 'id,name,status,validation_errors']);
+
+        return ['status' => strtoupper((string) ($body['status'] ?? 'DRAFT')), 'validation_errors' => array_values((array) ($body['validation_errors'] ?? []))];
+    }
+
     /**
      * GET /<MEDIA_ID> — short-lived download URL plus metadata for an inbound media object.
      *

@@ -16,7 +16,10 @@ use App\Domain\Chatbots\Services\OrderLookup;
 use App\Domain\Conversions\Services\ConversionTriggers;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\SegmentQuery;
+use App\Domain\Forms\Form;
+use App\Domain\Forms\FormVersion;
 use App\Domain\Growth\Services\Acquisition;
+use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Exceptions\MessagingException;
@@ -35,6 +38,7 @@ use App\Support\Api\ErrorCode;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -295,6 +299,33 @@ final class LiveRuntime extends BotRuntime
         }
         $this->contactModel->refresh();
         $this->contact = self::snapshot($this->contactModel);
+    }
+
+    public function formConsent(string $wording, FormVersion $version): void
+    {
+        $form = Form::query()->find($version->form_id);
+        $consent = app(ConsentService::class);
+        if ($this->contactModel->consent_state === ConsentState::OptedOut || $this->contactModel->marketing_opted_out) {
+            // Ticking the box is a fresh, explicit agreement: it counts, and is recorded with the form's words.
+            $consent->setMarketingPreference($this->contactModel, false, $form->name ?? 'WhatsApp form', ConsentService::SOURCE_WHATSAPP_FORM, $wording);
+        }
+        $consent->optIn($this->contactModel, ConsentService::SOURCE_WHATSAPP_FORM, ($form->name ?? 'WhatsApp form').' (version '.$version->version.')', wording: $wording);
+        $this->contactModel->refresh();
+        $this->contact = self::snapshot($this->contactModel);
+    }
+
+    public function formSubmitted(FormVersion $version, array $answers, array $saved, ?bool $consent, ?string $messageId): void
+    {
+        if ($messageId === null) {
+            return;
+        }
+        DB::table('form_submissions')->insertOrIgnore([
+            'id' => (string) Str::uuid7(), 'tenant_id' => $this->contactModel->tenant_id, 'form_id' => $version->form_id,
+            'form_version_id' => $version->id, 'contact_id' => $this->contactModel->id, 'conversation_id' => $this->conversation->id,
+            'message_id' => $messageId, 'session_id' => $this->session->id,
+            'answers' => json_encode($answers, JSON_UNESCAPED_UNICODE), 'saved' => json_encode($saved, JSON_UNESCAPED_UNICODE),
+            'consent' => $consent, 'created_at' => now(),
+        ]);
     }
 
     public function order(string $number): ?array

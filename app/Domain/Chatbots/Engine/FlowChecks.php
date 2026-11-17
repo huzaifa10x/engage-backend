@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Chatbots\Engine;
 
+use App\Domain\Forms\Form;
+
 /**
  * The publish gate. Every problem says what is wrong, on which block (and which branch), and how
  * to fix it in one line, so the builder can jump to it and highlight it. Level "error" blocks
@@ -263,8 +265,17 @@ final class FlowChecks
                 }
                 break;
             case 'form':
+                if (($c['form_id'] ?? null) !== null) {
+                    $form = Form::query()->whereNull('archived_at')->find($c['form_id']);
+                    if ($form === null) {
+                        $err('no_form', 'its WhatsApp form was deleted.', 'Choose another form in this step.');
+                    } elseif ($form->liveVersion() === null) {
+                        $err('form_not_published', 'its WhatsApp form “'.$form->name.'” is not published yet.', 'Publish the form in Bot settings › WhatsApp forms.');
+                    }
+                    break;
+                }
                 if ($c['flow_id'] === null) {
-                    $err('no_form', 'no WhatsApp form chosen.', 'Paste the Flow ID of a published form from WhatsApp Manager → Flows.');
+                    $err('no_form', 'no WhatsApp form chosen.', 'Choose one of your WhatsApp forms, or paste the Flow ID of a published form from WhatsApp Manager → Flows.');
                 }
                 if ($c['screen'] === null) {
                     $err('no_screen', 'the first screen of the form is not set.', 'Enter the ID of the form’s first screen (as written in the Flow JSON, e.g. WELCOME).');

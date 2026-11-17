@@ -121,6 +121,8 @@ final class NodeConfig
                 'text' => $text(1024),
                 'footer' => self::str($c['footer'] ?? null, 60),
                 'flow_id' => preg_match('/^\d{5,25}$/', (string) ($c['flow_id'] ?? '')) === 1 ? (string) $c['flow_id'] : null,
+                // A form made in Chatbots & Flows (WhatsApp forms): its newest published version is sent.
+                'form_id' => preg_match('/^[0-9a-f-]{36}$/', (string) ($c['form_id'] ?? '')) === 1 ? (string) $c['form_id'] : null,
                 'cta' => self::str($c['cta'] ?? null, 20) ?: 'Open form',
                 'screen' => self::str($c['screen'] ?? null, 60),
                 'draft' => (bool) ($c['draft'] ?? false),

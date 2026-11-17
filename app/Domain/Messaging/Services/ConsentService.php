@@ -35,12 +35,15 @@ final class ConsentService
 
     public const SOURCE_QR_LINK = 'qr_link';
 
+    /** The consent box of a WhatsApp form (Chatbots & Flows › WhatsApp forms). */
+    public const SOURCE_WHATSAPP_FORM = 'whatsapp_form';
+
     public const SOURCE_IMPORT = 'import';
 
     public const SOURCE_LABELS = [
         'flow_step' => 'Flow step', 'chatbot' => 'Flow step', 'website_form' => 'Website form', 'ad' => 'Ad', 'qr_link' => 'QR code or link',
         'import' => 'Import', 'agent' => 'Manual', 'keyword' => 'Keyword', 'in_chat_button' => 'Consent question', 'api' => 'API',
-        'integration' => 'Store checkout', 'meta_preference' => 'WhatsApp setting',
+        'integration' => 'Store checkout', 'meta_preference' => 'WhatsApp setting', 'whatsapp_form' => 'WhatsApp form',
     ];
 
     /** Button ids of the in-chat consent request (Inbox → Ask for consent). */

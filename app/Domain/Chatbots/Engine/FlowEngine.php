@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace App\Domain\Chatbots\Engine;
 
 use App\Domain\Compliance\ComplianceSettings;
+use App\Domain\Crm\Models\ContactField;
+use App\Domain\Forms\Form;
+use App\Domain\Forms\FormDefinition;
+use App\Domain\Forms\FormVersion;
 use App\Domain\Growth\Services\MetaReferral;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Support\Carbon;
@@ -878,16 +882,30 @@ final class FlowEngine
                 break;
 
             case 'form':
+                $flowId = $c['flow_id'];
+                $screen = $c['screen'];
+                if (($c['form_id'] ?? null) !== null) {
+                    // One of our forms: its newest published version, kept for this conversation until it answers.
+                    $version = Form::query()->find($c['form_id'])?->liveVersion();
+                    if ($version === null) {
+                        $rt->note('The WhatsApp form of this step is not published: nothing was sent.');
+                        $rt->event($node['id'], 'error', 'form not published');
+                        break;
+                    }
+                    $rt->state['vars']['_form_versions'] = array_merge((array) ($rt->state['vars']['_form_versions'] ?? []), [$node['id'] => $version->id]);
+                    $flowId = $version->meta_flow_id;
+                    $screen = FormDefinition::SCREEN;
+                }
                 $rt->send($this->interactive($c, $rt, [
                     'type' => 'flow',
                     'action' => ['name' => 'flow', 'parameters' => array_filter([
                         'flow_message_version' => '3',
                         'flow_token' => 'bot:'.$node['id'],
-                        'flow_id' => $c['flow_id'],
+                        'flow_id' => $flowId,
                         'flow_cta' => $c['cta'],
-                        'mode' => $c['draft'] ? 'draft' : null,
+                        'mode' => $c['draft'] && ($c['form_id'] ?? null) === null ? 'draft' : null,
                         'flow_action' => 'navigate',
-                        'flow_action_payload' => $c['screen'] !== null ? ['screen' => $c['screen']] : null,
+                        'flow_action_payload' => $screen !== null ? ['screen' => $screen] : null,
                     ])],
                 ]));
                 break;
@@ -1158,6 +1176,13 @@ final class FlowEngine
                     return null;
                 }
                 unset($answers['flow_token']);
+                $versionId = ((array) ($rt->state['vars']['_form_versions'] ?? []))[$node['id']] ?? null;
+                $version = is_string($versionId) ? FormVersion::query()->find($versionId) : null;
+                if ($version !== null) {
+                    $this->formAnswers($rt, $node, $version, $answers, $input->messageId);
+
+                    return 'next';
+                }
                 $rt->state['vars'][$node['id']] = $answers;
                 foreach ($c['fields'] as $map) {
                     $value = data_get($answers, $map['key']);
@@ -1170,6 +1195,41 @@ final class FlowEngine
         }
 
         return null;
+    }
+
+    /**
+     * The answers of one of our forms (the version this conversation got): saved on the contact where
+     * the form says (dates day-first, or YYYY-MM-DD in a date field), the consent box recorded, and the
+     * submission kept with the form.
+     *
+     * @param  array<string, mixed>  $node
+     * @param  array<string, mixed>  $answers
+     */
+    private function formAnswers(BotRuntime $rt, array $node, FormVersion $version, array $answers, ?string $messageId): void
+    {
+        $read = FormDefinition::read($version->definition, $answers);
+        $vars = [];
+        $saved = [];
+        $consent = null;
+        foreach ($read as $a) {
+            $vars[$a['name']] = $a['value'];
+            if ($a['consent']) {
+                $consent = $a['value'] === 'Yes';
+                if ($consent) {
+                    $rt->formConsent($a['label'], $version);
+                }
+            }
+            $target = $a['save_to'];
+            if ($target !== null && $a['value'] !== null) {
+                $value = $a['iso'] !== null && str_starts_with($target, 'field:') && ContactField::query()->where('key', substr($target, 6))->value('type') === 'date'
+                    ? $a['iso'] : $a['value'];
+                $this->save($rt, $target, $value, $node['id']);
+            }
+            $saved[] = ['label' => $a['label'], 'value' => (string) ($a['value'] ?? ''), 'saved_to' => $target];
+        }
+        $rt->state['vars'][$node['id']] = $vars;
+        $rt->formSubmitted($version, $answers, $saved, $consent, $messageId);
+        $rt->note('The customer sent the form “'.$version->definition['title'].'”.');
     }
 
     /** What is saved for a file the customer sent: a link agents can open in the inbox. */

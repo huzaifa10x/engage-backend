@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Chatbots\Engine;
 
+use App\Domain\Forms\FormVersion;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -77,6 +78,17 @@ abstract class BotRuntime
 
     /** "Ask for marketing consent": Yes = opted in for marketing, No = opted out of marketing, with the exact words shown. */
     abstract public function consentAnswer(bool $yes, string $wording): void;
+
+    /** A WhatsApp form's consent box was ticked: an opt-in with the form as its source and the box's words. */
+    abstract public function formConsent(string $wording, FormVersion $version): void;
+
+    /**
+     * A WhatsApp form came back: kept as a submission of that form version.
+     *
+     * @param  array<string, mixed>  $answers
+     * @param  list<array{label: string, value: string, saved_to: ?string}>  $saved
+     */
+    abstract public function formSubmitted(FormVersion $version, array $answers, array $saved, ?bool $consent, ?string $messageId): void;
 
     /**
      * The status of one of this customer's orders in the connected store.

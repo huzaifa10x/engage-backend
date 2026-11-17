@@ -12,6 +12,7 @@ use App\Domain\Chatbots\Services\OrderLookup;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Crm\Services\SegmentQuery;
+use App\Domain\Forms\FormVersion;
 use App\Domain\Messaging\Exceptions\MessagingException;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\InboxTeam;
@@ -247,6 +248,16 @@ final class TestRuntime extends BotRuntime
     public function consentAnswer(bool $yes, string $wording): void
     {
         $this->note($yes ? '(Test) The customer would be opted in to marketing messages.' : '(Test) The customer would be opted out of marketing messages.');
+    }
+
+    public function formConsent(string $wording, FormVersion $version): void
+    {
+        $this->note('(Test) The customer would be opted in to marketing messages (WhatsApp form).');
+    }
+
+    public function formSubmitted(FormVersion $version, array $answers, array $saved, ?bool $consent, ?string $messageId): void
+    {
+        $this->note('(Test) The answers would be kept with the form.');
     }
 
     public function order(string $number): ?array
