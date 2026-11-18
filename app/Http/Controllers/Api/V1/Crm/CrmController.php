@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Crm;
 use App\Application\Crm\BulkEditContacts;
 use App\Application\Crm\ContactImporter;
 use App\Application\Crm\TagCatalog;
+use App\Domain\Access\PhoneVisibility;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Crm\Models\ContactField;
 use App\Domain\Crm\Models\ContactTag;
@@ -365,7 +366,7 @@ final class CrmController extends Controller
                     // Leading = + - @ would be run as a formula by spreadsheet apps.
                     $safe = fn (?string $v) => $v !== null && preg_match('/^[=+\-@]/', $v) === 1 && ! preg_match('/^\+\d+$/', $v) ? "'".$v : (string) $v;
                     fputcsv($out, [
-                        $c->wa_id !== null ? '+'.$c->wa_id : '', $safe($c->name ?? $c->profile_name), $safe($c->email), implode(';', $c->tags), $c->consent_state->value,
+                        (string) app(PhoneVisibility::class)->show($c->wa_id), $safe($c->name ?? $c->profile_name), $safe($c->email), implode(';', $c->tags), $c->consent_state->value,
                         // Lists (multi-select) as "a;b", yes/no as true/false — never "Array".
                         ...array_map(fn (string $k) => $safe(match (true) {
                             ! isset($c->custom_fields[$k]) => null,

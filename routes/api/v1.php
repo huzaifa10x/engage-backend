@@ -258,6 +258,14 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
 
     Route::get('roles', [RoleController::class, 'index'])
         ->middleware('can:'.Permission::TeamView->value)->name('roles.index');
+    // Roles and permissions (batch 6, item 13): the editor's catalog, custom roles, phone visibility.
+    Route::get('roles/catalog', [RoleController::class, 'catalog'])->middleware('can:'.Permission::TeamView->value)->name('roles.catalog');
+    Route::middleware('can:'.Permission::TeamManage->value)->group(function () {
+        Route::post('roles', [RoleController::class, 'store'])->name('roles.store');
+        Route::put('roles/{role}', [RoleController::class, 'update'])->whereUuid('role')->name('roles.update');
+        Route::delete('roles/{role}', [RoleController::class, 'destroy'])->whereUuid('role')->name('roles.destroy');
+        Route::put('team/privacy', [RoleController::class, 'privacy'])->name('team.privacy');
+    });
 
     Route::prefix('team')->name('team.')->group(function () {
         Route::get('members', [TeamMemberController::class, 'index'])

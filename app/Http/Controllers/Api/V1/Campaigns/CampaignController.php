@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Campaigns;
 
 use App\Application\Campaigns\ManageCampaigns;
 use App\Application\WhatsApp\MarketingMessages;
+use App\Domain\Access\PhoneVisibility;
 use App\Domain\Campaigns\Models\Campaign;
 use App\Domain\Campaigns\Models\CampaignRecipient;
 use App\Domain\Campaigns\Services\Personalizer;
@@ -158,7 +159,7 @@ final class CampaignController extends Controller
             $body = array_map(fn ($v) => $personalizer->resolve((string) $v, $contact), array_values((array) ($data['variables']['body'] ?? [])));
 
             return [
-                'contact' => ['id' => $contact->id, 'display_name' => $contact->displayName(), 'phone' => $contact->wa_id !== null ? '+'.$contact->wa_id : null],
+                'contact' => ['id' => $contact->id, 'display_name' => $contact->displayName(), 'phone' => app(PhoneVisibility::class)->show($contact->wa_id)],
                 'header' => $template->headerFormat() === 'TEXT' ? $fill((string) ($template->component('HEADER')['text'] ?? ''), $definition['header'], $header) : null,
                 'body' => $fill((string) ($template->component('BODY')['text'] ?? ''), $definition['body'], $body),
                 'footer' => $template->component('FOOTER')['text'] ?? null,
@@ -201,7 +202,7 @@ final class CampaignController extends Controller
                 foreach ($rows as $r) {
                     $name = (string) ($r->contact->name ?? $r->contact->profile_name ?? '');
                     fputcsv($out, [
-                        $r->contact?->wa_id !== null ? '+'.$r->contact->wa_id : '',
+                        (string) app(PhoneVisibility::class)->show($r->contact?->wa_id),
                         preg_match('/^[=+\-@]/', $name) === 1 ? "'".$name : $name,
                         $r->message !== null ? ($r->message->status->value === 'accepted' ? 'sent' : $r->message->status->value) : $r->status,
                         (string) ($r->message->error_title ?? $r->reason ?? ''),
@@ -243,7 +244,7 @@ final class CampaignController extends Controller
         return response()->json([
             'data' => collect($page->items())->map(fn (CampaignRecipient $r) => [
                 'id' => $r->id,
-                'contact' => $r->contact !== null ? ['id' => $r->contact->id, 'display_name' => $r->contact->displayName(), 'phone' => $r->contact->wa_id !== null ? '+'.$r->contact->wa_id : null] : null,
+                'contact' => $r->contact !== null ? ['id' => $r->contact->id, 'display_name' => $r->contact->displayName(), 'phone' => app(PhoneVisibility::class)->show($r->contact->wa_id)] : null,
                 // One word for the whole journey: before WhatsApp (recipient) or after (message).
                 'status' => $r->message !== null ? $r->message->status->value : $r->status,
                 'reason' => $r->message->error_title ?? $r->reason,

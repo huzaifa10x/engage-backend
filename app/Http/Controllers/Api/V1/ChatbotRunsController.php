@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Domain\Access\Permission;
+use App\Domain\Access\PhoneVisibility;
 use App\Domain\Chatbots\Models\ChatbotEvent;
 use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Models\ChatbotSession;
@@ -169,6 +170,6 @@ final class ChatbotRunsController extends Controller
             return null;
         }
 
-        return ['id' => $c->id, 'name' => $c->displayName(), 'phone' => $this->context->can(Permission::ContactsView) ? $c->wa_id : null];
+        return ['id' => $c->id, 'name' => $c->displayName(), 'phone' => $this->context->can(Permission::ContactsView) ? app(PhoneVisibility::class)->show($c->wa_id) : null];
     }
 }

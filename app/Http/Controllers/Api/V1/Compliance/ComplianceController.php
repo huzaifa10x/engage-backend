@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Compliance;
 
 use App\Application\Messaging\SendMessage;
+use App\Domain\Access\PhoneVisibility;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Chatbots\Services\ChatbotWorkspace;
 use App\Domain\Compliance\ComplianceSettings;
@@ -143,7 +144,7 @@ final class ComplianceController extends Controller
                 'wording' => $e->getAttribute('wording'),
                 'channel' => $e->getAttribute('channel') ?? 'whatsapp',
                 'created_at' => $e->created_at?->toIso8601String(),
-                'contact' => $e->contact !== null ? ['id' => $e->contact->id, 'display_name' => $e->contact->displayName(), 'phone' => $e->contact->wa_id !== null ? '+'.$e->contact->wa_id : null] : null,
+                'contact' => $e->contact !== null ? ['id' => $e->contact->id, 'display_name' => $e->contact->displayName(), 'phone' => app(PhoneVisibility::class)->show($e->contact->wa_id)] : null,
             ]),
             'meta' => ['next_cursor' => $page->nextCursor()?->encode()],
         ]);
@@ -170,7 +171,7 @@ final class ComplianceController extends Controller
                     $detail = (string) $e->detail;
                     $wording = (string) $e->getAttribute('wording');
                     fputcsv($out, [
-                        $e->created_at?->utc()->format('Y-m-d H:i:s'), $e->contact?->wa_id !== null ? '+'.$e->contact->wa_id : '',
+                        $e->created_at?->utc()->format('Y-m-d H:i:s'), (string) app(PhoneVisibility::class)->show($e->contact?->wa_id),
                         preg_match('/^[=+\-@]/', $name) === 1 ? "'".$name : $name, $e->action, $e->source,
                         preg_match('/^[=+\-@]/', $detail) === 1 ? "'".$detail : $detail,
                         (string) ($e->getAttribute('channel') ?? 'whatsapp'), preg_match('/^[=+\-@]/', $wording) === 1 ? "'".$wording : $wording,

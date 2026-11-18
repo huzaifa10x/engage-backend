@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources\Api\V1;
 
 use App\Domain\Access\Permission;
+use App\Domain\Access\PhoneVisibility;
 use App\Domain\Growth\GrowthAccess;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Services\Acquisition;
@@ -25,8 +26,10 @@ final class ContactResource extends JsonResource
             'name' => $this->name,
             'profile_name' => $this->profile_name,
             'username' => $this->username,
-            'phone' => $this->wa_id !== null ? '+'.$this->wa_id : null,
-            'wa_id' => $this->wa_id,
+            // Masked for teammates who may not see phone numbers (item 13).
+            'phone' => app(PhoneVisibility::class)->show($this->wa_id),
+            'wa_id' => app(PhoneVisibility::class)->canSee() ? $this->wa_id : null,
+            'phone_hidden' => $this->wa_id !== null && ! app(PhoneVisibility::class)->canSee(),
             'bsuid' => $this->bsuid,
             'email' => $this->email,
             'attributes' => (object) ($this->custom_fields ?? []),

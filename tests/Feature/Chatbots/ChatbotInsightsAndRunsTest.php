@@ -94,7 +94,7 @@ final class ChatbotInsightsAndRunsTest extends TestCase
         $done = collect($runs)->firstWhere('status', 'handed_off');
         $this->assertSame('Property enquiries', $done['flow']['name']);
         $this->assertSame('Qualified lead', $done['outcome']);
-        $this->assertSame('971500000001', $done['contact']['phone']);
+        $this->assertSame('+971500000001', $done['contact']['phone']);
 
         $this->assertCount(1, $this->getJson('/api/v1/chatbots/runs?status=running')->json('data'));
         $this->assertCount(1, $this->getJson('/api/v1/chatbots/runs?outcome=Qualified%20lead')->json('data'));

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Growth;
 
 use App\Domain\Access\Permission;
+use App\Domain\Access\PhoneVisibility;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Growth\GrowthAccess;
 use App\Domain\Growth\GrowthSettings;
@@ -181,7 +182,7 @@ final class LeadController extends Controller
                     $safe = fn (?string $v) => $v !== null && preg_match('/^[=+\-@]/', $v) === 1 ? "'".$v : (string) $v;
                     fputcsv($out, [
                         $safe($contact->displayName()),
-                        $contact->getAttribute('wa_id') ? '+'.$contact->getAttribute('wa_id') : '',
+                        (string) app(PhoneVisibility::class)->show($contact->getAttribute('wa_id')),
                         $a['source']['name'] ?? '',
                         $safe($a['source']['campaign'] ?? null),
                         Acquisition::LABELS[$a['status'] ?? 'unattributed'] ?? '',

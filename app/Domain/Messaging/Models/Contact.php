@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Models;
 
+use App\Domain\Access\PhoneVisibility;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Tenancy\Concerns\BelongsToTenant;
@@ -102,7 +103,8 @@ class Contact extends Model
 
     public function displayName(): string
     {
-        return $this->name ?? $this->profile_name ?? $this->username ?? ($this->wa_id ? '+'.$this->wa_id : 'WhatsApp user');
+        // A contact known only by number shows it, masked for teammates who may not see numbers (item 13).
+        return $this->name ?? $this->profile_name ?? $this->username ?? ($this->wa_id ? (string) app(PhoneVisibility::class)->show($this->wa_id) : 'WhatsApp user');
     }
 
     /**

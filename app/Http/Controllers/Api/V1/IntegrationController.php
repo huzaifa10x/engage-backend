@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Domain\Access\PhoneVisibility;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Commerce\CommerceAccess;
 use App\Domain\Commerce\Models\CommerceOrder;
@@ -197,7 +198,7 @@ final class IntegrationController extends Controller
         return response()->json([
             'data' => collect($page->items())->map(fn (IntegrationEvent $e) => [
                 'id' => $e->id, 'event' => $e->event, 'status' => $e->status, 'detail' => $e->detail, 'reference' => $e->data['order_number'] ?? null,
-                'customer' => $e->data['customer_name'] ?? null, 'phone' => $e->phone, 'contact_id' => $e->contact_id, 'message_id' => $e->message_id,
+                'customer' => $e->data['customer_name'] ?? null, 'phone' => $e->phone !== null && ! app(PhoneVisibility::class)->canSee() ? PhoneVisibility::mask((string) $e->phone) : $e->phone, 'contact_id' => $e->contact_id, 'message_id' => $e->message_id,
                 'due_at' => $e->due_at?->toIso8601String(), 'created_at' => $e->created_at?->toIso8601String(),
             ]),
             'meta' => ['total' => $page->total(), 'current_page' => $page->currentPage(), 'last_page' => $page->lastPage()],

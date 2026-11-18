@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Application\Forms\ManageForms;
+use App\Domain\Access\PhoneVisibility;
 use App\Domain\Forms\Form;
 use App\Domain\Forms\FormDefinition;
 use App\Domain\Forms\FormSubmission;
@@ -88,7 +89,7 @@ final class FormController extends Controller
             'data' => collect($page->items())->map(fn (FormSubmission $s) => [
                 'id' => $s->id,
                 'version' => $versions[$s->form_version_id] ?? null,
-                'contact' => ($c = $contacts[$s->contact_id] ?? null) !== null ? ['id' => $c->id, 'display_name' => $c->displayName(), 'phone' => $c->wa_id !== null ? '+'.$c->wa_id : null] : null,
+                'contact' => ($c = $contacts[$s->contact_id] ?? null) !== null ? ['id' => $c->id, 'display_name' => $c->displayName(), 'phone' => app(PhoneVisibility::class)->show($c->wa_id)] : null,
                 'conversation_id' => $s->conversation_id,
                 'answers' => $s->saved,
                 'consent' => $s->consent,
