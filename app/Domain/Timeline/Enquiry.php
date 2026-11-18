@@ -46,6 +46,9 @@ class Enquiry extends Model
 
     public const CONFIDENCE_LABELS = ['verified' => 'Verified', 'partial' => 'Partial', 'unknown' => 'Unknown'];
 
+    /** Mirror the column default so a new enquiry is complete without a refetch. */
+    protected $attributes = ['stage_version' => 0];
+
     protected $fillable = ['tenant_id', 'contact_id', 'number', 'conversation_id', 'started_at', 'started_by', 'start_reason', 'source', 'source_confidence',
         'source_detail', 'owner_membership_id', 'stage_id', 'stage_version', 'lost_reason', 'stage_changed_at', 'last_activity_at'];
 

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Api\PublicV1\ApiDocsController;
 use App\Http\Controllers\Api\PublicV1\PublicApiController;
+use App\Http\Controllers\Api\PublicV1\PublicCrmController;
+use App\Http\Middleware\AuditApiKeyWrites;
 use App\Http\Middleware\AuthenticateApiKey;
 use App\Http\Middleware\PlanRateLimit;
 use Illuminate\Support\Facades\Route;
@@ -20,7 +22,7 @@ Route::middleware('throttle:60,1')->group(function () {
     Route::get('openapi.json', [ApiDocsController::class, 'openapi'])->name('openapi');
 });
 
-$key = fn (?string $scope = null) => [AuthenticateApiKey::class.($scope ? ':'.$scope : ''), PlanRateLimit::class];
+$key = fn (?string $scope = null) => [AuthenticateApiKey::class.($scope ? ':'.$scope : ''), PlanRateLimit::class, AuditApiKeyWrites::class];
 
 Route::get('me', [PublicApiController::class, 'me'])->middleware($key())->name('me');
 Route::get('phone-numbers', [PublicApiController::class, 'phoneNumbers'])->middleware($key('templates:read'))->name('phone-numbers');
@@ -39,6 +41,20 @@ Route::post('contacts', [PublicApiController::class, 'createContact'])->middlewa
 Route::patch('contacts/{id}', [PublicApiController::class, 'updateContact'])->whereUuid('id')->middleware($key('contacts:write'))->name('contacts.update');
 Route::post('contacts/{id}/opt-in', [PublicApiController::class, 'optIn'])->whereUuid('id')->middleware($key('contacts:write'))->name('contacts.opt-in');
 Route::post('contacts/{id}/opt-out', [PublicApiController::class, 'optOut'])->whereUuid('id')->middleware($key('contacts:write'))->name('contacts.opt-out');
+Route::post('contacts/{id}/tags', [PublicCrmController::class, 'addTags'])->whereUuid('id')->middleware($key('contacts:write'))->name('contacts.tags.add');
+Route::delete('contacts/{id}/tags', [PublicCrmController::class, 'removeTags'])->whereUuid('id')->middleware($key('contacts:write'))->name('contacts.tags.remove');
+
+// Enquiries, their stages and the contact timeline.
+Route::get('stages', [PublicCrmController::class, 'stages'])->middleware($key('enquiries:read'))->name('stages');
+Route::get('enquiries', [PublicCrmController::class, 'enquiries'])->middleware($key('enquiries:read'))->name('enquiries');
+Route::post('enquiries', [PublicCrmController::class, 'startEnquiry'])->middleware($key('enquiries:write'))->name('enquiries.start');
+Route::get('enquiries/{id}', [PublicCrmController::class, 'enquiry'])->whereUuid('id')->middleware($key('enquiries:read'))->name('enquiries.show');
+Route::post('enquiries/{id}/stage', [PublicCrmController::class, 'moveStage'])->whereUuid('id')->middleware($key('enquiries:write'))->name('enquiries.stage');
+Route::get('timeline', [PublicCrmController::class, 'timeline'])->middleware($key('enquiries:read'))->name('timeline');
+
+// Flows.
+Route::get('flows', [PublicCrmController::class, 'flows'])->middleware($key('flows:start'))->name('flows');
+Route::post('flows/{id}/start', [PublicCrmController::class, 'startFlow'])->whereUuid('id')->middleware($key('flows:start'))->name('flows.start');
 
 // Event subscriptions for automation platforms (Zapier, Make) and for code that manages its own webhooks.
 Route::get('webhooks', [PublicApiController::class, 'webhooks'])->middleware($key('webhooks:manage'))->name('webhooks');

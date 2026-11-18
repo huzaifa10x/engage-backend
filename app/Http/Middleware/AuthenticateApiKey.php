@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
+use App\Domain\Developer\ApiCaller;
 use App\Domain\Developer\Models\ApiKey;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
@@ -53,6 +54,7 @@ final class AuthenticateApiKey
 
         $this->context->set($tenant);
         $request->attributes->set('api_key', $key);
+        ApiCaller::set($key);
 
         // "Last used" is for the portal; once a minute per key is plenty.
         if (Cache::add('api-key-seen:'.$key->id, 1, 60)) {

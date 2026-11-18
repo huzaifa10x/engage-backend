@@ -58,7 +58,7 @@ final class ApiDocumentationTest extends TestCase
     private function key(): string
     {
         $this->actingAsMember($this->owner);
-        $key = (string) $this->postJson('/api/v1/developer/api-keys', ['name' => 'docs', 'scopes' => ['messages:send', 'messages:read', 'contacts:read', 'contacts:write', 'templates:read']])->assertCreated()->json('data.key');
+        $key = (string) $this->postJson('/api/v1/developer/api-keys', ['name' => 'docs', 'scopes' => ['messages:send', 'messages:read', 'contacts:read', 'contacts:write', 'templates:read', 'enquiries:read', 'enquiries:write']])->assertCreated()->json('data.key');
         $this->app['auth']->forgetGuards();
 
         return $key;
@@ -143,6 +143,21 @@ final class ApiDocumentationTest extends TestCase
         $this->assertArrayHasKey('next_cursor', $list->json());
         $api()->postJson("/api/public/v1/contacts/{$contactId}/opt-out", $spec['contacts.opt-out']['request']['example'])->assertOk()->assertJsonPath('data.consent', 'opted_out');
         $api()->postJson("/api/public/v1/contacts/{$contactId}/opt-in", $spec['contacts.opt-in']['request']['example'])->assertOk()->assertJsonPath('data.consent', 'opted_in');
+
+        // Tags, enquiries, stages and the timeline (batch 6, item 6).
+        $sameShape($spec['contacts.tags.add']['response']['example']['data'], $api()->postJson("/api/public/v1/contacts/{$contactId}/tags", $spec['contacts.tags.add']['request']['example'])->assertOk()->json('data'), 'POST /contacts/{id}/tags');
+        $sameShape($spec['contacts.tags.remove']['response']['example']['data'], $api()->deleteJson("/api/public/v1/contacts/{$contactId}/tags", $spec['contacts.tags.remove']['request']['example'])->assertOk()->json('data'), 'DELETE /contacts/{id}/tags');
+        $this->actingAsMember($this->owner)->postJson('/api/v1/crm/stages/suggested')->assertOk();
+        $this->app['auth']->forgetGuards();
+        $stage = $api()->getJson('/api/public/v1/stages')->assertOk()->json('data.1');
+        $sameShape($spec['stages']['response']['example']['data'][0], $stage, 'GET /stages');
+        $enquiry = $api()->postJson('/api/public/v1/enquiries', ['contact_id' => $contactId])->assertStatus($spec['enquiries.start']['response']['status'])->json('data');
+        $sameShape($spec['enquiries.start']['response']['example']['data'], $enquiry, 'POST /enquiries');
+        $sameShape($spec['enquiries']['response']['example']['data'][0], $api()->getJson('/api/public/v1/enquiries')->assertOk()->json('data.0'), 'GET /enquiries');
+        $sameShape($spec['enquiries.show']['response']['example']['data'], $api()->getJson("/api/public/v1/enquiries/{$enquiry['id']}")->assertOk()->json('data'), 'GET /enquiries/{id}');
+        $moved = $api()->postJson("/api/public/v1/enquiries/{$enquiry['id']}/stage", ['stage_id' => $stage['id'], 'version' => $enquiry['version']])->assertStatus($spec['enquiries.stage']['response']['status']);
+        $sameShape($spec['enquiries.stage']['response']['example']['data'], $moved->json('data'), 'POST /enquiries/{id}/stage');
+        $sameShape($spec['timeline']['response']['example']['data'][0], $api()->getJson("/api/public/v1/timeline?contact_id={$contactId}")->assertOk()->json('data.0'), 'GET /timeline');
 
         // Account.
         $sameShape($spec['me']['response']['example']['data'], $api()->getJson('/api/public/v1/me')->assertOk()->json('data'), 'GET /me');

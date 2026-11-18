@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Audit;
 
 use App\Domain\Audit\Models\AuditLog;
+use App\Domain\Developer\ApiCaller;
 use App\Domain\Identity\Models\PlatformAdmin;
 use App\Domain\Identity\Models\User;
 use App\Domain\Tenancy\TenantContext;
@@ -40,6 +41,11 @@ final class AuditLogger
         ?string $tenantId = null,
     ): AuditLog {
         [$actorType, $actorId] = $this->actor();
+        // Through the public API: the key is the actor, named as it was at that moment.
+        if (($key = ApiCaller::current()) !== null && $actorType === 'system') {
+            [$actorType, $actorId] = ['api', $key['id']];
+            $meta += ['api_key' => $key['name']];
+        }
 
         // During a support session the acting person is the admin, not the impersonated user.
         if (is_string($impersonator = Context::getHidden('impersonator_id'))) {

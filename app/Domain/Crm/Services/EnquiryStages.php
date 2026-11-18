@@ -9,6 +9,7 @@ use App\Domain\Audit\AuditLogger;
 use App\Domain\Crm\Exceptions\StageConflict;
 use App\Domain\Crm\Models\ContactStageEvent;
 use App\Domain\Crm\Models\CrmStage;
+use App\Domain\Developer\ApiCaller;
 use App\Domain\Growth\GrowthAccess;
 use App\Domain\Growth\Jobs\RefreshMarketingAnalytics;
 use App\Domain\Messaging\Models\Contact;
@@ -135,7 +136,8 @@ final class EnquiryStages
         if (($proof['payment'] ?? null) !== null || ($proof['booking'] ?? null) !== null || $this->hasVerifiedPayment($lead)) {
             return;
         }
-        if ($this->context->can(Permission::StagesApproveWon)) {
+        // A teammate allowed to approve Won, or an API key given that permission.
+        if ($this->context->can(Permission::StagesApproveWon) || ApiCaller::allows('stages:approve_won')) {
             if ($reference === null) {
                 throw ValidationException::withMessages(['reason' => 'Add a reference for marking Won without a verified payment (an invoice or receipt number).']);
             }

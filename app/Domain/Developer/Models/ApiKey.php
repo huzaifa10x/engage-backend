@@ -37,6 +37,19 @@ class ApiKey extends Model
         'contacts:write' => 'Create and update contacts, record opt-in and opt-out',
         'templates:read' => 'List message templates and phone numbers',
         'webhooks:manage' => 'Subscribe to events (needed by Zapier and Make triggers)',
+        'enquiries:read' => 'Read enquiries, stages and the contact timeline',
+        'enquiries:write' => 'Change an enquiry\'s stage',
+        'stages:approve_won' => 'Mark an enquiry Won without a verified payment (with a reference)',
+        'flows:start' => 'Start a published flow for a contact',
+    ];
+
+    /**
+     * Ready-made sets of permissions offered when a key is made (it can still be adjusted).
+     * Approving Won is never in a preset: it is ticked on purpose.
+     */
+    public const PRESETS = [
+        'read_only' => ['label' => 'Read only', 'scopes' => ['messages:read', 'contacts:read', 'templates:read', 'enquiries:read']],
+        'read_write' => ['label' => 'Read and write', 'scopes' => ['messages:send', 'messages:read', 'contacts:read', 'contacts:write', 'templates:read', 'webhooks:manage', 'enquiries:read', 'enquiries:write', 'flows:start']],
     ];
 
     protected $fillable = ['tenant_id', 'name', 'prefix', 'key_hash', 'scopes', 'expires_at', 'last_used_at', 'last_used_ip', 'revoked_at', 'created_by_membership_id'];

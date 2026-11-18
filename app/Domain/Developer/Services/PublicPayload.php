@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace App\Domain\Developer\Services;
 
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Timeline\Enquiry;
+use App\Domain\Timeline\TimelineEvent;
+use DateTimeInterface;
+use Illuminate\Support\Carbon;
 
 /**
  * The shapes customers see, in the public API and in webhook events alike. Kept separate from
@@ -65,5 +70,55 @@ final class PublicPayload
             'last_message_at' => $conversation->last_message_at?->toIso8601String(),
             'contact' => $conversation->contact !== null ? self::contact($conversation->contact) : null,
         ];
+    }
+
+    /** @return array<string, mixed> */
+    public static function stage(CrmStage $stage): array
+    {
+        return ['id' => $stage->id, 'name' => $stage->name, 'group' => $stage->group, 'position' => $stage->position];
+    }
+
+    /**
+     * An enquiry: one stretch of conversation with a contact, with its own stage. "version" goes
+     * back with a stage change, so two systems cannot overwrite each other.
+     *
+     * @return array<string, mixed>
+     */
+    public static function enquiry(Enquiry $enquiry, ?CrmStage $stage): array
+    {
+        return [
+            'id' => $enquiry->id,
+            'number' => $enquiry->number,
+            'contact_id' => $enquiry->contact_id,
+            'started_at' => self::utc($enquiry->started_at),
+            'started_by' => $enquiry->started_by,
+            'source' => $enquiry->source,
+            'source_confidence' => $enquiry->source_confidence,
+            'stage' => $stage !== null ? ['id' => $stage->id, 'name' => $stage->name, 'group' => $stage->group] : null,
+            'version' => $enquiry->stage_version,
+            'lost_reason' => $enquiry->lost_reason,
+            'stage_changed_at' => self::utc($enquiry->stage_changed_at),
+            'last_activity_at' => self::utc($enquiry->last_activity_at),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    public static function timelineEvent(TimelineEvent $event): array
+    {
+        return [
+            'id' => $event->id,
+            'type' => $event->type,
+            'occurred_at' => self::utc($event->occurred_at),
+            'contact_id' => $event->contact_id,
+            'enquiry_id' => $event->enquiry_id,
+            'actor' => $event->actor,
+            'actor_name' => $event->actor_name,
+            'data' => (object) ($event->data ?? []),
+        ];
+    }
+
+    private static function utc(?DateTimeInterface $at): ?string
+    {
+        return $at !== null ? Carbon::instance($at)->utc()->format('Y-m-d\TH:i:s\Z') : null;
     }
 }

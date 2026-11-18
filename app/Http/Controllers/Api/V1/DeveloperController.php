@@ -45,6 +45,7 @@ final class DeveloperController extends Controller
             // Public API requests of this workspace: this minute and today (UTC). The portal is counted apart.
             'api_usage' => PlanRateLimit::usage($this->context->id()),
             'scopes' => collect(ApiKey::SCOPES)->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])->values(),
+            'presets' => collect(ApiKey::PRESETS)->map(fn (array $p, string $key) => ['key' => $key, 'label' => $p['label'], 'scopes' => $p['scopes']])->values(),
             'events' => collect(WebhookEndpoint::events())->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])->values(),
         ]]);
     }

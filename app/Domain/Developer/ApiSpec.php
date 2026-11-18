@@ -39,6 +39,19 @@ final class ApiSpec
         'error' => null, 'created_at' => '2026-10-07T09:31:00+00:00',
     ];
 
+    private const STAGE = ['id' => '01a1163a-7777-7000-8000-000000000007', 'name' => 'Qualified', 'group' => 'open', 'position' => 1];
+
+    private const ENQUIRY = [
+        'id' => '01a11634-5555-7000-8000-000000000005', 'number' => 2, 'contact_id' => '01a11637-76d8-7315-a1e6-a952a9445800', 'started_at' => '2026-10-07T09:30:00Z',
+        'started_by' => 'customer', 'source' => 'ad', 'source_confidence' => 'verified', 'stage' => ['id' => '01a1163a-7777-7000-8000-000000000007', 'name' => 'Qualified', 'group' => 'open'],
+        'version' => 1, 'lost_reason' => null, 'stage_changed_at' => '2026-10-07T09:45:00Z', 'last_activity_at' => '2026-10-07T09:46:00Z',
+    ];
+
+    private const TIMELINE_EVENT = [
+        'id' => '01a11635-6666-7000-8000-000000000006', 'type' => 'stage.changed', 'occurred_at' => '2026-10-07T09:45:00Z', 'contact_id' => '01a11637-76d8-7315-a1e6-a952a9445800',
+        'enquiry_id' => '01a11634-5555-7000-8000-000000000005', 'actor' => 'agent', 'actor_name' => 'Sara Khan', 'data' => ['from' => 'New', 'to' => 'Qualified'],
+    ];
+
     private const CONVERSATION = [
         'id' => '01a11637-8a40-72b1-9d3c-5e7f1a2b3c4d', 'phone_number_id' => '01a11630-1111-7000-8000-000000000001', 'status' => 'open', 'assigned_to' => null,
         'unread_count' => 1, 'last_message_at' => '2026-10-07T09:31:00+00:00', 'contact' => self::CONTACT,
@@ -88,6 +101,7 @@ final class ApiSpec
                     ['status' => 403, 'code' => 'feature_not_available', 'meaning' => 'The workspace\'s plan does not include this.'],
                     ['status' => 403, 'code' => 'workspace_unavailable', 'meaning' => 'The workspace is suspended or closed.'],
                     ['status' => 404, 'code' => 'not_found', 'meaning' => 'No such item in this workspace.'],
+                    ['status' => 409, 'code' => 'conflict', 'meaning' => 'Someone changed the item since you read it (an enquiry\'s stage). Read it again and decide.'],
                     ['status' => 422, 'code' => 'validation_failed', 'meaning' => 'A field is missing or wrong. "details.fields" says which and why.'],
                     ['status' => 422, 'code' => 'window_closed', 'meaning' => 'The 24-hour window is closed: send an approved template instead.'],
                     ['status' => 422, 'code' => 'contact_opted_out', 'meaning' => 'The contact opted out of messages.'],
@@ -209,6 +223,58 @@ final class ApiSpec
                     'path_params' => [$id], 'body' => $note, 'request' => ['example' => ['note' => 'Ticked the box at checkout']], 'response' => ['status' => 200, 'example' => ['data' => self::CONTACT]]],
                 ['id' => 'contacts.opt-out', 'method' => 'POST', 'path' => '/contacts/{id}/opt-out', 'scope' => 'contacts:write', 'summary' => 'Record opt-out', 'description' => 'Records that the contact no longer wants messages. Sending to them is refused from that moment.',
                     'path_params' => [$id], 'body' => $note, 'request' => ['example' => ['note' => 'Asked by phone']], 'response' => ['status' => 200, 'example' => ['data' => ['consent' => 'opted_out'] + self::CONTACT]]],
+                ['id' => 'contacts.tags.add', 'method' => 'POST', 'path' => '/contacts/{id}/tags', 'scope' => 'contacts:write', 'summary' => 'Add tags', 'description' => 'Adds tags and keeps the ones the contact already has. Each new tag is on the contact\'s timeline, and a live flow waiting for that tag starts.',
+                    'path_params' => [$id], 'body' => [['name' => 'tags', 'type' => 'array of strings', 'required' => true, 'description' => 'One to 50 tags of at most 40 characters.']], 'request' => ['example' => ['tags' => ['SUV lead']]],
+                    'response' => ['status' => 200, 'example' => ['data' => ['tags' => ['vip', 'SUV lead']] + self::CONTACT]], 'errors' => ['validation_failed']],
+                ['id' => 'contacts.tags.remove', 'method' => 'DELETE', 'path' => '/contacts/{id}/tags', 'scope' => 'contacts:write', 'summary' => 'Remove tags', 'description' => 'Removes the tags named in the body (any capitalisation). Tags the contact does not have are ignored.',
+                    'path_params' => [$id], 'body' => [['name' => 'tags', 'type' => 'array of strings', 'required' => true, 'description' => 'One to 50 tags of at most 40 characters.']], 'request' => ['example' => ['tags' => ['SUV lead']]],
+                    'response' => ['status' => 200, 'example' => ['data' => self::CONTACT]], 'errors' => ['validation_failed']],
+            ]],
+            ['name' => 'Enquiries', 'description' => 'An enquiry is one stretch of conversation with a contact, from their first message until it goes quiet, with its own stage in your pipeline. The timeline lists everything that happened to a contact.', 'endpoints' => [
+                ['id' => 'stages', 'method' => 'GET', 'path' => '/stages', 'scope' => 'enquiries:read', 'summary' => 'List stages', 'description' => 'Your pipeline stages in order. "group" is open, won or lost, whatever the stage is called.',
+                    'response' => ['status' => 200, 'example' => ['data' => [self::STAGE]]]],
+                ['id' => 'enquiries', 'method' => 'GET', 'path' => '/enquiries', 'scope' => 'enquiries:read', 'summary' => 'List enquiries', 'description' => 'Newest first.',
+                    'query' => array_merge([
+                        ['name' => 'contact_id', 'type' => 'uuid', 'required' => false, 'description' => 'Only this contact\'s enquiries.'],
+                        ['name' => 'stage_id', 'type' => 'uuid', 'required' => false, 'description' => 'Only enquiries in this stage.'],
+                    ], $paging),
+                    'response' => ['status' => 200, 'example' => ['data' => [self::ENQUIRY], 'next_cursor' => null]]],
+                ['id' => 'enquiries.start', 'method' => 'POST', 'path' => '/enquiries', 'scope' => 'enquiries:write', 'summary' => 'Start an enquiry', 'description' => 'Returns the contact\'s current enquiry, or starts one when they have none (201), for example for a lead from your website. A contact has one current enquiry at a time; when they write in, theirs is used.',
+                    'body' => [['name' => 'contact_id', 'type' => 'uuid', 'required' => true, 'description' => 'The contact.']],
+                    'request' => ['example' => ['contact_id' => '01a11637-76d8-7315-a1e6-a952a9445800']],
+                    'response' => ['status' => 201, 'example' => ['data' => ['stage' => null, 'version' => 0, 'started_by' => 'system', 'source' => 'direct', 'source_confidence' => 'unknown'] + self::ENQUIRY]], 'errors' => ['validation_failed']],
+                ['id' => 'enquiries.show', 'method' => 'GET', 'path' => '/enquiries/{id}', 'scope' => 'enquiries:read', 'summary' => 'Get an enquiry', 'description' => 'One enquiry with its stage and "version", which a stage change sends back.',
+                    'path_params' => [$id], 'response' => ['status' => 200, 'example' => ['data' => self::ENQUIRY]]],
+                ['id' => 'enquiries.stage', 'method' => 'POST', 'path' => '/enquiries/{id}/stage', 'scope' => 'enquiries:write', 'summary' => 'Change the stage',
+                    'description' => 'Moves the enquiry to a stage. Send the "version" you last read: if someone changed the stage since, the answer is 409 conflict and nothing changes; read it again and decide. A Lost stage needs a reason. Won needs a verified payment on the enquiry, unless the key has the stages:approve_won permission, in which case "reason" carries the reference (an invoice or receipt number).',
+                    'path_params' => [$id],
+                    'body' => [
+                        ['name' => 'stage_id', 'type' => 'uuid', 'required' => true, 'description' => 'One of your active stages (GET /stages).'],
+                        ['name' => 'version', 'type' => 'integer', 'required' => true, 'description' => 'The enquiry\'s "version" when you read it.'],
+                        ['name' => 'reason', 'type' => 'string', 'required' => 'for Lost, and for Won without a verified payment', 'description' => 'Why it was lost, or the reference for Won. Up to 200 characters.'],
+                    ],
+                    'request' => ['example' => ['stage_id' => '01a1163a-7777-7000-8000-000000000007', 'version' => 1]],
+                    'response' => ['status' => 200, 'example' => ['data' => ['version' => 2] + self::ENQUIRY]], 'errors' => ['conflict', 'validation_failed']],
+                ['id' => 'timeline', 'method' => 'GET', 'path' => '/timeline', 'scope' => 'enquiries:read', 'summary' => 'List timeline events', 'description' => 'What happened to a contact or within one enquiry, newest first: messages in and out, tags, flow steps and answers, assignments, stage and consent changes, payments, webhook deliveries. Times are UTC; "actor" is customer, agent or system.',
+                    'query' => array_merge([
+                        ['name' => 'contact_id', 'type' => 'uuid', 'required' => 'one of contact_id / enquiry_id', 'description' => 'The contact.'],
+                        ['name' => 'enquiry_id', 'type' => 'uuid', 'required' => 'one of contact_id / enquiry_id', 'description' => 'One enquiry.'],
+                        ['name' => 'type', 'type' => 'string', 'required' => false, 'description' => 'Only one kind of event, for example stage.changed.'],
+                    ], $paging),
+                    'response' => ['status' => 200, 'example' => ['data' => [self::TIMELINE_EVENT], 'next_cursor' => null]], 'errors' => ['validation_failed']],
+            ]],
+            ['name' => 'Flows', 'description' => 'Start one of your published chatbot flows for a contact, for example after a booking in your own system.', 'endpoints' => [
+                ['id' => 'flows', 'method' => 'GET', 'path' => '/flows', 'scope' => 'flows:start', 'summary' => 'List flows', 'description' => 'Published, switched-on flows that can be started.',
+                    'response' => ['status' => 200, 'example' => ['data' => [['id' => '01a1163b-8888-7000-8000-000000000008', 'name' => 'Rental enquiry', 'phone_number_id' => '01a11630-1111-7000-8000-000000000001', 'version' => 3]]]]],
+                ['id' => 'flows.start', 'method' => 'POST', 'path' => '/flows/{id}/start', 'scope' => 'flows:start', 'summary' => 'Start a flow',
+                    'description' => 'Starts the flow for a contact on the flow\'s number. 202 with result "started"; otherwise 200 with why not: skipped:opted_out, skipped:human (a teammate handles the chat), skipped:busy (a flow is already running), skipped:reentry, skipped:not_live or skipped:number_unavailable. Outside the 24-hour window, begin the flow with a template step.',
+                    'path_params' => [$id],
+                    'body' => [
+                        ['name' => 'contact_id', 'type' => 'uuid', 'required' => true, 'description' => 'The contact to start it for.'],
+                        ['name' => 'vars', 'type' => 'object', 'required' => false, 'description' => 'Up to 30 values the flow can use as {{var.name}}. Names start with a letter.'],
+                    ],
+                    'request' => ['example' => ['contact_id' => '01a11637-76d8-7315-a1e6-a952a9445800', 'vars' => ['booking' => 'BK-2041']]],
+                    'response' => ['status' => 202, 'example' => ['data' => ['result' => 'started']]], 'errors' => ['validation_failed']],
             ]],
             ['name' => 'Event subscriptions', 'description' => 'Create and remove webhook endpoints from code. This is what Zapier and Make use for instant triggers: they subscribe when an automation is switched on and unsubscribe when it is switched off.', 'endpoints' => [
                 ['id' => 'webhooks', 'method' => 'GET', 'path' => '/webhooks', 'scope' => 'webhooks:manage', 'summary' => 'List subscriptions', 'description' => 'The endpoints that were created through the API. Endpoints typed in under Developer → Webhooks are managed there and are not listed.',
