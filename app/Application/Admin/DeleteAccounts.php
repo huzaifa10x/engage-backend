@@ -12,6 +12,7 @@ use App\Domain\Tenancy\Jobs\PurgeTenant;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -24,8 +25,10 @@ use Throwable;
  *  deletion (who, when, why) stays in the platform audit log.
  *
  *  User: their memberships, sessions, tokens and sign-in data are erased; messages and notes they
- *  wrote stay in the workspaces. Refused while they are the only Owner of a workspace that has
- *  other members (make someone else Owner, or delete the company).
+ *  wrote stay in the workspaces. A company they own goes with them: every company where they are
+ *  the only active Owner is deleted as above (its other members keep their own accounts and lose
+ *  access to it). A company with another active Owner is kept; only this user's membership goes.
+ *  A user who owns nothing is simply removed; no company or other user is affected.
  */
 final class DeleteAccounts
 {
@@ -40,30 +43,23 @@ final class DeleteAccounts
         if (trim($confirmName) !== trim((string) $tenant->name)) {
             throw ValidationException::withMessages(['confirm' => 'Type the company name exactly as shown to confirm.']);
         }
-        $review = $this->context->bypass(fn () => TenantMembership::query()->where('tenant_id', $tenant->id)
-            ->whereHas('user', fn ($q) => $q->whereNotNull('review_account_at'))->exists());
-        if ($review) {
-            throw ValidationException::withMessages(['confirm' => 'This company holds the Meta review account. End the review account first (Users › the account › End review account).']);
-        }
+        $this->ensureDeletable([$tenant]);
+        $this->stopBilling([$tenant]);
+        $this->closeAndPurge($tenant, $reason, null);
+    }
 
-        // Stop billing before anything is erased; if Stripe cannot be reached, nothing changes.
-        $live = $this->stripe->liveStripeSubscription($tenant);
-        if ($live !== null) {
-            try {
-                $this->stripe->cancelNow($tenant);
-            } catch (Throwable $e) {
-                throw ValidationException::withMessages(['confirm' => 'The paid subscription could not be cancelled in Stripe, so nothing was deleted: '.$e->getMessage()]);
-            }
-        }
-
-        $this->context->bypass(function () use ($tenant, $reason): void {
-            $settings = (array) ($tenant->settings ?? []);
-            $settings['deletion'] = ['started_at' => now()->toIso8601String(), 'reason' => $reason];
-            $tenant->forceFill(['status' => TenantStatus::Closed, 'settings' => $settings])->save();
-            $this->audit->record('tenant.deletion_started', null, meta: ['tenant_id' => $tenant->id, 'name' => $tenant->name, 'reason' => $reason]);
-        });
-
-        PurgeTenant::dispatch($tenant->id, $reason);
+    /**
+     * The companies that are deleted with this user: those where they are the only active Owner.
+     *
+     * @return Collection<int, Tenant>
+     */
+    public function ownedCompanies(User $user): Collection
+    {
+        return $this->context->bypass(fn () => TenantMembership::query()->where('user_id', $user->id)->where('status', 'active')
+            ->whereHas('role', fn ($q) => $q->where('key', 'owner'))->with('tenant')->get()
+            ->filter(fn (TenantMembership $m) => $m->tenant !== null && ! TenantMembership::query()->where('tenant_id', $m->tenant_id)
+                ->where('user_id', '!=', $user->id)->where('status', 'active')->whereHas('role', fn ($q) => $q->where('key', 'owner'))->exists())
+            ->map(fn (TenantMembership $m) => $m->tenant)->unique('id')->values());
     }
 
     public function deleteUser(User $user, string $confirmEmail, string $reason): void
@@ -75,20 +71,16 @@ final class DeleteAccounts
             throw ValidationException::withMessages(['confirm' => 'This is the Meta review account. End the review account first.']);
         }
 
-        $blocking = $this->context->bypass(fn () => TenantMembership::query()->where('user_id', $user->id)->where('status', 'active')
-            ->whereHas('role', fn ($q) => $q->where('key', 'owner'))->with('tenant')->get()
-            ->filter(function (TenantMembership $m) use ($user): bool {
-                $others = TenantMembership::query()->where('tenant_id', $m->tenant_id)->where('user_id', '!=', $user->id);
-                $otherOwner = (clone $others)->where('status', 'active')->whereHas('role', fn ($q) => $q->where('key', 'owner'))->exists();
-
-                return ! $otherOwner && $others->exists();
-            })
-            ->map(fn (TenantMembership $m) => (string) $m->tenant?->name)->values()->all());
-        if ($blocking !== []) {
-            throw ValidationException::withMessages(['confirm' => 'They are the only Owner of '.implode(', ', $blocking).'. Make another member Owner first, or delete that company.']);
+        // Their companies go with them. Everything is checked (and billing stopped) before anything is erased.
+        $companies = $this->ownedCompanies($user)->all();
+        $this->ensureDeletable($companies);
+        $this->stopBilling($companies);
+        foreach ($companies as $company) {
+            $this->closeAndPurge($company, $reason, $user);
         }
 
-        $snapshot = ['user_id' => $user->id, 'email' => $user->email, 'name' => $user->name, 'reason' => $reason];
+        $snapshot = ['user_id' => $user->id, 'email' => $user->email, 'name' => $user->name, 'reason' => $reason,
+            'companies_deleted' => array_map(fn (Tenant $t) => ['id' => $t->id, 'name' => $t->name], $companies)];
         $this->context->bypass(function () use ($user, $snapshot): void {
             DB::transaction(function () use ($user, $snapshot): void {
                 DB::table('impersonation_sessions')->where('user_id', $user->id)->delete();
@@ -99,5 +91,50 @@ final class DeleteAccounts
                 $this->audit->record('user.deleted', null, meta: $snapshot);
             });
         });
+    }
+
+    /** @param list<Tenant> $tenants */
+    private function ensureDeletable(array $tenants): void
+    {
+        foreach ($tenants as $tenant) {
+            $review = $this->context->bypass(fn () => TenantMembership::query()->where('tenant_id', $tenant->id)
+                ->whereHas('user', fn ($q) => $q->whereNotNull('review_account_at'))->exists());
+            if ($review) {
+                throw ValidationException::withMessages(['confirm' => "{$tenant->name} holds the Meta review account. End the review account first (Users › the account › End review account)."]);
+            }
+        }
+    }
+
+    /**
+     * Cancels each paid Stripe subscription first; if Stripe cannot be reached, nothing is deleted.
+     *
+     * @param  list<Tenant>  $tenants
+     */
+    private function stopBilling(array $tenants): void
+    {
+        foreach ($tenants as $tenant) {
+            if ($this->stripe->liveStripeSubscription($tenant) === null) {
+                continue;
+            }
+            try {
+                $this->stripe->cancelNow($tenant);
+            } catch (Throwable $e) {
+                throw ValidationException::withMessages(['confirm' => "The paid subscription of {$tenant->name} could not be cancelled in Stripe, so nothing was deleted: ".$e->getMessage()]);
+            }
+        }
+    }
+
+    /** Closes the company at once (nobody can use it) and erases its data in the background. */
+    private function closeAndPurge(Tenant $tenant, string $reason, ?User $withOwner): void
+    {
+        $this->context->bypass(function () use ($tenant, $reason, $withOwner): void {
+            $settings = (array) ($tenant->settings ?? []);
+            $settings['deletion'] = array_filter(['started_at' => now()->toIso8601String(), 'reason' => $reason, 'with_owner' => $withOwner?->email]);
+            $tenant->forceFill(['status' => TenantStatus::Closed, 'settings' => $settings])->save();
+            $this->audit->record('tenant.deletion_started', null, meta: array_filter(['tenant_id' => $tenant->id, 'name' => $tenant->name, 'reason' => $reason,
+                'owner_deleted' => $withOwner !== null ? ['id' => $withOwner->id, 'email' => $withOwner->email] : null]));
+        });
+
+        PurgeTenant::dispatch($tenant->id, $reason);
     }
 }

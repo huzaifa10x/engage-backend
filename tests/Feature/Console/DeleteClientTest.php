@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Console;
 
+use App\Domain\Access\SystemRole;
 use App\Domain\Billing\Models\SalesLead;
 use App\Domain\Identity\Models\User;
 use App\Domain\Messaging\Models\Contact;
@@ -101,5 +102,22 @@ final class DeleteClientTest extends TestCase
         // Deliberately overridden.
         $this->artisan('engage:client:delete', ['email' => $email, '--force' => true, '--ignore-billing' => true, '--no-interaction' => true])->assertSuccessful();
         $this->assertFalse($this->exists('users', 'id', $member->user_id));
+    }
+
+    public function test_a_workspace_they_own_alone_is_deleted_even_with_other_members_who_keep_their_accounts(): void
+    {
+        $tenant = $this->createTenant(['name' => 'Owned Co']);
+        $owner = $this->addMember($tenant);
+        $agent = $this->addMember($tenant, SystemRole::Agent);
+        $email = (string) User::query()->findOrFail($owner->user_id)->email;
+
+        $this->artisan('engage:client:delete', ['email' => $email])
+            ->expectsOutputToContain('Workspace to DELETE: "Owned Co" — 0 contacts, 0 conversations, 0 messages, 0 number(s), 1 other member(s) lose access')->assertSuccessful();
+        $this->artisan('engage:client:delete', ['email' => $email, '--force' => true, '--no-interaction' => true])->assertSuccessful();
+
+        $this->assertFalse($this->exists('users', 'id', $owner->user_id));
+        $this->assertFalse($this->exists('tenants', 'id', $tenant->id));
+        $this->assertTrue($this->exists('users', 'id', $agent->user_id));
+        $this->assertFalse($this->exists('tenant_memberships', 'id', $agent->id));
     }
 }

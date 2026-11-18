@@ -9,7 +9,9 @@ use App\Application\Admin\ManagePlatformAdmins;
 use App\Application\Admin\ManageUserAccounts;
 use App\Domain\Audit\Models\AuditLog;
 use App\Domain\Identity\Models\User;
+use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
 use App\Rules\PersonName;
 use Illuminate\Database\Eloquent\Builder;
@@ -91,7 +93,7 @@ final class UserController extends Controller
             : "{$user->name} is a normal account again: the usual sign-in checks apply.");
     }
 
-    public function show(User $user): Response
+    public function show(User $user, DeleteAccounts $delete, TenantContext $context): Response
     {
         $user->load(['memberships.tenant', 'memberships.role']);
         $audit = AuditLog::query()
@@ -123,6 +125,11 @@ final class UserController extends Controller
             'memberships' => $user->memberships->map(fn (TenantMembership $m) => [
                 'id' => $m->id, 'tenant_id' => $m->tenant_id, 'tenant' => $m->tenant?->name, 'role' => $m->role?->name, 'status' => $m->status,
                 'joined_at' => $m->created_at?->toIso8601String(),
+            ])->values(),
+            // Deleted with the user (they are the only active Owner).
+            'owned_companies' => $delete->ownedCompanies($user)->map(fn (Tenant $t) => [
+                'id' => $t->id, 'name' => $t->name,
+                'members' => $context->bypass(fn () => TenantMembership::query()->where('tenant_id', $t->id)->where('user_id', '!=', $user->id)->count()),
             ])->values(),
             'audit' => $audit,
         ]);

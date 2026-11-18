@@ -12,10 +12,11 @@ type User = {
     sessions_revoked_at: string | null; last_login_at: string | null; created_at: string;
 };
 type Membership = { id: string; tenant_id: string; tenant: string | null; role: string | null; status: string; joined_at: string | null };
-type Props = { user: User; memberships: Membership[]; audit: { id: string; action: string; actor_type: string; ip: string | null; created_at: string }[] };
+type OwnedCompany = { id: string; name: string; members: number };
+type Props = { user: User; memberships: Membership[]; owned_companies: OwnedCompany[]; audit: { id: string; action: string; actor_type: string; ip: string | null; created_at: string }[] };
 type ModalName = null | 'details' | 'password' | 'signout' | 'status' | 'reset2fa' | 'review' | 'delete';
 
-export default function UserShow({ user, memberships, audit }: Props) {
+export default function UserShow({ user, memberships, owned_companies, audit }: Props) {
     const abilities = usePage<SharedProps>().props.auth.admin?.abilities ?? [];
     const canManage = abilities.includes('users.manage');
     const canDelete = abilities.includes('accounts.delete');
@@ -101,6 +102,9 @@ export default function UserShow({ user, memberships, audit }: Props) {
                 <Card title="Delete user" padded className="mt-4">
                     <p className="text-[13.5px] text-ink-2">
                         Permanently removes this person: their sign-in, workspace memberships, sessions and API tokens. Messages and notes they wrote stay in the workspaces.
+                        {owned_companies.length > 0
+                            ? ` They are the only Owner of ${owned_companies.map((c) => c.name).join(', ')}: ${owned_companies.length === 1 ? 'that company is' : 'those companies are'} deleted with them.`
+                            : ' They own no company on their own, so no company is affected.'}
                         {user.review_account ? ' The review account must be ended first.' : ''}
                     </p>
                     <Button className="mt-3" variant="danger" disabled={user.review_account} onClick={() => setModal('delete')}>Delete user</Button>
@@ -141,7 +145,23 @@ export default function UserShow({ user, memberships, audit }: Props) {
             {modal === 'review' && <ReviewAccountModal user={user} onClose={close} />}
             {modal === 'delete' && (
                 <DeleteModal title={`Delete ${user.name}`} url={`/admin/users/${user.id}`} confirmLabel="Type their email to confirm" confirmValue={user.email} onClose={close}>
-                    This cannot be undone. If they are the only Owner of a workspace with other members, make someone else Owner first (or delete the company).
+                    This cannot be undone.
+                    {owned_companies.length > 0 ? (
+                        <>
+                            {' '}These companies are deleted too, with all their contacts, chats, numbers and settings (any paid subscription is cancelled):
+                            <ul className="mt-2 list-disc pl-5">
+                                {owned_companies.map((c) => (
+                                    <li key={c.id}>
+                                        <strong>{c.name}</strong>
+                                        {c.members > 0 ? ` (${c.members} other member${c.members === 1 ? '' : 's'} lose access; their own accounts stay)` : ''}
+                                    </li>
+                                ))}
+                            </ul>
+                            To keep a company, make another member its Owner first.
+                        </>
+                    ) : (
+                        ' They are not the only Owner of any company, so no company or other user is affected.'
+                    )}
                 </DeleteModal>
             )}
         </AdminLayout>

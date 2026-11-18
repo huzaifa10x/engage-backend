@@ -11,6 +11,7 @@ use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\WabaStatus;
 use App\Domain\WhatsApp\Models\WabaAccount;
 use Illuminate\Console\Command;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -23,10 +24,10 @@ use Throwable;
  * What "everything" means:
  *   • the user account, its sessions, password-reset tokens and pending invitations;
  *   • website inquiries sent from that email address;
- *   • every workspace in which this user is the ONLY member: all its contacts, conversations,
- *     messages, templates, campaigns, numbers and settings. Its WhatsApp accounts are disconnected
- *     at Meta first.
- *   • in workspaces that have other members, only this user's membership is removed; the
+ *   • every workspace this user owns alone (the only active Owner) or is the only member of: all its
+ *     contacts, conversations, messages, templates, campaigns, numbers and settings. Its WhatsApp
+ *     accounts are disconnected at Meta first. Its other members keep their own accounts.
+ *   • in workspaces with another active Owner, only this user's membership is removed; the
  *     workspace and its data stay with the remaining members.
  *
  * It refuses to touch a workspace with a live paid subscription (cancel that in Stripe first, or
@@ -64,7 +65,9 @@ final class DeleteClient extends Command
                     continue;
                 }
                 $others = (int) $context->bypass(fn () => DB::table('tenant_memberships')->where('tenant_id', $tenantId)->where('user_id', '!=', $user->id)->count());
-                $others === 0 ? $own[] = $tenant : $shared[] = [$tenant, $others];
+                // A workspace this user owns alone goes with them, like a Super Admin deletion of the user.
+                $soleOwner = $context->bypass(fn () => $this->activeOwners($tenantId)->contains($user->id) && $this->activeOwners($tenantId)->count() === 1);
+                $others === 0 || $soleOwner ? $own[] = $tenant : $shared[] = [$tenant, $others];
             }
         }
 
@@ -75,6 +78,7 @@ final class DeleteClient extends Command
         $this->line("  Pending invitations: {$invitations}");
         $blocked = [];
         foreach ($own as $tenant) {
+            $members = (int) $context->bypass(fn () => DB::table('tenant_memberships')->where('tenant_id', $tenant->id)->where('user_id', '!=', $user?->id)->count());
             $counts = $context->bypass(fn () => [
                 'contacts' => DB::table('contacts')->where('tenant_id', $tenant->id)->count(),
                 'conversations' => DB::table('conversations')->where('tenant_id', $tenant->id)->count(),
@@ -85,8 +89,9 @@ final class DeleteClient extends Command
             if ($paid && ! $this->option('ignore-billing')) {
                 $blocked[] = $tenant->name;
             }
-            $this->line(sprintf('  Workspace to DELETE: "%s" — %s contacts, %s conversations, %s messages, %s number(s)%s', $tenant->name,
-                number_format($counts['contacts']), number_format($counts['conversations']), number_format($counts['messages']), $counts['numbers'], $paid ? '  <fg=red>[live paid subscription]</>' : ''));
+            $this->line(sprintf('  Workspace to DELETE: "%s" — %s contacts, %s conversations, %s messages, %s number(s)%s%s', $tenant->name,
+                number_format($counts['contacts']), number_format($counts['conversations']), number_format($counts['messages']), $counts['numbers'],
+                $members > 0 ? ", {$members} other member(s) lose access" : '', $paid ? '  <fg=red>[live paid subscription]</>' : ''));
         }
         foreach ($shared as [$tenant, $others]) {
             $this->line(sprintf('  Workspace to KEEP:   "%s" — has %d other member(s); only this user\'s membership is removed', $tenant->name, $others));
@@ -143,6 +148,13 @@ final class DeleteClient extends Command
         $this->components->info("Done. {$email} and its data have been removed.");
 
         return self::SUCCESS;
+    }
+
+    /** @return Collection<int, string> user IDs of the workspace's active Owners */
+    private function activeOwners(string $tenantId): Collection
+    {
+        return DB::table('tenant_memberships as m')->join('roles as r', 'r.id', '=', 'm.role_id')
+            ->where('m.tenant_id', $tenantId)->where('m.status', 'active')->where('r.key', 'owner')->pluck('m.user_id')->map(fn ($id) => (string) $id);
     }
 
     private function livePaidSubscription(TenantContext $context, Tenant $tenant): bool
