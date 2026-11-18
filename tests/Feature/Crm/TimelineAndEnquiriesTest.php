@@ -93,7 +93,8 @@ final class TimelineAndEnquiriesTest extends TestCase
     private function stage(string $name): void
     {
         $id = $this->tenantContext()->run($this->tenant, fn () => DB::table('crm_stages')->where('name', $name)->value('id'));
-        $this->postJson("/api/v1/contacts/{$this->contact()->id}/stage", ['stage_id' => $id])->assertOk();
+        $version = collect($this->getJson("/api/v1/contacts/{$this->contact()->id}/enquiries")->json('data'))->firstWhere('current', true)['stage_version'] ?? 0;
+        $this->postJson("/api/v1/contacts/{$this->contact()->id}/stage", ['stage_id' => $id, 'version' => $version])->assertOk();
     }
 
     public function test_a_contact_who_rents_twice_has_two_enquiries_each_with_its_own_source_stage_and_payment(): void
@@ -112,8 +113,9 @@ final class TimelineAndEnquiriesTest extends TestCase
         $this->travel(90)->days();
         $link = $this->postJson('/api/v1/wa-links', ['phone_number_id' => $this->number->id, 'name' => 'Shop window', 'message' => 'Hi'])->assertCreated()->json('data');
         $this->customer(['text' => ['body' => $link['prefilled_text']]]);
-        $this->stage('Won');
+        // Paid in full (a verified payment), so the lead can be marked Won (item 4).
         $this->paidOrder('5002', '890.00');
+        $this->stage('Won');
 
         $enquiries = collect($this->getJson("/api/v1/contacts/{$this->contact()->id}/enquiries")->assertOk()->json('data'))->keyBy('number');
         $this->assertCount(2, $enquiries);

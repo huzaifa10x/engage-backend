@@ -18,6 +18,7 @@ use Illuminate\Support\Carbon;
  * @property string $name
  * @property string $color
  * @property int $position
+ * @property string $group open | won | lost (reports count by group, whatever the stage is called)
  * @property ?Carbon $archived_at
  */
 class CrmStage extends Model
@@ -26,18 +27,27 @@ class CrmStage extends Model
 
     public const COLORS = ['grey', 'info', 'good', 'warn', 'bad', 'brand'];
 
-    /** Offered when a workspace has no stages yet ("Use suggested stages"). */
+    public const OPEN = 'open';
+
+    public const WON = 'won';
+
+    public const LOST = 'lost';
+
+    public const GROUPS = [self::OPEN, self::WON, self::LOST];
+
+    /** The default pipeline (batch 6, item 4): given to new workspaces, and offered to those with no stages yet. */
     public const SUGGESTED = [
-        ['name' => 'New', 'color' => 'info'],
-        ['name' => 'Contacted', 'color' => 'brand'],
-        ['name' => 'Qualified', 'color' => 'warn'],
-        ['name' => 'Won', 'color' => 'good'],
-        ['name' => 'Lost', 'color' => 'grey'],
+        ['name' => 'New', 'color' => 'info', 'group' => self::OPEN],
+        ['name' => 'Qualified', 'color' => 'warn', 'group' => self::OPEN],
+        ['name' => 'Quote sent', 'color' => 'brand', 'group' => self::OPEN],
+        ['name' => 'Booked', 'color' => 'info', 'group' => self::OPEN],
+        ['name' => 'Won', 'color' => 'good', 'group' => self::WON],
+        ['name' => 'Lost', 'color' => 'grey', 'group' => self::LOST],
     ];
 
     protected $table = 'crm_stages';
 
-    protected $fillable = ['tenant_id', 'name', 'color', 'position', 'archived_at'];
+    protected $fillable = ['tenant_id', 'name', 'color', 'group', 'position', 'archived_at'];
 
     protected function casts(): array
     {
@@ -53,6 +63,6 @@ class CrmStage extends Model
     /** @return array{id: string, name: string, color: string, archived: bool} */
     public function summary(): array
     {
-        return ['id' => $this->id, 'name' => $this->name, 'color' => $this->color, 'archived' => $this->archived_at !== null];
+        return ['id' => $this->id, 'name' => $this->name, 'color' => $this->color, 'group' => $this->group ?? self::OPEN, 'archived' => $this->archived_at !== null];
     }
 }

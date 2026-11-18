@@ -64,6 +64,10 @@ enum Permission: string
     case GrowthManage = 'growth.manage';   // Tracking Setup: websites, numbers, verification
     case InboxRawText = 'inbox.raw_text';  // "Show raw text" audit toggle on messages
 
+    // Lead stages (batch 6, item 4).
+    case StagesChange = 'stages.change';           // move a lead through the stages
+    case StagesApproveWon = 'stages.approve_won';  // mark Won without a verified payment, with a reference
+
     /** @return list<string> */
     public static function values(): array
     {

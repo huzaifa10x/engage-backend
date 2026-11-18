@@ -7,7 +7,7 @@ namespace Tests\Feature\Growth;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\SystemRole;
 use App\Domain\Crm\Models\CrmStage;
-use App\Domain\Crm\Services\ContactStages;
+use App\Domain\Crm\Services\EnquiryStages;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Tenancy\Models\Tenant;
@@ -59,7 +59,7 @@ final class MarketingAnalyticsTest extends TestCase
 
     private function move(string $waId, string $stage): void
     {
-        $this->in(fn () => app(ContactStages::class)->move(Contact::query()->where('wa_id', $waId)->sole(), $this->stages[$stage]->id));
+        $this->in(fn () => app(EnquiryStages::class)->move(Contact::query()->where('wa_id', $waId)->sole(), $this->stages[$stage]->id));
     }
 
     /** @return array<string, string> */

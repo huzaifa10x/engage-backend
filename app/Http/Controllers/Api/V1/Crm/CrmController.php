@@ -119,6 +119,7 @@ final class CrmController extends Controller
             'field.value' => ['nullable'],
             'stage' => ['nullable', 'array'],
             'stage.id' => ['nullable', 'uuid'],
+            'stage.reason' => ['nullable', 'string', 'max:200'],
             'consent' => ['nullable', 'array'],
             'consent.state' => ['required_with:consent', Rule::in([ConsentState::OptedIn->value, ConsentState::OptedOut->value])],
             'consent.note' => ['nullable', 'string', 'max:190'],
@@ -126,7 +127,7 @@ final class CrmController extends Controller
 
         $changes = array_intersect_key($data, array_flip(['tags_add', 'tags_remove', 'field', 'consent']));
         if ($request->has('stage')) {
-            $changes['stage'] = ['id' => $data['stage']['id'] ?? null];
+            $changes['stage'] = ['id' => $data['stage']['id'] ?? null, 'reason' => $data['stage']['reason'] ?? null];
         }
 
         return response()->json(['data' => $bulk->apply($data['contact_ids'], $changes, (int) $data['confirm_count'])]);

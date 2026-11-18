@@ -26,6 +26,9 @@ use Illuminate\Support\Carbon;
  * @property ?array<string, mixed> $source_detail
  * @property ?string $owner_membership_id
  * @property ?string $stage_id
+ * @property int $stage_version raised by every stage change; a screen sends back the one it loaded (item 4)
+ * @property ?string $lost_reason
+ * @property ?Carbon $stage_changed_at
  * @property ?Carbon $last_activity_at
  * @property ?Carbon $created_at
  */
@@ -44,7 +47,7 @@ class Enquiry extends Model
     public const CONFIDENCE_LABELS = ['verified' => 'Verified', 'partial' => 'Partial', 'unknown' => 'Unknown'];
 
     protected $fillable = ['tenant_id', 'contact_id', 'number', 'conversation_id', 'started_at', 'started_by', 'start_reason', 'source', 'source_confidence',
-        'source_detail', 'owner_membership_id', 'stage_id', 'last_activity_at'];
+        'source_detail', 'owner_membership_id', 'stage_id', 'stage_version', 'lost_reason', 'stage_changed_at', 'last_activity_at'];
 
     public function isImported(): bool
     {
@@ -65,6 +68,6 @@ class Enquiry extends Model
 
     protected function casts(): array
     {
-        return ['started_at' => 'datetime', 'last_activity_at' => 'datetime', 'source_detail' => 'array', 'number' => 'integer'];
+        return ['started_at' => 'datetime', 'last_activity_at' => 'datetime', 'stage_changed_at' => 'datetime', 'stage_version' => 'integer', 'source_detail' => 'array', 'number' => 'integer'];
     }
 }

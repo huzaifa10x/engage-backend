@@ -8,6 +8,7 @@ use App\Domain\Access\Models\Role;
 use App\Domain\Access\SystemRole;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Billing\SubscriptionService;
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Identity\Models\User;
 use App\Domain\Tenancy\Enums\DateFormat;
 use App\Domain\Tenancy\Enums\MembershipStatus;
@@ -67,6 +68,11 @@ final class RegisterWorkspace
                     'status' => MembershipStatus::Active,
                     'joined_at' => now(),
                 ]);
+
+                // The default pipeline (item 4): New, Qualified, Quote sent, Booked, Won, Lost; renamed or added to later.
+                foreach (CrmStage::SUGGESTED as $i => $stage) {
+                    CrmStage::query()->create($stage + ['tenant_id' => $tenant->getKey(), 'position' => $i + 1]);
+                }
 
                 $user->forceFill(['last_active_tenant_id' => $tenant->getKey()])->save();
 

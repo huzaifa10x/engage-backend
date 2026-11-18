@@ -62,7 +62,7 @@ class Contact extends Model
     ];
 
     /**
-     * The contact's current CRM pipeline stage. Changed only through ContactStages (history kept).
+     * The contact's current CRM pipeline stage. Changed only through EnquiryStages: the current enquiry's stage (history kept).
      *
      * @return BelongsTo<CrmStage, $this>
      */

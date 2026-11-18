@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Chatbots\Engine;
 
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Forms\Form;
 
 /**
@@ -310,8 +311,16 @@ final class FlowChecks
                 }
                 break;
             case 'tag':
-                if ($c['add'] === [] && $c['remove'] === [] && $c['assign'] === 'none') {
-                    $err('empty_tag', 'does nothing yet.', 'Add or remove a tag, or assign the conversation.');
+                if ($c['add'] === [] && $c['remove'] === [] && $c['assign'] === 'none' && ($c['stage_id'] ?? null) === null) {
+                    $err('empty_tag', 'does nothing yet.', 'Add or remove a tag, set the stage, or assign the conversation.');
+                }
+                if (($c['stage_id'] ?? null) !== null) {
+                    $stage = CrmStage::query()->find($c['stage_id']);
+                    if ($stage === null || $stage->archived_at !== null) {
+                        $err('stage_missing', 'sets a stage that no longer exists.', 'Choose one of your stages.');
+                    } elseif ($stage->group === CrmStage::WON) {
+                        $err('stage_won', 'sets the stage to Won, which needs a verified payment.', 'Choose another stage; a verified payment moves the lead to Won.');
+                    }
                 }
                 break;
             case 'hours':

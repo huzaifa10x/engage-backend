@@ -29,6 +29,7 @@ use App\Domain\Chatbots\Services\OrderLookup;
 use App\Domain\Chatbots\Services\StartRules;
 use App\Domain\Crm\Models\ContactField;
 use App\Domain\Crm\Models\ContactTag;
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Identity\Models\User;
 use App\Domain\Messaging\Models\Contact;
@@ -893,6 +894,8 @@ final class ChatbotController extends Controller
             ])->values(),
             'fields' => ContactField::query()->orderBy('created_at')->get(['key', 'label', 'type'])->values(),
             'tags' => ContactTag::query()->orderBy('name')->pluck('name')->values(),
+            // A "Tag / assign" step can move the lead to a stage (item 4); Won is left to verified payments.
+            'stages' => CrmStage::query()->active()->orderBy('position')->get(['id', 'name', 'group'])->map(fn (CrmStage $s) => ['id' => $s->id, 'name' => $s->name, 'group' => $s->group])->values(),
             'segments' => Segment::query()->orderBy('name')->get(['id', 'name'])->values(),
             'members' => TenantMembership::query()->active()->with('user:id,name')->get()->map(fn (TenantMembership $m) => [
                 'id' => $m->id, 'name' => $m->user->name ?? 'Teammate',

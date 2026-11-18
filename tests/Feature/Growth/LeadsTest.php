@@ -174,11 +174,11 @@ final class LeadsTest extends TestCase
         $contactId = $this->tenantContext()->run($this->tenant, fn () => Contact::query()->where('wa_id', '971500000001')->value('id'));
 
         $this->actingAsMember($this->addMember($this->tenant, SystemRole::Agent));
-        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stage->id, 'via' => 'contact'])->assertForbidden();
-        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stage->id, 'via' => 'chat'])->assertOk();
-        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => null, 'via' => 'leads'])->assertOk();
+        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stage->id, 'version' => 0, 'via' => 'contact'])->assertForbidden();
+        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stage->id, 'version' => 0, 'via' => 'chat'])->assertOk();
+        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => null, 'version' => 1, 'via' => 'leads'])->assertOk();
 
         $this->actingAsMember($this->addMember($this->tenant, SystemRole::Admin));
-        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stage->id, 'via' => 'contact'])->assertOk()->assertJsonPath('data.stage.name', 'Qualified');
+        $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stage->id, 'version' => 2, 'via' => 'contact'])->assertOk()->assertJsonPath('data.stage.name', 'Qualified');
     }
 }

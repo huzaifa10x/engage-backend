@@ -8,8 +8,8 @@ use App\Domain\Access\SystemRole;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Crm\Models\ContactField;
-use App\Domain\Crm\Services\ContactStages;
 use App\Domain\Crm\Services\CustomFields;
+use App\Domain\Crm\Services\EnquiryStages;
 use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Enums\ConsentState;
@@ -39,14 +39,14 @@ final class BulkEditContacts
         private readonly TenantContext $context,
         private readonly TagCatalog $tags,
         private readonly CustomFields $fields,
-        private readonly ContactStages $stages,
+        private readonly EnquiryStages $stages,
         private readonly ConsentService $consent,
         private readonly AuditLogger $audit,
     ) {}
 
     /**
      * @param  list<string>  $ids
-     * @param  array<string, mixed>  $changes  tags_add, tags_remove, field {key, value|null}, stage {id|null}, consent {state, note}
+     * @param  array<string, mixed>  $changes  tags_add, tags_remove, field {key, value|null}, stage {id|null, reason (Lost reason / Won reference)}, consent {state, note}
      * @return array{matched: int, updated: int, skipped: array<string, int>}
      */
     public function apply(array $ids, array $changes, int $confirmed): array
@@ -64,7 +64,8 @@ final class BulkEditContacts
         }
 
         [$fieldKey, $fieldValue] = $this->field($changes['field'] ?? null);
-        $stage = array_key_exists('stage', $changes) && is_array($changes['stage']) ? ['id' => $changes['stage']['id'] ?? null] : null;
+        $stage = array_key_exists('stage', $changes) && is_array($changes['stage'])
+            ? ['id' => $changes['stage']['id'] ?? null, 'reason' => isset($changes['stage']['reason']) ? (string) $changes['stage']['reason'] : null] : null;
         if ($stage !== null) {
             $role = $this->context->membership()?->role?->systemRole();
             if (! in_array($role, [SystemRole::Owner, SystemRole::Admin], true)) {
@@ -108,7 +109,7 @@ final class BulkEditContacts
                         $changed = true;
                     }
 
-                    if ($stage !== null && $this->stages->move($contact, $stage['id']) !== null) {
+                    if ($stage !== null && $this->stages->move($contact, $stage['id'], reason: $stage['reason']) !== null) {
                         $changed = true;
                     }
 

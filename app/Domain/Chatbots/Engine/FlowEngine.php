@@ -421,6 +421,9 @@ final class FlowEngine
 
             case 'tag':
                 $this->tags($c, $rt, $node['id']);
+                if ($c['stage_id'] !== null) {
+                    $rt->note($rt->setStage($c['stage_id']));
+                }
                 if ($c['assign'] !== 'none') {
                     $who = $rt->assign($c['assign'], $c['member_id'], 'The chatbot assigned a conversation to you', $c['team_id'] ?? null);
                     $rt->note($who !== null ? "Assigned to {$who}." : 'Nobody could be assigned (no teammate can reply on this number).');

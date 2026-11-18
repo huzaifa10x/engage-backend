@@ -92,6 +92,23 @@ final class Enquiries
             now(), is_string($conversation) ? $conversation : null, null);
     }
 
+    /**
+     * The contact's current enquiry, or a new one when they have none yet (a lead moved through the
+     * stages before ever writing in, e.g. added by hand or by the API).
+     */
+    public function current(Contact $contact, string $by = Timeline::AGENT): Enquiry
+    {
+        $id = $contact->getAttribute('current_enquiry_id') ?? DB::table('contacts')->where('id', $contact->id)->value('current_enquiry_id');
+        $enquiry = is_string($id) ? Enquiry::query()->find($id) : null;
+        if ($enquiry !== null) {
+            return $enquiry;
+        }
+        $conversation = DB::table('conversations')->where('contact_id', $contact->id)->orderByDesc('last_message_at')->value('id');
+
+        return $this->start($contact, 'manual', $by, ['source' => 'direct', 'confidence' => 'unknown', 'detail' => [], 'click_hash' => null],
+            now(), is_string($conversation) ? $conversation : null, null);
+    }
+
     /** A website code was matched to its click (Growth Hub): the enquiry's source becomes verified. */
     public function websiteConfirmed(Message $message, ?string $site): void
     {

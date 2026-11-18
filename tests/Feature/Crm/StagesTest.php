@@ -6,11 +6,19 @@ namespace Tests\Feature\Crm;
 
 use App\Domain\Access\SystemRole;
 use App\Domain\Crm\Models\ContactStageEvent;
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\Timeline\Enquiry;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
-/** CRM pipeline stages and the stage-change log (Change Notice CN-01 §II.1). */
+/**
+ * Lead stages (batch 6, item 4; first built for CN-01): a stage per enquiry, in groups, versioned so two
+ * people can't overwrite each other, Won only with proof, every change logged and on the timeline.
+ */
 final class StagesTest extends TestCase
 {
     private Tenant $tenant;
@@ -37,79 +45,194 @@ final class StagesTest extends TestCase
         return collect($this->postJson('/api/v1/crm/stages/suggested')->assertOk()->json('data'))->pluck('id', 'name')->all();
     }
 
-    public function test_suggested_stages_are_created_once_in_order(): void
+    /** @return array<string, mixed> the contact's current enquiry as the contact screen loads it */
+    private function current(string $contactId): array
     {
-        $this->assertSame(['New', 'Contacted', 'Qualified', 'Won', 'Lost'], array_keys($this->suggested()));
-        $this->postJson('/api/v1/crm/stages/suggested')->assertUnprocessable();
+        return collect($this->getJson("/api/v1/contacts/{$contactId}/enquiries")->assertOk()->json('data'))->firstWhere('current', true) ?? ['stage_version' => 0];
     }
 
-    public function test_every_stage_change_is_logged_with_old_stage_new_stage_who_and_when(): void
+    /** @param array<string, mixed> $extra */
+    private function move(string $contactId, ?string $stageId, array $extra = []): TestResponse
+    {
+        return $this->postJson("/api/v1/contacts/{$contactId}/stage", ['stage_id' => $stageId, 'version' => $this->current($contactId)['stage_version']] + $extra);
+    }
+
+    public function test_the_default_stages_come_in_order_with_their_groups_and_new_workspaces_get_them(): void
+    {
+        $stages = collect($this->postJson('/api/v1/crm/stages/suggested')->assertOk()->json('data'));
+        $this->assertSame(['New', 'Qualified', 'Quote sent', 'Booked', 'Won', 'Lost'], $stages->pluck('name')->all());
+        $this->assertSame(['open', 'open', 'open', 'open', 'won', 'lost'], $stages->pluck('group')->all());
+        $this->postJson('/api/v1/crm/stages/suggested')->assertUnprocessable();
+
+        $this->app['auth']->forgetGuards();
+        $this->withHeaders(['Origin' => 'http://localhost:3000', 'Referer' => 'http://localhost:3000/'])->postJson('/api/v1/auth/register', [
+            'name' => 'Jane Doe', 'email' => 'jane@fastwheels.ae', 'password' => 'Secret123456', 'password_confirmation' => 'Secret123456', 'company_name' => 'Fast Wheels',
+        ])->assertCreated();
+        $new = $this->tenantContext()->bypass(fn () => Tenant::query()->where('billing_email', 'jane@fastwheels.ae')->sole());
+        $this->assertSame(['New', 'Qualified', 'Quote sent', 'Booked', 'Won', 'Lost'],
+            $this->tenantContext()->run($new, fn () => CrmStage::query()->orderBy('position')->pluck('name')->all()));
+    }
+
+    public function test_stages_can_be_renamed_and_added_and_each_belongs_to_a_group(): void
+    {
+        $s = $this->suggested();
+        $this->patchJson("/api/v1/crm/stages/{$s['Won']}", ['name' => 'Rented'])->assertOk()->assertJsonPath('data.group', 'won');
+        $this->postJson('/api/v1/crm/stages', ['name' => 'No show', 'group' => 'lost'])->assertCreated()->assertJsonPath('data.group', 'lost');
+        $this->postJson('/api/v1/crm/stages', ['name' => 'Odd', 'group' => 'maybe'])->assertUnprocessable();
+        $this->postJson('/api/v1/crm/stages', ['name' => 'won'])->assertCreated()->assertJsonPath('data.group', 'open'); // "Won" was renamed
+    }
+
+    public function test_a_lead_moves_through_every_stage_on_its_enquiry_and_each_change_is_on_the_timeline(): void
     {
         $s = $this->suggested();
         $id = $this->contact('+971501110001');
 
-        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Contacted']])->assertOk()->assertJsonPath('data.stage.name', 'Contacted');
-        $this->travel(2)->days();
-        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Qualified']])->assertOk();
-        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Qualified']])->assertOk(); // same stage: no new event
+        foreach (['New', 'Qualified', 'Quote sent', 'Booked'] as $name) {
+            $this->move($id, $s[$name])->assertOk()->assertJsonPath('data.stage.name', $name);
+        }
+        $this->move($id, $s['Lost'], ['reason' => 'Chose another company'])->assertOk();
 
-        $events = $this->tenantContext()->run($this->tenant, fn () => ContactStageEvent::query()->orderBy('changed_at')->get());
-        $this->assertCount(2, $events);
-        $this->assertNull($events[0]->from_stage_id);
-        $this->assertSame($s['Contacted'], $events[0]->to_stage_id);
-        $this->assertSame($s['Contacted'], $events[1]->from_stage_id);
-        $this->assertSame($s['Qualified'], $events[1]->to_stage_id);
-        $this->assertSame($this->owner->id, $events[1]->changed_by_membership_id);
-        $this->assertTrue($events[1]->changed_at->gt($events[0]->changed_at));
+        $enquiry = $this->current($id);
+        $this->assertSame(['name' => 'Lost', 'group' => 'lost'], array_intersect_key($enquiry['stage'], ['name' => 1, 'group' => 1]));
+        $this->assertSame(5, $enquiry['stage_version']);
+        $this->assertSame('Chose another company', $enquiry['lost_reason']);
 
-        $this->getJson("/api/v1/contacts/{$id}/stage-history")->assertOk()
-            ->assertJsonCount(2, 'data')
-            ->assertJsonPath('data.0.from.name', 'Contacted')
-            ->assertJsonPath('data.0.to.name', 'Qualified');
+        $events = $this->tenantContext()->run($this->tenant, fn () => ContactStageEvent::query()->orderBy('version')->get());
+        $this->assertSame([1, 2, 3, 4, 5], $events->pluck('version')->all());
+        $this->assertSame([$enquiry['id']], $events->pluck('enquiry_id')->unique()->values()->all());
+        $this->assertSame($this->owner->id, $events->last()?->changed_by_membership_id);
 
-        $this->getJson("/api/v1/contacts?stage_id={$s['Qualified']}")->assertOk()->assertJsonCount(1, 'data');
-        $this->getJson('/api/v1/contacts?stage_id=none')->assertOk()->assertJsonCount(0, 'data');
+        $timeline = collect($this->getJson("/api/v1/contacts/{$id}/timeline?group=stages")->assertOk()->json('data'));
+        $this->assertSame(5, $timeline->count());
+        $last = $timeline->first(); // newest first
+        $this->assertEquals(['from' => 'Booked', 'to' => 'Lost', 'version' => 5, 'note' => 'Chose another company', 'to_group' => 'lost'],
+            array_intersect_key($last['data'], ['from' => 1, 'to' => 1, 'version' => 1, 'note' => 1, 'to_group' => 1]));
+        $this->assertSame($enquiry['id'], $last['enquiry_id']);
+        $this->assertSame('agent', $last['actor']);
+
+        $this->getJson("/api/v1/contacts/{$id}/stage-history")->assertOk()->assertJsonCount(5, 'data')
+            ->assertJsonPath('data.0.reason', 'Chose another company')->assertJsonPath('data.0.version', 5);
+        $this->getJson("/api/v1/contacts?stage_id={$s['Lost']}")->assertOk()->assertJsonCount(1, 'data');
+    }
+
+    public function test_two_people_changing_the_same_lead_at_once_cannot_overwrite_each_other(): void
+    {
+        $s = $this->suggested();
+        $id = $this->contact('+971501110002');
+        $this->move($id, $s['New'])->assertOk();
+        $loaded = $this->current($id)['stage_version']; // both screens loaded version 1
+
+        $sara = $this->addMember($this->tenant, SystemRole::Agent);
+        $this->tenantContext()->bypass(fn () => DB::table('users')->where('id', $sara->user_id)->update(['name' => 'Sara Ahmed']));
+        $this->actingAsMember($sara);
+        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Qualified'], 'version' => $loaded])->assertOk();
+
+        $this->actingAsMember($this->owner);
+        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Quote sent'], 'version' => $loaded])->assertStatus(409)
+            ->assertJsonPath('error.code', 'conflict')
+            ->assertJsonPath('error.message', 'This lead was updated by Sara Ahmed. Check its stage and try again.');
+        $this->assertSame('Qualified', $this->current($id)['stage']['name'], 'not overwritten');
+        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Quote sent']])->assertUnprocessable(); // the version is required
+    }
+
+    public function test_won_needs_a_verified_payment_or_an_approval_with_a_reference(): void
+    {
+        $s = $this->suggested();
+        $id = $this->contact('+971501110003');
+        $this->move($id, $s['Booked'])->assertOk();
+
+        // An Agent, no payment: refused.
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Agent));
+        $this->move($id, $s['Won'])->assertUnprocessable()->assertJsonPath('error.details.fields.stage_id.0', 'Won needs a verified payment. Someone allowed to approve Won can mark it with a reference.');
+
+        // The Owner can approve, but only with a reference.
+        $this->actingAsMember($this->owner);
+        $this->move($id, $s['Won'])->assertUnprocessable()->assertJsonPath('error.details.fields.reason.0', 'Add a reference for marking Won without a verified payment (an invoice or receipt number).');
+        $this->move($id, $s['Won'], ['reason' => 'Receipt 4471'])->assertOk()->assertJsonPath('data.stage.name', 'Won');
+        $this->assertSame('Receipt 4471', $this->tenantContext()->run($this->tenant, fn () => ContactStageEvent::query()->where('to_stage_id', $s['Won'])->value('reason')));
+
+        // With a verified payment (a paid store order on the enquiry), an Agent can mark Won.
+        $other = $this->contact('+971501110004');
+        $this->move($other, $s['Booked'])->assertOk();
+        $enquiry = $this->current($other)['id'];
+        $this->tenantContext()->run($this->tenant, fn () => DB::table('commerce_orders')->insert([
+            'id' => (string) Str::uuid7(), 'tenant_id' => $this->tenant->id, 'integration_id' => (string) Str::uuid(), 'store_name' => 'Store', 'external_id' => '1',
+            'number' => '1001', 'status' => 'processing', 'currency' => 'AED', 'total' => '500', 'paid' => true, 'paid_at' => now(), 'placed_at' => now(),
+            'contact_id' => $other, 'enquiry_id' => $enquiry, 'match' => 'link', 'created_at' => now(), 'updated_at' => now(),
+        ]));
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Agent));
+        $this->move($other, $s['Won'])->assertOk()->assertJsonPath('data.stage.name', 'Won');
+    }
+
+    public function test_lost_needs_a_reason(): void
+    {
+        $s = $this->suggested();
+        $id = $this->contact('+971501110005');
+        $this->move($id, $s['Lost'])->assertUnprocessable()->assertJsonPath('error.details.fields.reason.0', 'Say why this lead was lost.');
+        $this->move($id, $s['Lost'], ['reason' => 'Too expensive'])->assertOk();
+    }
+
+    public function test_each_enquiry_keeps_its_own_stage(): void
+    {
+        $s = $this->suggested();
+        $id = $this->contact('+971501110006');
+        $this->move($id, $s['Lost'], ['reason' => 'Dates changed'])->assertOk();
+        $first = $this->current($id)['id'];
+        $this->postJson("/api/v1/contacts/{$id}/enquiries", ['note' => 'June rental'])->assertCreated();
+        $this->move($id, $s['Qualified'])->assertOk();
+
+        $list = collect($this->getJson("/api/v1/contacts/{$id}/enquiries")->json('data'))->keyBy('id');
+        $this->assertSame('Lost', $list[$first]['stage']['name']);
+        $this->assertSame('Qualified', $list->firstWhere('current', true)['stage']['name']);
+        $this->getJson("/api/v1/contacts/{$id}")->assertOk()->assertJsonPath('data.stage.name', 'Qualified');
+
+        // An earlier enquiry can still be moved on its own.
+        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['New'], 'version' => 1, 'enquiry_id' => $first])->assertOk();
+        $this->assertSame('New', collect($this->getJson("/api/v1/contacts/{$id}/enquiries")->json('data'))->firstWhere('id', $first)['stage']['name']);
+        $this->getJson("/api/v1/contacts/{$id}")->assertOk()->assertJsonPath('data.stage.name', 'Qualified');
     }
 
     public function test_a_used_stage_is_archived_not_deleted_and_an_unused_one_is_deleted(): void
     {
         $s = $this->suggested();
-        $id = $this->contact('+971501110002');
-        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Won']])->assertOk();
+        $id = $this->contact('+971501110007');
+        $this->move($id, $s['Booked'])->assertOk();
 
-        $this->deleteJson("/api/v1/crm/stages/{$s['Won']}")->assertUnprocessable(); // contact still on it
-        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => null])->assertOk()->assertJsonPath('data.stage', null);
-        $this->deleteJson("/api/v1/crm/stages/{$s['Won']}")->assertNoContent();
-        $this->deleteJson("/api/v1/crm/stages/{$s['Lost']}")->assertNoContent();
+        $this->deleteJson("/api/v1/crm/stages/{$s['Booked']}")->assertUnprocessable(); // contact still on it
+        $this->move($id, null)->assertOk()->assertJsonPath('data.stage', null);
+        $this->deleteJson("/api/v1/crm/stages/{$s['Booked']}")->assertNoContent();
+        $this->deleteJson("/api/v1/crm/stages/{$s['Quote sent']}")->assertNoContent();
 
         $all = collect($this->getJson('/api/v1/crm/stages?include_archived=1')->json('data'))->keyBy('name');
-        $this->assertTrue($all['Won']['archived'], 'kept for history');
-        $this->assertFalse($all->has('Lost'), 'never used: deleted');
-        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Won']])->assertUnprocessable();
-        $this->getJson("/api/v1/contacts/{$id}/stage-history")->assertOk()->assertJsonPath('data.1.to.name', 'Won');
+        $this->assertTrue($all['Booked']['archived'], 'kept for history');
+        $this->assertFalse($all->has('Quote sent'), 'never used: deleted');
+        $this->move($id, $s['Booked'])->assertUnprocessable();
     }
 
     public function test_names_are_unique_and_order_can_change(): void
     {
         $s = $this->suggested();
         $this->postJson('/api/v1/crm/stages', ['name' => 'won'])->assertUnprocessable();
-        $booked = $this->postJson('/api/v1/crm/stages', ['name' => 'Booked', 'color' => 'good'])->assertCreated()->json('data.id');
+        $hot = $this->postJson('/api/v1/crm/stages', ['name' => 'Hot', 'color' => 'bad'])->assertCreated()->json('data.id');
 
-        $order = [$s['New'], $s['Contacted'], $s['Qualified'], $booked, $s['Won'], $s['Lost']];
+        $order = [$s['New'], $hot, $s['Qualified'], $s['Quote sent'], $s['Booked'], $s['Won'], $s['Lost']];
         $this->putJson('/api/v1/crm/stages/order', ['ids' => $order])->assertOk();
         $this->assertSame($order, collect($this->getJson('/api/v1/crm/stages')->json('data'))->pluck('id')->all());
-        $this->putJson('/api/v1/crm/stages/order', ['ids' => [$booked]])->assertUnprocessable();
+        $this->putJson('/api/v1/crm/stages/order', ['ids' => [$hot]])->assertUnprocessable();
     }
 
-    public function test_agents_can_move_contacts_but_not_manage_stages(): void
+    public function test_agents_can_move_leads_but_not_manage_stages_and_viewers_cannot_move_them(): void
     {
         $s = $this->suggested();
-        $id = $this->contact('+971501110003');
+        $id = $this->contact('+971501110008');
 
         $this->actingAsMember($this->addMember($this->tenant, SystemRole::Agent));
-        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Contacted']])->assertOk();
+        $this->move($id, $s['Qualified'])->assertOk();
         $this->postJson('/api/v1/crm/stages', ['name' => 'Hot'])->assertForbidden();
         $this->deleteJson("/api/v1/crm/stages/{$s['New']}")->assertForbidden();
+
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Viewer));
+        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['New'], 'version' => 1])->assertForbidden();
     }
 
     public function test_stages_are_isolated_per_workspace(): void
@@ -118,10 +241,11 @@ final class StagesTest extends TestCase
         $other = $this->createTenant();
         $this->subscribe($other, 'pro');
         $this->actingAsMember($this->addMember($other));
-        $id = $this->contact('+971501110004');
+        $id = $this->contact('+971501110009');
 
         $this->getJson('/api/v1/crm/stages')->assertOk()->assertJsonCount(0, 'data');
-        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['New']])->assertUnprocessable();
+        $this->move($id, $s['New'])->assertUnprocessable();
         $this->patchJson("/api/v1/crm/stages/{$s['New']}", ['name' => 'Mine'])->assertNotFound();
+        $this->assertSame(0, $this->tenantContext()->run($other, fn () => Enquiry::query()->whereNotNull('stage_id')->count()));
     }
 }

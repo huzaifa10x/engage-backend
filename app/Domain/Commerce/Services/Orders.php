@@ -11,7 +11,7 @@ use App\Domain\Commerce\Models\CommerceOrder;
 use App\Domain\Commerce\Models\CommerceOrderItem;
 use App\Domain\Conversions\Services\ConversionTriggers;
 use App\Domain\Crm\Models\CrmStage;
-use App\Domain\Crm\Services\ContactStages;
+use App\Domain\Crm\Services\EnquiryStages;
 use App\Domain\Feedback\FeedbackRequests;
 use App\Domain\Growth\GrowthSettings;
 use App\Domain\Growth\Services\Acquisition;
@@ -63,7 +63,7 @@ final class Orders
     public function __construct(
         private readonly ChatLinks $links,
         private readonly Scheduler $scheduler,
-        private readonly ContactStages $stages,
+        private readonly EnquiryStages $stages,
     ) {}
 
     /**
@@ -295,7 +295,8 @@ final class Orders
                 /** @var ?Contact $contact */
                 $contact = Contact::query()->find($order->contact_id);
                 if ($contact !== null) {
-                    $this->stages->move($contact, $stageId, 'automation');
+                    // A paid store order is a verified payment: it can move the lead to Won (item 4).
+                    $this->stages->move($contact, $stageId, 'payment', proof: ['payment' => $order->id]);
                 }
                 $order->forceFill(['stage_moved_at' => Carbon::now()])->save();
             } catch (Throwable $e) {

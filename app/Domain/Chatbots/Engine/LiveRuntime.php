@@ -14,7 +14,9 @@ use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Chatbots\Services\ChatbotWorkspace;
 use App\Domain\Chatbots\Services\OrderLookup;
 use App\Domain\Conversions\Services\ConversionTriggers;
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Crm\Models\Segment;
+use App\Domain\Crm\Services\EnquiryStages;
 use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Forms\Form;
 use App\Domain\Forms\FormVersion;
@@ -40,6 +42,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 /**
@@ -264,6 +267,22 @@ final class LiveRuntime extends BotRuntime
         }
 
         return $this->graphs[$flowId];
+    }
+
+    public function setStage(string $stageId): string
+    {
+        $stage = CrmStage::query()->active()->find($stageId);
+        if ($stage === null) {
+            return 'The stage set in this step no longer exists: the lead stays where it is.';
+        }
+        try {
+            app(EnquiryStages::class)->move($this->contactModel, $stage->id, 'flow');
+        } catch (ValidationException $e) {
+            return 'The lead stays where it is: '.collect($e->errors())->flatten()->first();
+        }
+        $this->contact = self::snapshot($this->contactModel);
+
+        return "The lead moved to {$stage->name}.";
     }
 
     public function optIn(): bool

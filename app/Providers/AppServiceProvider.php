@@ -31,6 +31,7 @@ use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\Models\Invitation;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\Timeline\Enquiry;
 use App\Domain\Timeline\TimelineHooks;
 use App\Domain\WhatsApp\Events\MetaAccessRejected;
 use App\Domain\WhatsApp\Jobs\VerifyMetaAccess;
@@ -107,6 +108,7 @@ class AppServiceProvider extends ServiceProvider
             'phone_number' => PhoneNumber::class,
             'signup_attempt' => EmbeddedSignupAttempt::class,
             'contact' => Contact::class,
+            'enquiry' => Enquiry::class,
             'crm_stage' => CrmStage::class,
             'conversation' => Conversation::class,
             'message' => Message::class,

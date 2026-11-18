@@ -18,7 +18,10 @@ use Illuminate\Support\Carbon;
  * @property ?string $from_stage_id
  * @property ?string $to_stage_id
  * @property ?string $changed_by_membership_id
- * @property string $source
+ * @property string $source user | api | import | automation | flow | booking | payment | lead_rule
+ * @property ?string $enquiry_id
+ * @property ?int $version the enquiry's stage version after this change
+ * @property ?string $reason lost reason, Won approval reference, or what moved it
  * @property Carbon $changed_at
  */
 class ContactStageEvent extends Model
@@ -29,7 +32,7 @@ class ContactStageEvent extends Model
 
     protected $table = 'contact_stage_events';
 
-    protected $fillable = ['tenant_id', 'contact_id', 'from_stage_id', 'to_stage_id', 'changed_by_membership_id', 'source', 'changed_at'];
+    protected $fillable = ['tenant_id', 'contact_id', 'enquiry_id', 'from_stage_id', 'to_stage_id', 'changed_by_membership_id', 'source', 'version', 'reason', 'changed_at'];
 
     protected function casts(): array
     {

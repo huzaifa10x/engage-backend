@@ -73,6 +73,7 @@ final class TimelineHooks
         ])));
         ContactStageEvent::created(fn (ContactStageEvent $e) => self::safe(fn () => self::capture('stage', [
             'contact_id' => $e->contact_id, 'id' => $e->id, 'from' => $e->from_stage_id, 'to' => $e->to_stage_id, 'reason' => $e->source,
+            'note' => $e->reason, 'version' => $e->version, 'enquiry_id' => $e->enquiry_id,
             'membership_id' => $e->changed_by_membership_id, 'at' => self::iso($e->changed_at),
         ])));
         ChatbotEvent::created(fn (ChatbotEvent $e) => self::safe(fn () => self::flow($e)));
@@ -308,14 +309,21 @@ final class TimelineHooks
     /** @param array<string, mixed> $p */
     private static function applyStage(array $p): void
     {
-        $names = CrmStage::query()->whereIn('id', array_filter([$p['from'], $p['to']]))->pluck('name', 'id');
+        $stages = CrmStage::query()->whereIn('id', array_filter([$p['from'], $p['to']]))->get(['id', 'name', 'group'])->keyBy('id');
+        $names = $stages->map(fn (CrmStage $s) => $s->name);
         $actor = $p['membership_id'] !== null ? Timeline::AGENT : Timeline::SYSTEM;
         Timeline::record($p['contact_id'], 'stage.changed', $actor, 'stage_event', $p['id'], [
             'from' => $p['from'] !== null ? ($names[$p['from']] ?? null) : null,
             'to' => $p['to'] !== null ? ($names[$p['to']] ?? null) : null,
             'reason' => $p['reason'],
-        ], $p['at'], null, $p['membership_id']);
-        DB::table('enquiries')->where('id', self::currentEnquiry($p['contact_id']))->update(['stage_id' => $p['to']]);
+            'note' => $p['note'] ?? null,
+            'version' => $p['version'] ?? null,
+            'to_group' => $p['to'] !== null ? ($stages[$p['to']]->group ?? null) : null,
+        ], $p['at'], $p['enquiry_id'] ?? null, $p['membership_id']);
+        // Stages written before item 4 lived on the contact: the enquiry follows it.
+        if (($p['enquiry_id'] ?? null) === null) {
+            DB::table('enquiries')->where('id', self::currentEnquiry($p['contact_id']))->update(['stage_id' => $p['to']]);
+        }
     }
 
     /** @param array<string, mixed> $p */

@@ -31,6 +31,7 @@ enum SystemRole: string
                 Permission::InboxView->value, Permission::InboxReply->value,
                 Permission::ContactsView->value, Permission::ContactsCreate->value, Permission::ContactsUpdate->value,
                 Permission::TemplatesView->value,
+                Permission::StagesChange->value, // move a lead through the stages; Won needs a verified payment (item 4)
             ],
             // Agent's inbox and contacts, plus campaigns, templates and Growth Hub (Insights → Marketing). CN-02.
             self::Marketing => [
@@ -41,6 +42,7 @@ enum SystemRole: string
                 Permission::CampaignsView->value, Permission::CampaignsCreate->value, Permission::CampaignsSend->value,
                 Permission::GrowthView->value,
                 Permission::ChannelsView->value, // which WhatsApp accounts templates belong to (read only; Channels stays off the menu)
+                Permission::StagesChange->value,
             ],
             self::Viewer => [
                 Permission::InboxView->value, Permission::ContactsView->value, Permission::TemplatesView->value,

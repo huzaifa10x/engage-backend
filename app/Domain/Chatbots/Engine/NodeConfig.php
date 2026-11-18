@@ -186,6 +186,8 @@ final class NodeConfig
             'tag' => [
                 'add' => self::words($c['add'] ?? [], 10, 40, false),
                 'remove' => self::words($c['remove'] ?? [], 10, 40, false),
+                // Item 4: also move the lead to a stage (Won still needs a verified payment).
+                'stage_id' => self::uuid($c['stage_id'] ?? null),
             ] + $assign(),
             'optin' => [
                 'text' => $text(1024),

@@ -58,7 +58,7 @@ final class TimelineController extends Controller
     {
         $list = Enquiry::query()->where('contact_id', $contact->id)->orderByDesc('number')->get();
         $owners = TenantMembership::query()->with('user')->whereIn('id', $list->pluck('owner_membership_id')->filter())->get()->keyBy('id');
-        $stages = CrmStage::query()->whereIn('id', $list->pluck('stage_id')->filter())->pluck('name', 'id');
+        $stages = CrmStage::query()->whereIn('id', $list->pluck('stage_id')->filter())->get()->keyBy('id');
         $orders = DB::table('commerce_orders')->whereIn('enquiry_id', $list->modelKeys())
             ->get(['id', 'enquiry_id', 'number', 'status', 'total', 'currency', 'paid'])->groupBy('enquiry_id');
         $counts = DB::table('timeline_events')->whereIn('enquiry_id', $list->modelKeys())->whereIn('type', ['message.received', 'message.sent'])
@@ -83,7 +83,11 @@ final class TimelineController extends Controller
                 'source_confidence' => $e->source_confidence,
                 'confidence_label' => Enquiry::CONFIDENCE_LABELS[$e->source_confidence],
                 'owner' => $e->owner_membership_id !== null ? ['id' => $e->owner_membership_id, 'name' => $owners[$e->owner_membership_id]->user->name ?? 'Former teammate'] : null,
-                'stage' => $e->stage_id !== null ? ['id' => $e->stage_id, 'name' => $stages[$e->stage_id] ?? null] : null,
+                'stage' => $e->stage_id !== null ? ['id' => $e->stage_id, 'name' => $stages[$e->stage_id]->name ?? null, 'group' => $stages[$e->stage_id]->group ?? CrmStage::OPEN] : null,
+                // Sent back with a stage change, so two people can't overwrite each other (item 4).
+                'stage_version' => $e->stage_version,
+                'lost_reason' => $e->lost_reason,
+                'verified_paid' => collect($payments)->contains(fn (array $p) => $p['paid']),
                 'last_activity_at' => $e->last_activity_at?->toIso8601String(),
                 'messages' => (int) ($counts[$e->id] ?? 0),
                 'bookings' => [],

@@ -83,6 +83,9 @@ abstract class BotRuntime
     /** @return bool whether the customer's consent changed (they were not opted in before) */
     abstract public function optIn(): bool;
 
+    /** Moves the lead to a stage (a "Tag / assign" step, item 4); returns a line for the run log. */
+    abstract public function setStage(string $stageId): string;
+
     /** Marketing opt-out ("marketing") or a full opt-out ("all") through the consent service. */
     abstract public function optOut(string $scope): void;
 

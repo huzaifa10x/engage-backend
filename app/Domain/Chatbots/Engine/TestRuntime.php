@@ -9,6 +9,7 @@ use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSecret;
 use App\Domain\Chatbots\Services\ChatbotWorkspace;
 use App\Domain\Chatbots\Services\OrderLookup;
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Crm\Models\Segment;
 use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Crm\Services\SegmentQuery;
@@ -231,6 +232,13 @@ final class TestRuntime extends BotRuntime
         $row = $flow->published_version !== null ? ChatbotFlowVersion::query()->where('flow_id', $flowId)->where('version', $flow->published_version)->first() : null;
 
         return FlowGraph::from($row !== null ? $row->graph : $flow->draft);
+    }
+
+    public function setStage(string $stageId): string
+    {
+        $name = CrmStage::query()->whereKey($stageId)->value('name');
+
+        return is_string($name) ? "(Test) The lead would move to {$name}." : '(Test) The stage set in this step no longer exists.';
     }
 
     public function optIn(): bool

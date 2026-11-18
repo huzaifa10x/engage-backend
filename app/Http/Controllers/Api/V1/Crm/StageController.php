@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Crm;
 
+use App\Domain\Access\Permission;
 use App\Domain\Access\SystemRole;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Crm\Models\ContactStageEvent;
 use App\Domain\Crm\Models\CrmStage;
-use App\Domain\Crm\Services\ContactStages;
+use App\Domain\Crm\Services\EnquiryStages;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\Timeline\Enquiry;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\ContactResource;
 use Illuminate\Http\JsonResponse;
@@ -40,6 +42,7 @@ final class StageController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:40'],
             'color' => ['nullable', Rule::in(CrmStage::COLORS)],
+            'group' => ['nullable', Rule::in(CrmStage::GROUPS)],
         ]);
         if (CrmStage::query()->active()->count() >= self::MAX_STAGES) {
             throw ValidationException::withMessages(['name' => 'A pipeline can have up to '.self::MAX_STAGES.' stages.']);
@@ -49,6 +52,7 @@ final class StageController extends Controller
         $stage = CrmStage::query()->create([
             'name' => trim($data['name']),
             'color' => $data['color'] ?? 'grey',
+            'group' => $data['group'] ?? CrmStage::OPEN,
             'position' => (int) CrmStage::query()->max('position') + 1,
         ]);
         $this->audit->record('crm_stage.created', $stage, after: $stage->summary());
@@ -56,7 +60,7 @@ final class StageController extends Controller
         return response()->json(['data' => $stage->summary() + ['position' => $stage->position, 'contacts' => 0]], 201);
     }
 
-    /** Creates the suggested pipeline (New, Contacted, Qualified, Won, Lost) for a workspace with no stages. */
+    /** Creates the default pipeline (New, Qualified, Quote sent, Booked, Won, Lost) for a workspace with no stages. */
     public function suggest(): JsonResponse
     {
         if (CrmStage::query()->active()->exists()) {
@@ -77,6 +81,8 @@ final class StageController extends Controller
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:40'],
             'color' => ['sometimes', Rule::in(CrmStage::COLORS)],
+            // Open, Won or Lost: reports count by group, so renaming a stage never breaks them.
+            'group' => ['sometimes', Rule::in(CrmStage::GROUPS)],
         ]);
         abort_if($stage->archived_at !== null, 422, 'Archived stages cannot be changed.');
         if (isset($data['name'])) {
@@ -123,12 +129,20 @@ final class StageController extends Controller
         return response()->json(null, 204);
     }
 
-    public function move(Request $request, Contact $contact, ContactStages $stages): ContactResource
+    /**
+     * Moves the contact's current enquiry to a stage (item 4). The screen sends the stage version it
+     * loaded: if someone changed the stage since, nothing is overwritten (409, "This lead was updated by …").
+     */
+    public function move(Request $request, Contact $contact, EnquiryStages $stages): ContactResource
     {
+        abort_unless(app(TenantContext::class)->can(Permission::StagesChange), 403, 'You are not allowed to change stages.');
         $data = $request->validate([
             'stage_id' => ['present', 'nullable', 'uuid'],
-            // Where the change is made: the chat sidebar and Growth Hub › Leads for anyone who may edit
-            // contacts; the Contacts & CRM edit form for Owners and Admins only.
+            'version' => ['required', 'integer', 'min:0'],
+            'reason' => ['nullable', 'string', 'max:200'],   // Lost reason, or the reference for Won without a verified payment
+            'enquiry_id' => ['nullable', 'uuid'],            // another enquiry of this contact (default: the current one)
+            // Where the change is made: the chat sidebar and Growth Hub › Leads for anyone who may change
+            // stages; the Contacts & CRM edit form for Owners and Admins only.
             'via' => ['sometimes', 'in:chat,leads,contact'],
         ]);
         $via = $data['via'] ?? 'chat';
@@ -136,7 +150,8 @@ final class StageController extends Controller
             $role = app(TenantContext::class)->membership()?->role?->systemRole();
             abort_unless(in_array($role, [SystemRole::Owner, SystemRole::Admin], true), 403, 'Only Owners and Admins change the stage from the contact record.');
         }
-        $stages->move($contact, $data['stage_id']);
+        $enquiry = isset($data['enquiry_id']) ? Enquiry::query()->where('contact_id', $contact->id)->findOrFail($data['enquiry_id']) : null;
+        $stages->move($contact, $data['stage_id'], 'user', (int) $data['version'], $data['reason'] ?? null, enquiry: $enquiry);
 
         return ContactResource::make($contact->load('stage'));
     }
@@ -156,6 +171,9 @@ final class StageController extends Controller
             'to' => $e->to_stage_id ? $names[$e->to_stage_id]?->summary() : null,
             'changed_by' => $e->changed_by_membership_id ? ($members[$e->changed_by_membership_id] ?? 'A teammate') : null,
             'source' => $e->source,
+            'reason' => $e->reason,
+            'version' => $e->version,
+            'enquiry_id' => $e->enquiry_id,
             'changed_at' => $e->changed_at->toIso8601String(),
         ])]);
     }
