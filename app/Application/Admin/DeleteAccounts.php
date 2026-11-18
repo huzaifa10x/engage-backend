@@ -48,6 +48,14 @@ final class DeleteAccounts
         $this->closeAndPurge($tenant, $reason, null);
     }
 
+    /** A workspace whose Owner asked for deletion and whose waiting period is over (WorkspaceDeletion). */
+    public function deleteScheduled(Tenant $tenant, string $reason): void
+    {
+        $this->ensureDeletable([$tenant]);
+        $this->stopBilling([$tenant]);
+        $this->closeAndPurge($tenant, $reason, null);
+    }
+
     /**
      * The companies that are deleted with this user: those where they are the only active Owner.
      *

@@ -16,6 +16,7 @@ Schedule::command('engage:whatsapp:verify-access')->everyFifteenMinutes()->onOne
 Schedule::command('engage:coexistence:watch')->everyTenMinutes()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:billing:reconcile')->hourly()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:retention:apply')->dailyAt('02:30')->onOneServer()->withoutOverlapping();
+Schedule::command('engage:workspace-deletions')->hourly()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:inbox:wake-snoozed')->everyMinute()->onOneServer()->withoutOverlapping();
 // Safety net behind the follow-up rules: every waiting chat has the alerts of its current wait.
 Schedule::command('engage:followups:sweep')->everyFiveMinutes()->onOneServer()->withoutOverlapping();

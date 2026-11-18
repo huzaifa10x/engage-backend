@@ -36,6 +36,7 @@ final class TimelineController extends Controller
             ->when($data['enquiry_id'] ?? null, fn ($q, string $id) => $q->where('enquiry_id', $id))
             ->orderByDesc('occurred_at')->orderByDesc('id')->cursorPaginate((int) ($data['per_page'] ?? 50));
         $numbers = Enquiry::query()->where('contact_id', $contact->id)->pluck('number', 'id');
+        TimelineEvent::markRemovedMessages($page->items());
 
         return response()->json([
             'data' => collect($page->items())->map(fn (TimelineEvent $e) => [

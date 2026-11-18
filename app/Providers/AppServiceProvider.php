@@ -13,6 +13,7 @@ use App\Domain\Chatbots\Services\DataTriggers;
 use App\Domain\Conversions\Models\MetaDataset;
 use App\Domain\Conversions\Services\ConversionTriggers;
 use App\Domain\Crm\Models\CrmStage;
+use App\Domain\Data\Models\DataExport;
 use App\Domain\Developer\Services\EmitMessageWebhooks;
 use App\Domain\Forms\Form;
 use App\Domain\Growth\Links\WaLink;
@@ -109,6 +110,7 @@ class AppServiceProvider extends ServiceProvider
             'signup_attempt' => EmbeddedSignupAttempt::class,
             'contact' => Contact::class,
             'enquiry' => Enquiry::class,
+            'data_export' => DataExport::class,
             'crm_stage' => CrmStage::class,
             'conversation' => Conversation::class,
             'message' => Message::class,

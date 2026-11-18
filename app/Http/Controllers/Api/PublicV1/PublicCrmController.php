@@ -113,6 +113,8 @@ final class PublicCrmController extends Controller
             ->when($data['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
             ->orderByDesc('occurred_at')->orderByDesc('id')->cursorPaginate((int) ($data['limit'] ?? 50));
 
+        TimelineEvent::markRemovedMessages($page->items());
+
         return response()->json(['data' => collect($page->items())->map(fn (TimelineEvent $e) => PublicPayload::timelineEvent($e)), 'next_cursor' => $page->nextCursor()?->encode()]);
     }
 

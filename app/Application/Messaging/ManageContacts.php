@@ -69,10 +69,11 @@ final class ManageContacts
         return $contact;
     }
 
+    /** Removes the contact's data (batch 6, item 14): see EraseContact. */
     public function delete(Contact $contact): void
     {
-        $contact->delete(); // soft: history stays; a new inbound message restores the contact
         $this->audit->record('contact.deleted', $contact);
+        app(EraseContact::class)->erase($contact);
     }
 
     /**

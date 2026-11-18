@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Carbon;
 
 /**
  * A client business (workspace). Global table — rows are protected by RLS so a user can only
@@ -44,6 +45,9 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property ?string $region
  * @property ?string $postal_code
  * @property array<string, mixed>|null $settings
+ * @property ?Carbon $deletion_requested_at the Owner asked to delete the workspace (item 14)
+ * @property ?Carbon $deletion_scheduled_for deleted then unless cancelled
+ * @property ?string $deletion_requested_by user id
  */
 class Tenant extends Model
 {
@@ -66,6 +70,8 @@ class Tenant extends Model
             'date_format' => DateFormat::class,
             'settings' => 'array',
             'suspended_at' => 'datetime',
+            'deletion_requested_at' => 'datetime',
+            'deletion_scheduled_for' => 'datetime',
         ];
     }
 

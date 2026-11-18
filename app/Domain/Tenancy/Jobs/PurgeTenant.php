@@ -6,6 +6,9 @@ namespace App\Domain\Tenancy\Jobs;
 
 use App\Application\WhatsApp\ManageChannels;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Data\Models\DataExport;
+use App\Domain\Integrations\Models\Integration;
+use App\Domain\Integrations\Providers\WooCommerceConnector;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
@@ -63,6 +66,15 @@ final class PurgeTenant implements ShouldQueue
                     Log::warning('Could not disconnect a WhatsApp account while deleting a company.', ['waba_id' => $waba->waba_id, 'error' => $e->getMessage()]);
                 }
             }
+            // Stores stop sending us their events (WooCommerce webhooks are removed at the store).
+            foreach (Integration::query()->where('provider', Integration::WOOCOMMERCE)->get() as $integration) {
+                try {
+                    app(WooCommerceConnector::class)->disconnect($integration);
+                } catch (Throwable $e) {
+                    Log::warning('Could not disconnect a store while deleting a company.', ['integration' => $integration->id, 'error' => $e->getMessage()]);
+                }
+            }
+            DataExport::query()->whereNotNull('path')->get()->each(fn (DataExport $e) => Storage::disk((string) $e->disk)->delete((string) $e->path));
             Media::query()->whereNotNull('path')->select(['id', 'disk', 'path'])->lazyById(500)->each(function (Media $media): void {
                 try {
                     Storage::disk($media->disk ?: (string) config('filesystems.default'))->delete((string) $media->path);

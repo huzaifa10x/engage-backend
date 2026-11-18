@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Conversions\ConversionsController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
 use App\Http\Controllers\Api\V1\Crm\StageController;
+use App\Http\Controllers\Api\V1\DataController;
 use App\Http\Controllers\Api\V1\DeveloperController;
 use App\Http\Controllers\Api\V1\EmailPreferenceController;
 use App\Http\Controllers\Api\V1\EntitlementController;
@@ -127,6 +128,13 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, 'tenant:optional', '
 // Public API alone (PlanRateLimit in routes/api/public.php), so a busy integration never slows agents.
 Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified::class, 'tenant', RequireOwnerTwoFactor::class, 'throttle:api'])->group(function () {
     Route::get('tenant', [TenantController::class, 'show'])->name('tenant.show');
+    // Settings › Data (batch 6, item 14): the Owner's exports and workspace deletion (checked in the controller).
+    Route::get('data/exports', [DataController::class, 'exports'])->name('data.exports');
+    Route::post('data/exports', [DataController::class, 'startExport'])->middleware('throttle:10,1')->name('data.exports.start');
+    Route::get('data/exports/{export}/download', [DataController::class, 'download'])->whereUuid('export')->name('data.exports.download');
+    Route::get('tenant/deletion', [DataController::class, 'deletion'])->name('tenant.deletion');
+    Route::post('tenant/deletion', [DataController::class, 'requestDeletion'])->middleware('throttle:5,1')->name('tenant.deletion.request');
+    Route::delete('tenant/deletion', [DataController::class, 'cancelDeletion'])->name('tenant.deletion.cancel');
     Route::patch('tenant', [TenantController::class, 'update'])
         ->middleware('can:'.Permission::SettingsManage->value)->name('tenant.update');
 

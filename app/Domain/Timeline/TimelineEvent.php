@@ -8,6 +8,7 @@ use App\Domain\Tenancy\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use LogicException;
 
 /**
@@ -50,6 +51,28 @@ class TimelineEvent extends Model
     protected $table = 'timeline_events';
 
     protected $fillable = ['tenant_id', 'contact_id', 'enquiry_id', 'type', 'occurred_at', 'actor', 'actor_membership_id', 'actor_name', 'subject_type', 'subject_id', 'data'];
+
+    /**
+     * Message lines whose text the retention setting removed are marked data.removed = true (item 14):
+     * the line stays on the timeline, the text is gone.
+     *
+     * @param  iterable<TimelineEvent>  $events
+     */
+    public static function markRemovedMessages(iterable $events): void
+    {
+        $ids = [];
+        foreach ($events as $e) {
+            if (in_array($e->type, ['message.received', 'message.sent'], true) && $e->subject_id !== null) {
+                $ids[] = $e->subject_id;
+            }
+        }
+        $removed = $ids === [] ? [] : array_flip(DB::table('messages')->whereIn('id', $ids)->whereNotNull('redacted_at')->pluck('id')->all());
+        foreach ($events as $e) {
+            if ($e->subject_id !== null && isset($removed[$e->subject_id])) {
+                $e->setAttribute('data', ['removed' => true] + ($e->data ?? []));
+            }
+        }
+    }
 
     protected function casts(): array
     {
