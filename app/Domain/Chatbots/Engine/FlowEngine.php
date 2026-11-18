@@ -10,7 +10,9 @@ use App\Domain\Forms\Form;
 use App\Domain\Forms\FormDefinition;
 use App\Domain\Forms\FormVersion;
 use App\Domain\Growth\Services\MetaReferral;
+use App\Domain\Tenancy\Enums\DateFormat;
 use App\Domain\Tenancy\TenantContext;
+use App\Support\Dates\DateReader;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -1339,7 +1341,7 @@ final class FlowEngine
         $c = $node['config'];
         if (in_array($c['validate'] ?? 'any', ['date', 'future_date', 'workday'], true)) {
             $specific = match ($why) {
-                'us_order' => 'Sorry, please write the day first, for example 18/11.',
+                'wrong_order' => DateReader::orderHint($detail instanceof DateFormat ? $detail : DateFormat::DayMonthYear),
                 'impossible' => 'Sorry, that date doesn’t exist. Please check the day and month.',
                 'too_far' => 'Sorry, please choose a date within the next '.(int) $detail.' days.',
                 'closed_day' => 'Sorry, we’re closed that day. Please send a date after today when we are open.',
@@ -1419,7 +1421,7 @@ final class FlowEngine
 
     /**
      * Level 1 answers, as before level 2 (plain numbers only, no booking window), except dates: these
-     * are read day-first with the level-2 reader, so flows not yet upgraded can no longer save a wrong
+     * are read in the workspace's date format with the level-2 reader, so flows not yet upgraded can no longer save a wrong
      * day (31/04 used to become 1 May, and 5/1 was read the US way). Dates that don't exist and the
      * month first (11/18) are refused and asked again; a day and month already past this year means
      * next year.
@@ -1430,9 +1432,10 @@ final class FlowEngine
     {
         $today = now($rt->timezone())->startOfDay();
         $date = function (string $t) use ($rt, $today): ?Carbon {
-            [$iso, $why] = self::parseDate($t, $today);
+            [$iso, $why] = self::parseDate($t, $today, $rt->dateFormat());
             if ($iso === null) {
                 $this->why = $why;
+                $this->whyDetail = $rt->dateFormat();
 
                 return null;
             }
@@ -1456,8 +1459,6 @@ final class FlowEngine
     }
 
     private const ARABIC_DIGITS = ['٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4', '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9'];
-
-    private const MONTHS = ['jan' => 1, 'feb' => 2, 'mar' => 3, 'apr' => 4, 'may' => 5, 'jun' => 6, 'jul' => 7, 'aug' => 8, 'sep' => 9, 'oct' => 10, 'nov' => 11, 'dec' => 12];
 
     /**
      * A number as customers type it in the UAE: digits with commas or spaces, Arabic digits, an optional
@@ -1512,64 +1513,23 @@ final class FlowEngine
     }
 
     /**
-     * Dates as written in the UAE, day first: 18/11, 18/11/2026, 18-11-26, 18.11.2026, "18 Nov",
-     * "Nov 18", "18 November 2026", 2026-11-18, "today", "tomorrow" (Arabic digits too). A day and
-     * month without a year that has already passed this year means next year. Refused, with a
-     * reason: dates that don't exist (31/4, 29/2 in a non-leap year), the month first (11/18), and
-     * anything else (no free-form guessing).
+     * A typed date, read in the workspace's date format (item 1; day-first by default). See DateReader.
      *
      * @return array{0: ?string, 1: ?string} [Y-m-d, null] or [null, reason]
      */
-    public static function parseDate(string $text, Carbon $today): array
+    public static function parseDate(string $text, Carbon $today, DateFormat $format = DateFormat::DayMonthYear): array
     {
-        $t = mb_strtolower(trim(strtr($text, self::ARABIC_DIGITS)));
-        if ($t === 'today') {
-            return [$today->toDateString(), null];
-        }
-        if ($t === 'tomorrow') {
-            return [$today->copy()->addDay()->toDateString(), null];
-        }
-        $month = fn (string $name): ?int => self::MONTHS[substr($name, 0, 3)] ?? null;
-        $y = null;
-        if (preg_match('#^(\d{4})-(\d{1,2})-(\d{1,2})$#', $t, $m) === 1) {
-            [$y, $mo, $d] = [(int) $m[1], (int) $m[2], (int) $m[3]];
-        } elseif (preg_match('#^(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2}|\d{4}))?$#', $t, $m) === 1) {
-            [$d, $mo] = [(int) $m[1], (int) $m[2]];
-            if (($m[3] ?? '') !== '') {
-                $y = strlen($m[3]) === 2 ? 2000 + (int) $m[3] : (int) $m[3];
-            }
-        } elseif (preg_match('/^(\d{1,2})(?:st|nd|rd|th)?\s*([a-z]{3,9})\.?(?:,?\s+(\d{4}))?$/', $t, $m) === 1 && $month($m[2]) !== null) {
-            [$d, $mo] = [(int) $m[1], (int) $month($m[2])];
-            $y = ($m[3] ?? '') !== '' ? (int) $m[3] : null;
-        } elseif (preg_match('/^([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?$/', $t, $m) === 1 && $month($m[1]) !== null) {
-            [$d, $mo] = [(int) $m[2], (int) $month($m[1])];
-            $y = ($m[3] ?? '') !== '' ? (int) $m[3] : null;
-        } else {
-            return [null, 'not_a_date'];
-        }
-        if ($mo > 12 && $d <= 12) {
-            return [null, 'us_order'];
-        }
-        if ($y === null) {
-            $y = (int) $today->year;
-            if (checkdate($mo, $d, $y) && sprintf('%04d-%02d-%02d', $y, $mo, $d) < $today->toDateString()) {
-                $y++;
-            }
-        }
-        if (! checkdate($mo, $d, $y)) {
-            return [null, 'impossible'];
-        }
-
-        return [sprintf('%04d-%02d-%02d', $y, $mo, $d), null];
+        return DateReader::read($text, $today, $format);
     }
 
     /** @param array<string, mixed> $c */
     private function dateAnswer(array $c, string $t, BotRuntime $rt): ?string
     {
         $today = now($rt->timezone())->startOfDay();
-        [$iso, $why] = self::parseDate($t, $today);
+        [$iso, $why] = self::parseDate($t, $today, $rt->dateFormat());
         if ($iso === null) {
             $this->why = $why;
+            $this->whyDetail = $rt->dateFormat();
 
             return null;
         }
@@ -1594,7 +1554,7 @@ final class FlowEngine
         return $iso;
     }
 
-    /** Customer-facing text: placeholders filled, saved dates shown as “Wed 18 Nov 2026”. */
+    /** Customer-facing text: placeholders filled, saved dates shown as “Wednesday, 18 November 2026”. */
     private function say(?string $text, BotRuntime $rt): string
     {
         return Placeholders::fill($text, $rt, human: $this->level >= 2);

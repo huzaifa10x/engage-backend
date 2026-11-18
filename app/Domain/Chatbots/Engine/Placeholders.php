@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Chatbots\Engine;
 
+use App\Support\Dates\DateText;
+
 /**
  * {{contact.name}}, {{contact.first_name}}, {{contact.phone}}, {{contact.email}},
  * {{contact.language}}, {{contact.<custom field key>}}, {{var.<name>}} (answers, API results, the
@@ -16,7 +18,7 @@ final class Placeholders
 {
     /**
      * @param  (callable(string): string)|null  $escape  applied to every inserted value (JSON bodies, URLs)
-     * @param  bool  $human  customer-facing text: a saved date (2026-11-18) is shown as “Wed 18 Nov 2026”
+     * @param  bool  $human  customer-facing text: a saved date (2026-11-18) is shown as “Wednesday, 18 November 2026”
      */
     public static function fill(?string $text, BotRuntime $rt, bool $secrets = false, ?callable $escape = null, bool $human = false): string
     {
@@ -52,14 +54,10 @@ final class Placeholders
         return implode("\n", $out);
     }
 
-    /** “2026-11-18” → “Wed 18 Nov 2026”; anything else unchanged. */
+    /** “2026-11-18” → “Wednesday, 18 November 2026” (the month as a word, item 1); anything else unchanged. */
     public static function humanDate(string $value): string
     {
-        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value, $m) !== 1 || ! checkdate((int) $m[2], (int) $m[3], (int) $m[1])) {
-            return $value;
-        }
-
-        return date('D j M Y', (int) gmmktime(12, 0, 0, (int) $m[2], (int) $m[3], (int) $m[1]));
+        return DateText::spoken($value);
     }
 
     /**

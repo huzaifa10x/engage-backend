@@ -70,6 +70,8 @@ final class MeController extends Controller
                 'reason' => $session->reason,
                 'expires_at' => $session->expires_at->toIso8601String(),
             ],
+            // How dates are shown and typed in this workspace (item 1); times are shown in its time zone.
+            'dates' => $active?->tenant !== null ? ['timezone' => $active->tenant->timezone, 'format' => $active->tenant->date_format->value] : null,
             'entitlements' => $active?->tenant !== null ? $this->entitlements->for($active->tenant)->toResponseArray() : null,
             // Growth Hub pilot flag for the active workspace (menus and source panels follow it).
             // tier: off | chip (Starter: source chip only) | full (Growth Hub and Analytics → Marketing).

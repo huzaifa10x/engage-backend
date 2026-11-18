@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Domain\Chatbots\Engine;
 
 use App\Domain\Forms\FormVersion;
+use App\Domain\Tenancy\Enums\DateFormat;
+use App\Domain\Tenancy\TenantContext;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -61,6 +63,14 @@ abstract class BotRuntime
     abstract public function openDays(): array;
 
     abstract public function timezone(): string;
+
+    /** How customers write dates in this workspace (item 1). */
+    public function dateFormat(): DateFormat
+    {
+        $tenant = app(TenantContext::class)->tenantOrNull();
+
+        return $tenant !== null ? $tenant->date_format : DateFormat::DayMonthYear;
+    }
 
     abstract public function secret(string $name): ?string;
 

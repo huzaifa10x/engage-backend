@@ -12,6 +12,7 @@ use App\Domain\Forms\FormVersion;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
+use App\Support\Dates\DateText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -91,8 +92,8 @@ final class FormController extends Controller
                 'conversation_id' => $s->conversation_id,
                 'answers' => $s->saved,
                 'consent' => $s->consent,
-                // Day first, in the workspace's time zone.
-                'received_at' => $s->created_at?->setTimezone($tz)->format('d/m/Y H:i'),
+                // In the workspace's date format and time zone (item 1).
+                'received_at' => $s->created_at !== null ? DateText::shortAt($s->created_at, $this->context->tenant()->date_format, $tz) : null,
             ]),
             'meta' => ['next_cursor' => $page->nextCursor()?->encode()],
         ]);

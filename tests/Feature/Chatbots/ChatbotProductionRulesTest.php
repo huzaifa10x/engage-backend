@@ -24,6 +24,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\RateLimiter;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
 
@@ -170,8 +171,18 @@ final class ChatbotProductionRulesTest extends TestCase
         $this->assertSame('handed_off', $this->botSession()->status);
     }
 
-    public function test_dates_are_day_first_validated_and_shown_back_readably(): void
+    /** @return iterable<string, array{string, list<string>}> format, the four typed answers (impossible, wrong order, too far, good) */
+    public static function workspaceDateFormats(): iterable
     {
+        yield 'DD/MM workspace' => ['dmy', ['31/4', '11/18', '15/2/2027', '18/11'], 'Sorry, please write the day first, for example 18/11.'];
+        yield 'MM/DD workspace' => ['mdy', ['4/31', '18/11', '2/15/2027', '11/18'], 'Sorry, please write the month first, for example 11/18.'];
+    }
+
+    /** Batch 1 date rules, in both day-first and month-first workspaces (batch 6, item 1). */
+    #[DataProvider('workspaceDateFormats')]
+    public function test_dates_follow_the_workspace_format_are_validated_and_shown_back_with_the_month_as_a_word(string $format, array $typed, string $orderHint): void
+    {
+        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['date_format' => $format])->save());
         $this->travelTo(now()->setTimezone('Asia/Dubai')->setDate(2026, 11, 12)->setTime(13, 0));
         $this->liveFlow(['nodes' => [
             $this->node('start', 'start', ['any_message' => true], ['next' => 'day']),
@@ -180,18 +191,17 @@ final class ChatbotProductionRulesTest extends TestCase
             $this->handoff(),
         ]]);
         $this->says('hi');
-        $this->says('31/4');
-        $this->says('11/18');
-        $this->says('15/2/2027');
-        $this->says('18/11');
+        foreach ($typed as $answer) {
+            $this->says($answer);
+        }
 
         $texts = array_map(fn ($m) => $m['text']['body'] ?? null, $this->sent);
         $this->assertSame([
             'Which day?',
             'Sorry, that date doesn’t exist. Please check the day and month.', 'Which day?',
-            'Sorry, please write the day first, for example 18/11.', 'Which day?',
+            $orderHint, 'Which day?',
             'Sorry, please choose a date within the next 30 days.', 'Which day?',
-            'Booked for Wed 18 Nov 2026.', 'A person will reply.',
+            'Booked for Wednesday, 18 November 2026.', 'A person will reply.',
         ], $texts);
         $this->assertSame('2026-11-18', $this->botSession()->vars['day'], 'stored as a date, not as text');
     }

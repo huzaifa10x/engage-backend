@@ -8,6 +8,7 @@ use App\Application\Billing\StripeBilling;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Messaging\Services\AutoReply;
+use App\Domain\Tenancy\Enums\DateFormat;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
@@ -36,6 +37,14 @@ final class TenantController extends Controller
 
         $tenant->fill($request->validated())->save();
         $audit->record('tenant.updated', $tenant, before: $before, after: $request->validated());
+        // Item 1: changing how dates are read or shown is recorded on its own (typed dates in live flows
+        // are read in the new format from then on; the time zone changes display only, never when things are).
+        if ($tenant->wasChanged('date_format')) {
+            $audit->record('tenant.date_format_changed', $tenant, before: ['date_format' => $before['date_format'] instanceof DateFormat ? $before['date_format']->value : $before['date_format']], after: ['date_format' => $tenant->date_format->value]);
+        }
+        if ($tenant->wasChanged('timezone')) {
+            $audit->record('tenant.timezone_changed', $tenant, before: ['timezone' => $before['timezone']], after: ['timezone' => $tenant->timezone]);
+        }
 
         // The billing country decides VAT: keep the Stripe customer and subscription in step.
         if ($tenant->stripe_customer_id !== null && $tenant->wasChanged(['country', 'billing_email', 'name', 'legal_name', 'phone', 'address_line1', 'address_line2', 'city', 'region', 'postal_code']) && $stripe->configured()) {

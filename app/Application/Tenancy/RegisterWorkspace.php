@@ -9,6 +9,7 @@ use App\Domain\Access\SystemRole;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Billing\SubscriptionService;
 use App\Domain\Identity\Models\User;
+use App\Domain\Tenancy\Enums\DateFormat;
 use App\Domain\Tenancy\Enums\MembershipStatus;
 use App\Domain\Tenancy\Enums\TenantStatus;
 use App\Domain\Tenancy\Models\Tenant;
@@ -48,7 +49,10 @@ final class RegisterWorkspace
                     'name' => $input['company_name'],
                     'slug' => $this->uniqueSlug($input['company_name']),
                     'status' => TenantStatus::Active,
-                    'timezone' => $input['timezone'] ?? config('engage.tenancy.default_timezone'),
+                    // Suggested from the country (the owner can change both at any time): the browser's
+                    // time zone when it is one of that country's, else the country's own; never one from the other.
+                    'timezone' => self::suggestTimezone($input['country'] ?? null, $input['timezone'] ?? null),
+                    'date_format' => DateFormat::forCountry($input['country'] ?? null),
                     'locale' => 'en',
                     'currency' => config('engage.tenancy.default_currency'),
                     'country' => $input['country'] ?? null,
@@ -84,5 +88,18 @@ final class RegisterWorkspace
         $base = Str::limit(Str::slug($name) ?: 'workspace', 40, '');
 
         return $base.'-'.Str::lower(Str::random(6));
+    }
+
+    /** The time zone suggested for a new workspace: the browser's when it belongs to the country, else the country's first one. */
+    public static function suggestTimezone(?string $country, ?string $browser): string
+    {
+        $default = (string) config('engage.tenancy.default_timezone');
+        $country = strtoupper((string) $country);
+        $zones = strlen($country) === 2 ? (\DateTimeZone::listIdentifiers(\DateTimeZone::PER_COUNTRY, $country) ?: []) : [];
+        if ($zones === []) {
+            return $browser !== null && in_array($browser, \DateTimeZone::listIdentifiers(), true) ? $browser : $default;
+        }
+
+        return $browser !== null && in_array($browser, $zones, true) ? $browser : $zones[0];
     }
 }

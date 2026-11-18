@@ -20,6 +20,7 @@ final class TenantResource extends JsonResource
             'slug' => $this->slug,
             'status' => $this->status->value,
             'timezone' => $this->timezone,
+            'date_format' => $this->date_format->value,
             'locale' => $this->locale,
             'currency' => $this->currency,
             'country' => $this->country,

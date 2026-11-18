@@ -6,13 +6,15 @@ namespace Tests\Unit;
 
 use App\Domain\Chatbots\Engine\FlowEngine;
 use App\Domain\Chatbots\Engine\Placeholders;
+use App\Domain\Tenancy\Enums\DateFormat;
+use App\Support\Dates\DateText;
 use Illuminate\Support\Carbon;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
- * How the chatbot reads dates and numbers customers type. The Flow Builder's test phone implements
- * the same rules (engine.js parseDate / numberText); the parity harness checks both agree.
+ * How the chatbot reads dates and numbers customers type (day-first by default; the workspace's
+ * format decides, see the MM/DD and YYYY-MM-DD cases below).
  */
 final class ChatbotAnswersTest extends TestCase
 {
@@ -35,8 +37,29 @@ final class ChatbotAnswersTest extends TestCase
         yield '31/4 without a year' => ['2026-11-12', '31/4', null, 'impossible'];
         yield '29 Feb in a non-leap year' => ['2026-11-12', '29/2/2027', null, 'impossible'];
         yield '29 Feb in a leap year' => ['2026-11-12', '29/2/2028', '2028-02-29', null];
-        yield 'month first is refused' => ['2026-11-12', '11/18', null, 'us_order'];
+        yield 'month first is refused' => ['2026-11-12', '11/18', null, 'wrong_order'];
         yield 'free text is refused' => ['2026-11-12', 'next friday', null, 'not_a_date'];
+    }
+
+    /** @return iterable<string, array{string, string, string, ?string, ?string}> format, today, typed, date, reason */
+    public static function otherFormats(): iterable
+    {
+        yield 'MM/DD: 5/1 is May 1' => ['mdy', '2026-11-12', '5/1', '2027-05-01', null];
+        yield 'MM/DD: month first' => ['mdy', '2026-11-12', '11/18', '2026-11-18', null];
+        yield 'MM/DD: full date' => ['mdy', '2026-11-12', '12/25/2026', '2026-12-25', null];
+        yield 'MM/DD: day first is refused' => ['mdy', '2026-11-12', '18/11', null, 'wrong_order'];
+        yield 'MM/DD: 4/31 does not exist' => ['mdy', '2026-11-12', '4/31', null, 'impossible'];
+        yield 'MM/DD: month names still work' => ['mdy', '2026-11-12', '21 Dec', '2026-12-21', null];
+        yield 'YYYY-MM-DD: ISO' => ['ymd', '2026-11-12', '2026-12-01', '2026-12-01', null];
+        yield 'YYYY-MM-DD: slashes' => ['ymd', '2026-11-12', '2026/12/01', '2026-12-01', null];
+        yield 'YYYY-MM-DD: a short date is refused' => ['ymd', '2026-11-12', '5/1', null, 'wrong_order'];
+        yield 'DD/MM: 5/1 is 5 January' => ['dmy', '2026-11-12', '5/1', '2027-01-05', null];
+    }
+
+    #[DataProvider('otherFormats')]
+    public function test_dates_follow_the_workspace_format(string $format, string $today, string $typed, ?string $date, ?string $reason): void
+    {
+        $this->assertSame([$date, $reason], FlowEngine::parseDate($typed, Carbon::parse($today, 'Asia/Dubai')->startOfDay(), DateFormat::from($format)));
     }
 
     #[DataProvider('dates')]
@@ -71,7 +94,8 @@ final class ChatbotAnswersTest extends TestCase
 
     public function test_saved_dates_read_naturally_in_messages_only(): void
     {
-        $this->assertSame('Wed 18 Nov 2026', Placeholders::humanDate('2026-11-18'));
+        $this->assertSame('Wednesday, 18 November 2026', Placeholders::humanDate('2026-11-18'));
+        $this->assertSame('Tuesday, 5 January 2027 at 10:00', DateText::spoken('2027-01-05T06:00:00Z', 'Asia/Dubai'));
         $this->assertSame('2026-02-30', Placeholders::humanDate('2026-02-30'));
         $this->assertSame('JVC', Placeholders::humanDate('JVC'));
     }

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Api\V1;
 
+use App\Domain\Tenancy\Enums\DateFormat;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 final class UpdateTenantRequest extends FormRequest
 {
@@ -19,6 +21,7 @@ final class UpdateTenantRequest extends FormRequest
         return [
             'name' => ['sometimes', 'string', 'max:120'],
             'timezone' => ['sometimes', 'timezone:all'],
+            'date_format' => ['sometimes', Rule::enum(DateFormat::class)],
             'locale' => ['sometimes', 'string', 'in:en,ar'],
             'country' => ['sometimes', 'nullable', 'string', 'size:2'],
             'billing_email' => ['sometimes', 'nullable', 'email:rfc', 'max:190'],

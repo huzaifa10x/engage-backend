@@ -10,6 +10,7 @@ use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Messaging\Models\Conversation;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Concerns\BuildsChatbots;
 use Tests\TestCase;
 
@@ -62,25 +63,33 @@ final class ChatbotEngineLevelAndDraftsTest extends TestCase
         $this->assertSame(1, $this->inTenant(fn () => ChatbotFlowVersion::query()->where('flow_id', $flow->id)->sole())->settings['engine_level']);
     }
 
-    public function test_a_level_1_flow_reads_dates_day_first_like_level_2(): void
+    /** @return iterable<string, array{string, list<string>, string, string}> format, refused answers, the good answer, what it saves */
+    public static function legacyDates(): iterable
     {
-        // 20 December 2026 in Dubai: every live flow, upgraded or not, reads dates the UAE way.
+        yield 'DD/MM workspace' => ['dmy', ['31/04', '29/02/2027', '11/18'], '5/1', '2027-01-05'];
+        yield 'MM/DD workspace' => ['mdy', ['04/31', '02/29/2027', '18/11'], '5/1', '2027-05-01'];
+    }
+
+    /** "5/1" is 5 January in a DD/MM workspace and May 1 in an MM/DD one, in flows not yet upgraded too (item 1). */
+    #[DataProvider('legacyDates')]
+    public function test_a_level_1_flow_reads_dates_in_the_workspace_format_like_level_2(string $format, array $refused, string $good, string $saved): void
+    {
+        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['date_format' => $format])->save());
+        // 20 December 2026 in Dubai: a day and month already past this year means next year.
         $this->travelTo(now()->setTimezone('Asia/Dubai')->setDate(2026, 12, 20)->setTime(10, 0));
         $flow = $this->liveFlow($this->dateFlow());
         $this->makeLegacy($flow);
         $this->says('hi');
-
-        $this->says('31/04');      // no 31 April: asked again
-        $this->says('29/02/2027'); // 2027 is not a leap year: asked again
-        $this->says('11/18');      // the month first: asked again
-        $this->says('5/1');        // 5 January, and already past this year: next year
+        foreach ($refused as $answer) {
+            $this->says($answer);
+        }
+        $this->says($good);
 
         $texts = $this->texts();
         $this->assertSame('Which day?', $texts[0]);
         $this->assertCount(4, array_keys($texts, 'Which day?', true), 'the question is asked again after each refused date');
-        $this->assertContains('Booked for 2027-01-05.', $texts);
-        $this->assertNotContains('Booked for 2027-05-01.', $texts);
-        $this->assertSame('2027-01-05', $this->botSession()->vars['day'] ?? null);
+        $this->assertContains("Booked for {$saved}.", $texts);
+        $this->assertSame($saved, $this->botSession()->vars['day'] ?? null);
     }
 
     public function test_level_2_refuses_the_impossible_date_and_shows_it_readably(): void
@@ -91,7 +100,7 @@ final class ChatbotEngineLevelAndDraftsTest extends TestCase
         $this->says('31/04/2027');
         $this->says('18/11');
 
-        $this->assertSame(['Which day?', 'Sorry, that date doesn’t exist. Please check the day and month.', 'Which day?', 'Booked for Wed 18 Nov 2026.', 'A person will reply.'], $this->texts());
+        $this->assertSame(['Which day?', 'Sorry, that date doesn’t exist. Please check the day and month.', 'Which day?', 'Booked for Wednesday, 18 November 2026.', 'A person will reply.'], $this->texts());
     }
 
     public function test_a_level_1_flow_stops_silently_when_the_window_is_closed_as_before(): void

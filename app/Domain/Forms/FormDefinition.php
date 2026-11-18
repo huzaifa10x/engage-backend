@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Domain\Forms;
 
+use App\Domain\Tenancy\Enums\DateFormat;
+use App\Domain\Tenancy\TenantContext;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
@@ -30,7 +32,6 @@ final class FormDefinition
     private const MAX_FIELDS = 20;
 
     /** Dates on the contact and in submissions: day first, in the workspace's time zone (Dubai by default). */
-    public const DATE_FORMAT = 'd/m/Y';
 
     /**
      * The two starting points of the approved design (5a).
@@ -240,13 +241,14 @@ final class FormDefinition
         return is_scalar($raw) && (string) $raw !== '' ? (string) $raw : null;
     }
 
-    /** "2026-11-20" (Flow JSON 5.0+) or a millisecond timestamp (older) → "20/11/2026". */
+    /** "2026-11-20" (Flow JSON 5.0+) or a millisecond timestamp (older) → "20/11/2026", in the workspace's date format and time zone (item 1). */
     private static function date(mixed $raw, ?string &$iso): ?string
     {
         if ($raw === null || $raw === '') {
             return null;
         }
-        $tz = 'Asia/Dubai';
+        $tenant = app(TenantContext::class)->tenantOrNull();
+        $tz = $tenant->timezone ?? 'Asia/Dubai';
         try {
             $date = is_numeric($raw) ? Carbon::createFromTimestampMs((int) $raw)->setTimezone($tz) : Carbon::createFromFormat('!Y-m-d', (string) $raw, $tz);
         } catch (\Throwable) {
@@ -257,6 +259,6 @@ final class FormDefinition
         }
         $iso = $date->format('Y-m-d');
 
-        return $date->format(self::DATE_FORMAT);
+        return $date->format(($tenant !== null ? $tenant->date_format : DateFormat::DayMonthYear)->pattern());
     }
 }

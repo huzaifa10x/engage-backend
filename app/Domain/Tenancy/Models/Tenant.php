@@ -6,6 +6,7 @@ namespace App\Domain\Tenancy\Models;
 
 use App\Domain\Billing\Enums\SubscriptionStatus;
 use App\Domain\Billing\Models\Subscription;
+use App\Domain\Tenancy\Enums\DateFormat;
 use App\Domain\Tenancy\Enums\TenantStatus;
 use App\Domain\Tenancy\Scopes\TenantScope;
 use Database\Factories\TenantFactory;
@@ -25,6 +26,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string $slug
  * @property TenantStatus $status
  * @property string $timezone
+ * @property DateFormat $date_format
  * @property string $locale
  * @property string $currency
  * @property ?string $country
@@ -48,8 +50,11 @@ class Tenant extends Model
     /** @use HasFactory<TenantFactory> */
     use HasFactory, HasUuids, SoftDeletes;
 
+    /** @var array<string, mixed> Defaults before the row is read back (a new workspace reads dates day-first). */
+    protected $attributes = ['date_format' => 'dmy'];
+
     protected $fillable = [
-        'name', 'slug', 'status', 'timezone', 'locale', 'currency', 'country',
+        'name', 'slug', 'status', 'timezone', 'date_format', 'locale', 'currency', 'country',
         'billing_email', 'settings', 'created_by_user_id', 'legal_name', 'tax_trn', 'stripe_customer_id',
         'website', 'phone', 'industry', 'company_size', 'address_line1', 'address_line2', 'city', 'region', 'postal_code',
     ];
@@ -58,6 +63,7 @@ class Tenant extends Model
     {
         return [
             'status' => TenantStatus::class,
+            'date_format' => DateFormat::class,
             'settings' => 'array',
             'suspended_at' => 'datetime',
         ];
