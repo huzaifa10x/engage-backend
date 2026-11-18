@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Timeline;
 
+use App\Domain\Developer\Services\TimelineWebhooks;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use DateTimeInterface;
@@ -122,7 +123,7 @@ final class Timeline
                 $data += array_filter(['bulk' => $bulk['how'], 'bulk_by' => $bulk['by']]);
             }
 
-            DB::transaction(fn () => DB::table('timeline_events')->insert([
+            $row = [
                 'id' => (string) Str::uuid7(),
                 'tenant_id' => $tenantId,
                 'contact_id' => $contactId,
@@ -136,7 +137,9 @@ final class Timeline
                 'subject_id' => $subjectId,
                 'data' => $data === [] ? null : json_encode($data, JSON_UNESCAPED_UNICODE),
                 'created_at' => now(),
-            ]));
+            ];
+            DB::transaction(fn () => DB::table('timeline_events')->insert($row));
+            app(TimelineWebhooks::class)->recorded(['occurred_at' => $row['occurred_at'], 'data' => $data] + $row);
         } catch (Throwable $e) {
             Log::warning('Timeline event was not recorded.', ['type' => $type, 'contact_id' => $contactId, 'error' => $e->getMessage()]);
         }

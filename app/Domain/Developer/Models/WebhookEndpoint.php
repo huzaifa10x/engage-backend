@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Developer\Models;
 
+use App\Domain\Developer\Services\TimelineWebhooks;
 use App\Domain\Tenancy\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -31,20 +32,26 @@ class WebhookEndpoint extends Model
 {
     use BelongsToTenant, HasUuids;
 
-    /** Every event a customer can subscribe to, with the sentence shown in the portal. */
-    public const EVENTS = [
+    /** Events that do not come from the contact timeline. */
+    private const OTHER_EVENTS = [
         'message.received' => 'A customer sent a message',
         'message.sent' => 'A message you sent left for WhatsApp',
         'message.delivered' => 'A message was delivered to the customer',
         'message.read' => 'A message was read by the customer',
         'message.failed' => 'A message could not be delivered',
-        'contact.created' => 'A contact was added',
         'contact.updated' => 'A contact was changed',
-        'contact.opted_in' => 'A contact opted in',
-        'contact.opted_out' => 'A contact opted out',
-        'conversation.assigned' => 'A conversation was assigned to a teammate',
-        'conversation.closed' => 'A conversation was closed',
     ];
+
+    /**
+     * Every event a customer can subscribe to, with the sentence shown in the portal. Most are read
+     * from the contact timeline (TimelineWebhooks); messages and contact edits are sent where they happen.
+     *
+     * @return array<string, string>
+     */
+    public static function events(): array
+    {
+        return self::OTHER_EVENTS + TimelineWebhooks::catalog();
+    }
 
     /** Consecutive failed deliveries after which an endpoint is switched off and the owners are told. */
     public const DISABLE_AFTER_FAILURES = 15;

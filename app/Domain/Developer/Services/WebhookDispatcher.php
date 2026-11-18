@@ -28,8 +28,9 @@ final class WebhookDispatcher
     /**
      * @param  array<string, mixed>  $data  the event's subject, as documented in the API reference
      * @param  ?string  $dedupe  when set, the same event is sent at most once per endpoint for this key
+     * @param  array<string, mixed>  $meta  when it happened, its enquiry and who caused it (timeline events)
      */
-    public function emit(string $tenantId, string $event, array $data, ?string $dedupe = null): void
+    public function emit(string $tenantId, string $event, array $data, ?string $dedupe = null, array $meta = []): void
     {
         try {
             $tenant = $this->context->bypass(fn () => Tenant::query()->find($tenantId));
@@ -37,14 +38,14 @@ final class WebhookDispatcher
                 return;
             }
 
-            $this->context->run($tenant, function () use ($tenant, $event, $data, $dedupe): void {
+            $this->context->run($tenant, function () use ($tenant, $event, $data, $dedupe, $meta): void {
                 $endpoints = WebhookEndpoint::query()->where('status', 'active')->get()->filter(fn (WebhookEndpoint $e) => $e->listensTo($event));
 
                 foreach ($endpoints as $endpoint) {
                     if ($dedupe !== null && ! Cache::add("wh-once:{$endpoint->id}:{$event}:{$dedupe}", 1, now()->addDay())) {
                         continue;
                     }
-                    $this->queue($endpoint, $event, $this->envelope($tenant->id, $event, $data));
+                    $this->queue($endpoint, $event, $this->envelope($tenant->id, $event, $data, $meta + ['timezone' => $tenant->timezone]));
                 }
             });
         } catch (Throwable $e) {
@@ -62,11 +63,15 @@ final class WebhookDispatcher
     }
 
     /**
+     * Times are UTC; "timezone" is the workspace's, for showing them as the team sees them.
+     *
      * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $meta
      * @return array<string, mixed>
      */
-    public function envelope(string $tenantId, string $event, array $data): array
+    public function envelope(string $tenantId, string $event, array $data, array $meta = []): array
     {
-        return ['id' => 'evt_'.Str::lower((string) Str::ulid()), 'event' => $event, 'created_at' => now()->toIso8601String(), 'workspace_id' => $tenantId, 'data' => $data];
+        return ['id' => 'evt_'.Str::lower((string) Str::ulid()), 'event' => $event, 'created_at' => now()->utc()->format('Y-m-d\TH:i:s\Z'), 'workspace_id' => $tenantId]
+            + $meta + ['data' => $data];
     }
 }

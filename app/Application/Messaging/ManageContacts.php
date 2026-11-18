@@ -50,7 +50,6 @@ final class ManageContacts
         }
 
         $this->audit->record('contact.created', $contact);
-        app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.created', PublicPayload::contact($contact->refresh()));
 
         return $contact;
     }

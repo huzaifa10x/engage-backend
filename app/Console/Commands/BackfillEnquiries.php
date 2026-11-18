@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Domain\Developer\Services\TimelineWebhooks;
 use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Message;
@@ -39,11 +40,12 @@ final class BackfillEnquiries extends Command
         foreach ($tenants as $tenant) {
             $context->run($tenant, function () use ($tenant, $enquiries, &$made): void {
                 $quiet = Enquiries::quietDays($tenant);
-                Contact::query()->whereNull('current_enquiry_id')->chunkById(200, function ($contacts) use ($enquiries, $quiet, &$made): void {
+                // Rebuilding history is not news to a webhook receiver.
+                TimelineWebhooks::paused(fn () => Contact::query()->whereNull('current_enquiry_id')->chunkById(200, function ($contacts) use ($enquiries, $quiet, &$made): void {
                     foreach ($contacts as $contact) {
                         $made += $this->contact($contact, $enquiries, $quiet);
                     }
-                });
+                }));
             });
         }
         $this->info("Enquiries created: {$made}.");

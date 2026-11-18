@@ -7,6 +7,7 @@ namespace App\Domain\Developer;
 use App\Domain\Developer\Jobs\DeliverWebhook;
 use App\Domain\Developer\Models\ApiKey;
 use App\Domain\Developer\Models\WebhookEndpoint;
+use App\Domain\Developer\Services\TimelineWebhooks;
 
 /**
  * THE description of public API v1. One source for three things:
@@ -236,7 +237,13 @@ final class ApiSpec
      */
     private static function eventExamples(): array
     {
-        $envelope = fn (string $event, array $data) => ['id' => 'evt_01k2m3n4p5q6r7s8t9v0w1x2y3', 'event' => $event, 'created_at' => '2026-10-07T09:32:00+00:00', 'workspace_id' => '01a11630-0000-7000-8000-000000000000', 'data' => $data];
+        $timeline = array_column(TimelineWebhooks::EVENTS, 0);
+        $envelope = fn (string $event, array $data) => ['id' => 'evt_01k2m3n4p5q6r7s8t9v0w1x2y3', 'event' => $event, 'created_at' => '2026-10-07T09:32:01Z', 'workspace_id' => '01a11630-0000-7000-8000-000000000000']
+            + (in_array($event, $timeline, true) || in_array($event, ['contact.opted_in', 'contact.opted_out'], true) ? [
+                'occurred_at' => '2026-10-07T09:32:00Z', 'timezone' => 'Asia/Dubai', 'enquiry_id' => '01a11634-5555-7000-8000-000000000005',
+                'actor' => $event === 'contact.opted_out' ? 'customer' : 'agent', 'actor_name' => $event === 'contact.opted_out' ? null : 'Sara Khan', 'timeline_event_id' => '01a11635-6666-7000-8000-000000000006',
+            ] : ['timezone' => 'Asia/Dubai'])
+            + ['data' => $data];
         $inbound = ['direction' => 'inbound', 'status' => 'received', 'origin' => 'customer', 'text' => 'Is the villa still available?', 'whatsapp_message_id' => 'wamid.HBgMOTcxNTAxMjM0NTY3FQIAEhgU'] + self::MESSAGE;
         $examples = [
             'message.received' => $inbound,
@@ -250,6 +257,14 @@ final class ApiSpec
             'contact.opted_out' => ['consent' => 'opted_out'] + self::CONTACT + ['source' => 'keyword'],
             'conversation.assigned' => ['assigned_to' => '01a11632-3333-7000-8000-000000000003'] + self::CONVERSATION,
             'conversation.closed' => ['status' => 'closed'] + self::CONVERSATION,
+            'contact.tag_added' => ['tag' => 'VIP', 'contact' => self::CONTACT],
+            'contact.tag_removed' => ['tag' => 'VIP', 'contact' => self::CONTACT],
+            'contact.consent_changed' => self::CONTACT + ['action' => 'opted_in', 'source' => 'agent'],
+            'enquiry.created' => ['number' => 3, 'reason' => 'new_message', 'source' => 'ctwa', 'confidence' => 'verified', 'source_label' => 'Click-to-WhatsApp ad', 'message_id' => '01a11636-7777-7000-8000-000000000007', 'contact' => self::CONTACT],
+            'enquiry.stage_changed' => ['from' => 'New', 'to' => 'Qualified', 'to_group' => 'open', 'reason' => null, 'note' => null, 'version' => 2, 'contact' => self::CONTACT],
+            'payment.paid' => ['order' => '1042', 'store' => 'Palm Rentals', 'total' => 450.0, 'currency' => 'AED', 'status' => 'paid', 'verified_by' => 'store', 'contact' => self::CONTACT],
+            'payment.refunded' => ['order' => '1042', 'store' => 'Palm Rentals', 'total' => 450.0, 'currency' => 'AED', 'status' => 'refunded', 'refunded' => 450.0, 'contact' => self::CONTACT],
+            'form.submitted' => ['form' => 'Car rental request', 'version' => 1, 'answers' => [['label' => 'Pick-up date', 'value' => 'Friday, 20 November 2026']], 'consent' => true, 'contact' => self::CONTACT],
         ];
 
         return collect($examples)->map(fn (array $data, string $event) => $envelope($event, $data))->all();
@@ -273,6 +288,8 @@ final class ApiSpec
                 'A failed delivery is retried after '.implode(', ', array_map(fn (int $s) => $s < 3600 ? ($s / 60).' min' : ($s / 3600).' h', DeliverWebhook::BACKOFF)).'.',
                 'After '.WebhookEndpoint::DISABLE_AFTER_FAILURES.' failures in a row the endpoint is switched off and the workspace owners are emailed.',
                 'The same event can arrive more than once. Use its "id" to ignore repeats.',
+                'Times are UTC (ISO 8601). "timezone" is the workspace\'s, to show them as your team sees them.',
+                'Events about a contact also say which enquiry they belong to ("enquiry_id") and who caused them ("actor": customer, agent or system, with "actor_name" for a teammate).',
                 'The URL must be a public https address.',
                 'Zapier, Make and your own code can also create and remove endpoints through the API: see Event subscriptions.',
             ],
@@ -282,7 +299,7 @@ final class ApiSpec
                 ['name' => 'X-Engage-Signature', 'description' => 't=<unix time>,v1=<signature>. See "Verifying a webhook".'],
             ],
             'signature' => 'The signature is the HMAC-SHA256, as lowercase hex, of "<t>.<raw request body>" using the endpoint\'s signing secret (shown once when you create the endpoint). Recompute it and compare; also reject requests whose t is more than five minutes old.',
-            'events' => collect(WebhookEndpoint::EVENTS)->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label, 'example' => $examples[$key] ?? []])->values()->all(),
+            'events' => collect(WebhookEndpoint::events())->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label, 'example' => $examples[$key] ?? []])->values()->all(),
         ];
     }
 

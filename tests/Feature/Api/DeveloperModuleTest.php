@@ -220,7 +220,7 @@ final class DeveloperModuleTest extends TestCase
         $endpointId = $this->postJson('/api/v1/developer/webhooks', ['url' => 'https://down.customer.example/hook', 'events' => ['contact.created']])->assertCreated()->json('data.id');
 
         // One failed event. (The test queue runs the scheduled retries straight away; in production
-        // they are spread over about nine hours.) Every attempt is recorded, then it is failed for good.
+        // they are spread over about 24 hours.) Every attempt is recorded, then it is failed for good.
         $this->postJson('/api/v1/contacts', ['phone' => '+971501110001'])->assertCreated();
         $delivery = $this->tenantContext()->bypass(fn () => WebhookDelivery::query()->firstOrFail());
         $this->assertSame('failed', $delivery->status);
@@ -228,7 +228,7 @@ final class DeveloperModuleTest extends TestCase
         $this->assertSame(count(DeliverWebhook::BACKOFF) + 1, $delivery->attempts);
         $endpoint = fn () => $this->tenantContext()->bypass(fn () => WebhookEndpoint::query()->findOrFail($endpointId));
         $this->assertSame('active', $endpoint()->status);
-        $this->assertSame(6, $endpoint()->consecutive_failures);
+        $this->assertSame(count(DeliverWebhook::BACKOFF) + 1, $endpoint()->consecutive_failures);
 
         // Keep failing → switched off at 15 failures in a row, owners emailed once.
         $this->postJson('/api/v1/contacts', ['phone' => '+971501110002'])->assertCreated();

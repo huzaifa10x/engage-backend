@@ -26,6 +26,7 @@ use Illuminate\Support\Carbon;
  * @property ?Carbon $next_attempt_at
  * @property ?Carbon $delivered_at
  * @property ?Carbon $created_at
+ * @property ?list<array{at: string, status: ?int, ms: int, error: ?string}> $attempt_log every attempt, oldest first
  * @property ?WebhookEndpoint $endpoint
  */
 class WebhookDelivery extends Model
@@ -35,11 +36,11 @@ class WebhookDelivery extends Model
     // "webhook_deliveries" already exists: it de-duplicates webhooks RECEIVED from Meta.
     protected $table = 'webhook_endpoint_deliveries';
 
-    protected $fillable = ['tenant_id', 'webhook_endpoint_id', 'event', 'payload', 'status', 'attempts', 'response_status', 'response_excerpt', 'duration_ms', 'next_attempt_at', 'delivered_at'];
+    protected $fillable = ['tenant_id', 'webhook_endpoint_id', 'event', 'payload', 'status', 'attempts', 'response_status', 'response_excerpt', 'duration_ms', 'next_attempt_at', 'delivered_at', 'attempt_log'];
 
     protected function casts(): array
     {
-        return ['payload' => 'array', 'next_attempt_at' => 'datetime', 'delivered_at' => 'datetime'];
+        return ['payload' => 'array', 'attempt_log' => 'array', 'next_attempt_at' => 'datetime', 'delivered_at' => 'datetime'];
     }
 
     /** @return BelongsTo<WebhookEndpoint, $this> */

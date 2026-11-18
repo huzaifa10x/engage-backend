@@ -281,7 +281,7 @@ final class PublicApiController extends Controller
         $data = $request->validate([
             'url' => ['required', 'string', 'max:2000', 'url'],
             'events' => ['required', 'array', 'min:1'],
-            'events.*' => ['string', Rule::in(array_keys(WebhookEndpoint::EVENTS))],
+            'events.*' => ['string', Rule::in(array_keys(WebhookEndpoint::events()))],
             'description' => ['nullable', 'string', 'max:160'],
         ]);
         $guard->assertPublic($data['url']);
@@ -310,7 +310,7 @@ final class PublicApiController extends Controller
     /** Example events, in the exact shape that is delivered: automation platforms use them to set up a trigger. */
     public function webhookSamples(Request $request): JsonResponse
     {
-        $data = $request->validate(['event' => ['required', 'string', Rule::in(array_keys(WebhookEndpoint::EVENTS))]]);
+        $data = $request->validate(['event' => ['required', 'string', Rule::in(array_keys(WebhookEndpoint::events()))]]);
 
         return response()->json(['data' => [ApiSpec::sampleEvent($data['event'])]]);
     }

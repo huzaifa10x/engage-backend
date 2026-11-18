@@ -10,8 +10,6 @@ use App\Domain\Audit\AuditLogger;
 use App\Domain\Automation\FollowUps;
 use App\Domain\Automation\Scheduler;
 use App\Domain\Chatbots\Services\Chatbots;
-use App\Domain\Developer\Services\PublicPayload;
-use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Feedback\FeedbackRequests;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Jobs\SendReadReceipt;
@@ -212,14 +210,7 @@ final class ConversationController extends Controller
 
         $audit->record('conversation.updated', $conversation, before: $before, after: $data);
 
-        // Customer webhooks.
-        $conversation->loadMissing('contact');
-        if ($assignee !== null && $assignee !== $before['assigned_membership_id']) {
-            app(WebhookDispatcher::class)->emit($conversation->tenant_id, 'conversation.assigned', PublicPayload::conversation($conversation));
-        }
-        if (($data['status'] ?? null) === 'closed' && $before['status'] !== 'closed') {
-            app(WebhookDispatcher::class)->emit($conversation->tenant_id, 'conversation.closed', PublicPayload::conversation($conversation));
-        }
+        // Customer webhooks for assigning and closing are sent from the contact timeline (TimelineWebhooks).
 
         return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }

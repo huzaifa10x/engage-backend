@@ -25,7 +25,7 @@ use Throwable;
  *
  *  • Signed: X-Engage-Signature is "t=<unix time>,v1=<HMAC-SHA256 of '<t>.<body>' with the
  *    endpoint's secret>", so the receiver can prove the request is ours and recent.
- *  • Retried on failure with growing waits (about 9 hours in total), then marked failed.
+ *  • Retried on failure with growing waits (about 24 hours in total), then marked failed.
  *  • An endpoint that keeps failing is switched off and the workspace owners are emailed, so we
  *    do not hammer a dead URL forever.
  *  • Never follows redirects and re-checks the address is public right before sending.
@@ -34,8 +34,8 @@ final class DeliverWebhook implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable;
 
-    /** Seconds to wait before attempts 2, 3, 4, 5 and 6. */
-    public const BACKOFF = [60, 300, 1800, 7200, 21600];
+    /** Seconds to wait before attempts 2 to 9: growing gaps, about 24 hours in all. */
+    public const BACKOFF = [60, 300, 1800, 3600, 7200, 14400, 28800, 28800];
 
     public int $tries = 1; // retries are scheduled by this job itself, so each attempt is recorded
 
@@ -87,9 +87,12 @@ final class DeliverWebhook implements ShouldQueue
             }
 
             $attempts = $delivery->attempts + 1;
-            $delivery->forceFill(['attempts' => $attempts, 'response_status' => $status, 'response_excerpt' => $excerpt, 'duration_ms' => (int) round((microtime(true) - $started) * 1000)]);
+            $ms = (int) round((microtime(true) - $started) * 1000);
+            $ok = $status !== null && $status >= 200 && $status < 300;
+            $log = [...($delivery->attempt_log ?? []), ['at' => now()->utc()->format('Y-m-d\TH:i:s\Z'), 'status' => $status, 'ms' => $ms, 'error' => $ok ? null : mb_substr((string) $excerpt, 0, 160)]];
+            $delivery->forceFill(['attempts' => $attempts, 'response_status' => $status, 'response_excerpt' => $excerpt, 'duration_ms' => $ms, 'attempt_log' => $log]);
 
-            if ($status !== null && $status >= 200 && $status < 300) {
+            if ($ok) {
                 $delivery->forceFill(['status' => 'delivered', 'delivered_at' => now(), 'next_attempt_at' => null])->save();
                 WebhookEndpoint::query()->whereKey($endpoint->id)->update(['consecutive_failures' => 0, 'last_success_at' => now()]);
 

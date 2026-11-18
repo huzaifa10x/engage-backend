@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api;
 
 use App\Domain\Developer\ApiSpec;
+use App\Domain\Developer\Models\WebhookEndpoint;
 use App\Domain\Developer\Services\UrlGuard;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -212,7 +213,8 @@ final class ApiDocumentationTest extends TestCase
         $spec = $this->getJson('/api/public/v1/spec')->assertOk();
         $this->assertSame(count($endpoints), collect($spec->json('data.groups'))->sum(fn (array $g) => count($g['endpoints'])));
         $this->assertSame(1200, collect($spec->json('data.rate_limits'))->firstWhere('plan', 'Pro')['requests_per_minute']);
-        $this->assertCount(11, $spec->json('data.webhooks.events'));
+        $this->assertCount(count(WebhookEndpoint::events()), $spec->json('data.webhooks.events'));
+        $this->assertNotContains([], array_column($spec->json('data.webhooks.events'), 'example'), 'every event has an example');
 
         // Postman: importable v2.1, bearer auth through a variable, one request per endpoint (plus the extra examples).
         $postman = $this->get('/api/public/v1/postman.json')->assertOk()->assertHeader('content-disposition', 'attachment; filename="10x-engage-api.postman_collection.json"');

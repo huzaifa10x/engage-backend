@@ -45,7 +45,7 @@ final class DeveloperController extends Controller
             // Public API requests of this workspace: this minute and today (UTC). The portal is counted apart.
             'api_usage' => PlanRateLimit::usage($this->context->id()),
             'scopes' => collect(ApiKey::SCOPES)->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])->values(),
-            'events' => collect(WebhookEndpoint::EVENTS)->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])->values(),
+            'events' => collect(WebhookEndpoint::events())->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])->values(),
         ]]);
     }
 
@@ -193,7 +193,7 @@ final class DeveloperController extends Controller
             'url' => [$rule, 'string', 'max:2000', 'url'],
             'description' => ['sometimes', 'nullable', 'string', 'max:160'],
             'events' => [$rule, 'array', 'min:1'],
-            'events.*' => ['string', Rule::in(array_keys(WebhookEndpoint::EVENTS))],
+            'events.*' => ['string', Rule::in(array_keys(WebhookEndpoint::events()))],
         ]);
         if (isset($data['url'])) {
             $guard->assertPublic($data['url']);
@@ -233,7 +233,7 @@ final class DeveloperController extends Controller
             'id' => $d->id, 'endpoint_id' => $d->webhook_endpoint_id, 'event' => $d->event, 'status' => $d->status, 'attempts' => $d->attempts,
             'response_status' => $d->response_status, 'response_excerpt' => $d->response_excerpt, 'duration_ms' => $d->duration_ms,
             'next_attempt_at' => $d->next_attempt_at?->toIso8601String(), 'delivered_at' => $d->delivered_at?->toIso8601String(),
-            'created_at' => $d->created_at?->toIso8601String(), 'payload' => $d->payload,
+            'created_at' => $d->created_at?->toIso8601String(), 'payload' => $d->payload, 'attempt_log' => $d->attempt_log ?? [],
         ];
     }
 }
