@@ -67,7 +67,7 @@ final class CampaignsTest extends TestCase
         $this->contact('+971501110002', 'Omar', ['VIP'], optedIn: true);
         $this->contact('+971501110003', 'Lina', ['VIP']);
         $out = $this->contact('+971501110004', 'Noor', ['VIP'], optedIn: true);
-        $this->postJson("/api/v1/contacts/{$out}/consent", ['state' => 'opted_out'])->assertOk();
+        $this->postJson("/api/v1/contacts/{$out}/consent", ['method' => 'phone_call', 'state' => 'opted_out'])->assertOk();
         $this->contact('+971501110005', 'Zaid', [], optedIn: true);
     }
 

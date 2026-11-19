@@ -145,15 +145,27 @@ final class ContactController extends Controller
         return response()->json(['data' => $consent->history($contact)]);
     }
 
+    /** How a teammate obtained the consent they record (stored first in the ledger's detail). */
+    public const CONSENT_METHODS = [
+        'phone_call' => 'Phone call', 'in_person' => 'In person / in the shop', 'form' => 'Website or paper form', 'email' => 'Email', 'other' => 'Other',
+    ];
+
     public function consent(Request $request, Contact $contact, ConsentService $consent, TenantContext $context, ConsentAutoReply $replies): JsonResponse
     {
         $data = $request->validate([
             'state' => ['required', Rule::in([ConsentState::OptedIn->value, ConsentState::OptedOut->value])],
-            'note' => ['nullable', 'string', 'max:190'],
+            // How it was obtained: required, our consent rules depend on it (3.3, A1). "Other" needs a description.
+            'method' => ['required', Rule::in(array_keys(self::CONSENT_METHODS))],
+            'note' => [Rule::requiredIf(fn () => $request->input('method') === 'other'), 'nullable', 'string', 'min:'.($request->input('method') === 'other' ? 5 : 0), 'max:150'],
             'notify' => ['sometimes', 'boolean'],
             'conversation_id' => ['nullable', 'uuid'],
+        ], [
+            'method.required' => 'Say how the consent was obtained.',
+            'note.required' => 'Describe how the consent was obtained.',
+            'note.min' => 'Describe how the consent was obtained.',
         ]);
         $in = $data['state'] === ConsentState::OptedIn->value;
+        $note = trim(self::CONSENT_METHODS[$data['method']].(isset($data['note']) && trim($data['note']) !== '' ? ' · '.trim($data['note']) : ''));
         // The customer opted out themselves (STOP, the Unsubscribe button, WhatsApp's own setting): only
         // they can opt back in (START or Subscribe). A teammate cannot override their own choice.
         if ($in && $contact->consent_state === ConsentState::OptedOut && ($by = $consent->customerOptOut($contact)) !== null) {
@@ -161,8 +173,8 @@ final class ContactController extends Controller
         }
 
         $changed = $in
-            ? $consent->optIn($contact, 'agent', $data['note'] ?? null, membershipId: $context->membership()?->id)
-            : $consent->optOut($contact, 'agent', $data['note'] ?? null, membershipId: $context->membership()?->id);
+            ? $consent->optIn($contact, 'agent', $note, membershipId: $context->membership()?->id)
+            : $consent->optOut($contact, 'agent', $note, membershipId: $context->membership()?->id);
 
         // An opt-out ends any chatbot conversation with this contact at once (as a typed STOP does).
         if ($changed && ! $in) {

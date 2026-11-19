@@ -79,7 +79,7 @@ final class TimelineWebhooksTest extends TestCase
         // The team works the lead.
         $this->patchJson("/api/v1/contacts/{$contact->id}", ['tags' => ['SUV']])->assertOk();
         $this->patchJson("/api/v1/contacts/{$contact->id}", ['tags' => []])->assertOk();
-        $this->postJson("/api/v1/contacts/{$contact->id}/consent", ['state' => 'opted_in', 'note' => 'Said yes on the phone'])->assertOk();
+        $this->postJson("/api/v1/contacts/{$contact->id}/consent", ['method' => 'phone_call', 'state' => 'opted_in', 'note' => 'Said yes on the phone'])->assertOk();
         $this->postJson('/api/v1/crm/stages/suggested')->assertOk();
         $qualified = (string) $this->tenantContext()->run($this->tenant, fn () => DB::table('crm_stages')->where('name', 'Qualified')->value('id'));
         $version = (int) $this->tenantContext()->run($this->tenant, fn () => DB::table('enquiries')->where('contact_id', $contact->id)->value('stage_version'));
