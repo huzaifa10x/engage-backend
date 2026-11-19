@@ -16,6 +16,7 @@ use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\DB;
 
 /** @mixin Conversation */
 final class ConversationResource extends JsonResource
@@ -30,6 +31,8 @@ final class ConversationResource extends JsonResource
             'snoozed_until' => ($until = $this->getAttribute('snoozed_until')) !== null && $until->isFuture() ? $until->toIso8601String() : null,
             'auto_reply_enabled' => (bool) ($this->getAttribute('auto_reply_enabled') ?? true),
             'assigned_membership_id' => $this->assigned_membership_id,
+            // The assignee's name for the wait clock ("Waiting 0:42 · Ahmed").
+            'assigned_name' => $this->assigned_membership_id !== null ? (self::memberNames($request)[$this->assigned_membership_id] ?? null) : null,
             'assigned_team_id' => $this->assigned_team_id,
             // Who answers now: "bot" (a chatbot session is running), "human", or null (nobody yet).
             'handler' => $this->getAttribute('handler'),
@@ -72,6 +75,17 @@ final class ConversationResource extends JsonResource
             ]),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
+    }
+
+    /** @return array<string, string> membership id → name, loaded once per request */
+    private static function memberNames(Request $request): array
+    {
+        if (! $request->attributes->has('inbox.member_names')) {
+            $request->attributes->set('inbox.member_names', DB::table('tenant_memberships')->join('users', 'users.id', '=', 'tenant_memberships.user_id')
+                ->pluck('users.name', 'tenant_memberships.id')->all());
+        }
+
+        return (array) $request->attributes->get('inbox.member_names');
     }
 
     private static function warningMinutes(Request $request): int
