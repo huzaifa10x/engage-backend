@@ -30,8 +30,8 @@ use Illuminate\Validation\ValidationException;
  *  - it checks the version the screen loaded; if the stage changed since, nothing is overwritten
  *    ("This lead was updated by [name]");
  *  - Lost needs a reason when a person or the API moves it;
- *  - Won needs a verified payment (Stripe, WooCommerce or an authorised person), a system-confirmed
- *    booking, or someone with the "approve Won" permission giving a reference;
+ *  - Won needs a verified payment (Stripe, WooCommerce or an authorised person) or a system-confirmed
+ *    booking; otherwise anyone who can reply marks it with a reference (3.3, A1);
  *  - it logs the change (from, to, who or what, reason, new version), which the timeline shows.
  */
 final class EnquiryStages
@@ -126,8 +126,10 @@ final class EnquiryStages
     }
 
     /**
-     * Won needs proof: a verified payment on this enquiry, a system-confirmed booking, or someone
-     * allowed to approve Won giving a reference. A staff-marked booking or "I've paid" in a chat is not proof.
+     * Won needs proof: a verified payment on this enquiry or a system-confirmed booking. Without one,
+     * anyone who can reply to customers may mark Won with a reference (an invoice, receipt or contract
+     * number, at least 3 characters); an API key needs the approve-Won permission. A staff-marked
+     * booking or "I've paid" in a chat is never treated as a verified payment.
      *
      * @param  array{payment?: string, booking?: string}  $proof
      */
@@ -136,16 +138,18 @@ final class EnquiryStages
         if (($proof['payment'] ?? null) !== null || ($proof['booking'] ?? null) !== null || $this->hasVerifiedPayment($lead)) {
             return;
         }
-        // A teammate allowed to approve Won, or an API key given that permission.
-        if ($this->context->can(Permission::StagesApproveWon) || ApiCaller::allows('stages:approve_won')) {
-            if ($reference === null) {
-                throw ValidationException::withMessages(['reason' => 'Add a reference for marking Won without a verified payment (an invoice or receipt number).']);
-            }
-
-            return;
+        $person = $this->context->membership() !== null && ApiCaller::current() === null;
+        $allowed = $person
+            ? ($this->context->can(Permission::InboxReply) || $this->context->can(Permission::StagesApproveWon))
+            : ApiCaller::allows('stages:approve_won');
+        if (! $allowed) {
+            throw ValidationException::withMessages(['stage_id' => $person
+                ? 'Only teammates who reply to customers can mark Won without a verified payment.'
+                : 'Won needs a verified payment. An API key with the approve Won permission can mark it with a reference.']);
         }
-
-        throw ValidationException::withMessages(['stage_id' => 'Won needs a verified payment. Someone allowed to approve Won can mark it with a reference.']);
+        if ($reference === null || mb_strlen($reference) < 3) {
+            throw ValidationException::withMessages(['reason' => 'Add a reference for marking Won without a verified payment (an invoice, receipt or contract number).']);
+        }
     }
 
     /** A paid store order on this enquiry (or the contact's, placed since it started). */

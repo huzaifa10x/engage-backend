@@ -501,6 +501,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::put('crm/stages/order', [StageController::class, 'reorder'])->name('crm.stages.reorder');
         Route::patch('crm/stages/{stage}', [StageController::class, 'update'])->whereUuid('stage')->name('crm.stages.update');
         Route::delete('crm/stages/{stage}', [StageController::class, 'destroy'])->whereUuid('stage')->name('crm.stages.destroy');
+        Route::post('crm/stages/{stage}/restore', [StageController::class, 'restore'])->whereUuid('stage')->name('crm.stages.restore');
     });
     Route::middleware('can:'.Permission::ContactsUpdate->value)->group(function () {
         Route::post('tags', [CrmController::class, 'storeTag'])->name('tags.store');
