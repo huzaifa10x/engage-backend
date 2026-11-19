@@ -80,7 +80,7 @@ final class ConversationController extends Controller
                     ->when($digits !== '', fn ($w) => $w->orWhere('wa_id', 'like', "%{$digits}%"))));
             })
             // Needs reply: ad leads first (they cost money), then the longest waiting.
-            ->when(($data['state'] ?? null) === 'needs_reply' || $request->boolean('after_hours'), fn ($q) => $q->orderByDesc('ad_lead')->orderBy('needs_reply_since')->orderBy('id'),
+            ->when(($data['state'] ?? null) === 'needs_reply' || $request->boolean('after_hours'), fn ($q) => $q->orderBy('reply_due_at')->orderBy('needs_reply_since')->orderByDesc('ad_lead')->orderBy('id'),
                 fn ($q) => $q->orderByDesc('last_message_at')->orderByDesc('id'));
 
         return ConversationResource::collection($query->cursorPaginate((int) ($data['per_page'] ?? 30)));

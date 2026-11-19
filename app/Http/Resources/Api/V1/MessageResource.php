@@ -52,6 +52,11 @@ final class MessageResource extends JsonResource
                 'title' => $this->error_title,
                 'detail' => $this->errorDetail(),
                 'hint' => MetaErrorCatalog::hint($this->error_code),
+                // The inbox shows a plain reason, Meta's code, Retry only for temporary errors, "Choose
+                // template" for 131047, and the details for codes we don't know (3.3, A3).
+                'plain' => MetaErrorCatalog::plain($this->error_code),
+                'known' => MetaErrorCatalog::known($this->error_code),
+                'action' => MetaErrorCatalog::action($this->error_code),
             ] : null,
             'pricing' => $this->getAttribute('pricing'),
             'sent_by_membership_id' => $this->sent_by_membership_id,

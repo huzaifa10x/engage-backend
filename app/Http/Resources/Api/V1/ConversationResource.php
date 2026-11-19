@@ -11,6 +11,7 @@ use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\InboxTools;
+use App\Domain\Messaging\Services\ReplyPromise;
 use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Http\Request;
@@ -46,6 +47,8 @@ final class ConversationResource extends JsonResource
             'needs_reply_since' => $this->getAttribute('reply_state') === ReplyState::NEEDS_REPLY ? $this->getAttribute('needs_reply_since')?->toIso8601String() : null,
             'after_hours' => (bool) $this->getAttribute('after_hours'),
             'ad_lead' => (bool) $this->getAttribute('ad_lead'),
+            // The reply promise (3.3, A3): business time waited and left on the limit, paused outside hours.
+            'promise' => ReplyPromise::clock(app(TenantContext::class)->tenantOrNull(), $this->resource),
             'unread_count' => $this->unread_count,
             'last_message_at' => $this->last_message_at?->toIso8601String(),
             'last_message_preview' => $this->getAttribute('last_message_preview'),

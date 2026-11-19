@@ -99,6 +99,9 @@ final class StatusApplier
 
         if ($updates !== []) {
             $message->forceFill($updates)->save();
+            if (($updates['status'] ?? null) === MessageStatus::Failed) {
+                ReplyState::failed($message);
+            }
             MessageStored::dispatch($message, false);
             // A chatbot template with a "Not delivered" branch waits for this report.
             if (isset($updates['status']) && in_array($updates['status'], [MessageStatus::Failed, MessageStatus::Delivered, MessageStatus::Read], true)

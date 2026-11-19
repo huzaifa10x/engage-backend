@@ -42,6 +42,7 @@ final class Scheduler
         'snooze_return' => SnoozeReturn::class,
         'reply_alert' => ReplyAlert::class,
         'reply_escalation' => ReplyEscalation::class,
+        'wait_alert' => WaitAlert::class,
         'window_alert' => WindowAlert::class,
         'unassigned_assign' => UnassignedAssign::class,
         'nudge' => Nudge::class,

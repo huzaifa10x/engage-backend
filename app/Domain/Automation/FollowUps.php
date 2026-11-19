@@ -7,6 +7,7 @@ namespace App\Domain\Automation;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\BusinessHours;
+use App\Domain\Messaging\Services\ReplyPromise;
 use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
@@ -38,7 +39,7 @@ use Illuminate\Support\Facades\DB;
  */
 final class FollowUps
 {
-    public const TEAM_KINDS = ['reply_alert', 'reply_escalation', 'window_alert', 'unassigned_assign'];
+    public const TEAM_KINDS = ['reply_alert', 'reply_escalation', 'wait_alert', 'window_alert', 'unassigned_assign'];
 
     public const NUDGE_KINDS = ['nudge', 'nudge_template'];
 
@@ -127,6 +128,18 @@ final class FollowUps
         if ($can['escalation'] && $s['escalation']['enabled'] && ! $decided('reply_escalation')) {
             $scheduler->schedule('reply_escalation', $after($s['escalation']['minutes']), $prefix('reply_escalation').':'.$s['escalation']['minutes'], $conversation, payload: ['episode' => $episode, 'minutes' => $s['escalation']['minutes']], priority: 50);
         }
+        // The reply promise ladder (3.3, A3): 30 min the agent, 45 the Managers, 60 the Owner. Part of
+        // the pilot kit, so not tied to a plan; switched off with the promise.
+        $promise = ReplyPromise::settings($tenant);
+        if ($promise['enabled']) {
+            foreach ($promise['ladder'] as $i => $step) {
+                $kind = 'wait_alert:L'.($i + 1);
+                if (! $decided($kind)) {
+                    $scheduler->schedule('wait_alert', $after($step['minutes']), $prefix($kind).':'.$step['minutes'].':'.$step['to'], $conversation,
+                        payload: ['episode' => $episode, 'level' => $i + 1, 'minutes' => $step['minutes'], 'to' => $step['to']], priority: 55);
+                }
+            }
+        }
         if ($can['team'] && $s['window_alert']['enabled'] && $windowEnds !== null && ! $decided('window_alert')) {
             $due = $windowEnds->copy()->subMinutes($s['window_alert']['minutes_before']);
             $scheduler->schedule('window_alert', $due->max(now()), $prefix('window_alert').':'.$s['window_alert']['minutes_before'], $conversation, payload: ['episode' => $episode], priority: 40);
@@ -154,6 +167,11 @@ final class FollowUps
             ->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now()))
             ->lazyById(200)->each(function (Conversation $c) use (&$n): void {
                 $since = Carbon::parse($c->getAttribute('needs_reply_since'));
+                // The promise's due time follows the current limit and hours (they may have changed).
+                $due = ReplyPromise::dueAt(app(TenantContext::class)->tenantOrNull(), $c->phone_number_id, $since);
+                if ($c->getAttribute('reply_due_at') === null || ! Carbon::parse($c->getAttribute('reply_due_at'))->equalTo($due)) {
+                    Conversation::query()->whereKey($c->id)->update(['reply_due_at' => $due]);
+                }
                 self::waitStarted($c, $since, $c->window_expires_at ?? $since->copy()->addHours((int) config('engage.messaging.window_hours', 24)));
                 $n++;
             });

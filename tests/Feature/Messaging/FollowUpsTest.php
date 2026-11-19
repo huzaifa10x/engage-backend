@@ -90,6 +90,8 @@ final class FollowUpsTest extends TestCase
             'reply_alert' => ['enabled' => true, 'minutes' => 10],
             'escalation' => ['enabled' => true, 'minutes' => 30, 'action' => 'notify', 'notify_ids' => [$lead->id]],
         ])->assertOk()->assertJsonPath('data.settings.escalation.minutes', 30);
+        // The reply promise ladder has its own test (ReplyPromiseTest).
+        $this->putJson('/api/v1/tenant/reply-promise', ['enabled' => false])->assertOk();
 
         $this->customer('Hello?');
         $c = $this->conversation();

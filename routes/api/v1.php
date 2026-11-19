@@ -42,6 +42,7 @@ use App\Http\Controllers\Api\V1\Messaging\InboxTeamController;
 use App\Http\Controllers\Api\V1\Messaging\InboxToolsController;
 use App\Http\Controllers\Api\V1\Messaging\MediaController;
 use App\Http\Controllers\Api\V1\Messaging\MessageController;
+use App\Http\Controllers\Api\V1\Messaging\ReplyPromiseController;
 use App\Http\Controllers\Api\V1\PublicSiteController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
@@ -257,6 +258,12 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::get('tenant/feedback', [FeedbackController::class, 'show'])->middleware('can:'.Permission::SettingsView->value)->name('tenant.feedback');
     Route::put('tenant/feedback', [FeedbackController::class, 'update'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.feedback.update');
     Route::get('analytics/feedback', [FeedbackController::class, 'report'])->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.feedback');
+    // The reply promise and the weekly missed-leads report (3.3, A3).
+    Route::get('tenant/reply-promise', [ReplyPromiseController::class, 'show'])->middleware('can:'.Permission::InboxView->value)->name('tenant.reply-promise');
+    Route::put('tenant/reply-promise', [ReplyPromiseController::class, 'update'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.reply-promise.update');
+    Route::get('conversations/{conversation}/wait-alerts', [ReplyPromiseController::class, 'alerts'])->middleware('can:'.Permission::InboxView->value)->name('conversations.wait-alerts');
+    Route::get('reports/missed-leads', [ReplyPromiseController::class, 'report'])->middleware('can:'.Permission::AnalyticsView->value)->name('reports.missed-leads');
+    Route::put('reports/missed-leads/baseline', [ReplyPromiseController::class, 'baseline'])->middleware('can:'.Permission::SettingsManage->value)->name('reports.missed-leads.baseline');
     Route::get('tenant/followups', [FollowUpController::class, 'show'])->middleware('can:'.Permission::SettingsView->value)->name('tenant.followups');
     Route::put('tenant/followups', [FollowUpController::class, 'update'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.followups.update');
     Route::put('tenant/inbox-settings', [InboxToolsController::class, 'updateInboxSettings'])
@@ -564,6 +571,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
 
     Route::middleware(['can:'.Permission::InboxReply->value, 'throttle:messaging'])->group(function () {
         Route::post('conversations/{conversation}/messages', [MessageController::class, 'store'])->name('conversations.messages.store');
+        Route::post('conversations/{conversation}/messages/{message}/retry', [MessageController::class, 'retry'])->whereUuid('message')->name('conversations.messages.retry');
         Route::post('conversations/{conversation}/bot/take-over', [ConversationController::class, 'takeOver'])->name('conversations.bot.take-over');
         Route::post('conversations/{conversation}/bot/hand-back', [ConversationController::class, 'handBack'])->name('conversations.bot.hand-back');
         Route::post('conversations/{conversation}/notes', [InboxToolsController::class, 'addNote'])->name('conversations.notes.store');

@@ -7,6 +7,10 @@ namespace App\Http\Controllers\Api\V1\Messaging;
 use App\Application\Messaging\SendMessage;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Messaging\Enums\MessageOrigin;
+use App\Domain\Messaging\Enums\MessageStatus;
+use App\Domain\Messaging\Events\MessageStored;
+use App\Domain\Messaging\Jobs\SendWhatsappMessage;
+use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Message;
@@ -17,10 +21,13 @@ use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\MessageResource;
 use App\Support\Api\ErrorCode;
+use App\Support\Meta\MetaErrorCatalog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 final class MessageController extends Controller
 {
@@ -49,6 +56,36 @@ final class MessageController extends Controller
         $message = $send->toConversation($conversation, $this->payload($request), MessageOrigin::Agent, $this->membership(), $this->idempotencyKey($request));
 
         return MessageResource::make($message->load('media'))->response()->setStatusCode(202);
+    }
+
+    /**
+     * Sends a failed reply again (3.3, A3). Only a person's message that failed with a temporary error
+     * (throttling, a WhatsApp outage) can be retried; anything else needs a different message.
+     */
+    public function retry(Conversation $conversation, Message $message, MessagingLimits $limits): JsonResponse
+    {
+        $this->access->ensureCanSeeChat($this->membership(), $conversation);
+        abort_unless($message->conversation_id === $conversation->id, 404);
+        if ($message->status !== MessageStatus::Failed || ! in_array($message->origin, [MessageOrigin::Agent, MessageOrigin::Api], true)) {
+            throw ValidationException::withMessages(['message' => 'Only a failed reply can be sent again.']);
+        }
+        if (! MetaErrorCatalog::temporary($message->error_code)) {
+            throw ValidationException::withMessages(['message' => 'This message failed for a reason that sending again will not fix.']);
+        }
+        if ($message->type !== 'template' && ! $conversation->isWindowOpen()) {
+            throw ValidationException::withMessages(['message' => 'The 24-hour window has closed. Send an approved template instead.']);
+        }
+
+        DB::transaction(function () use ($message, $conversation, $limits): void {
+            $message->forceFill(['status' => MessageStatus::Queued, 'failed_at' => null, 'error_code' => null, 'error_title' => null, 'error_details' => null])->save();
+            $number = PhoneNumber::query()->findOrFail($message->phone_number_id);
+            $contact = Contact::query()->withTrashed()->findOrFail($message->contact_id);
+            $limits->reserve($message, $conversation, $contact, $number);
+        });
+        SendWhatsappMessage::dispatch($message->id, $message->phone_number_id)->afterCommit();
+        MessageStored::dispatch($message, false);
+
+        return MessageResource::make($message->refresh()->load('media'))->response()->setStatusCode(202);
     }
 
     /**
