@@ -153,7 +153,7 @@ final class ReplyState
     public static function recalculate(Conversation $conversation): array
     {
         $accepted = [MessageStatus::Accepted->value, MessageStatus::Sent->value, MessageStatus::Delivered->value, MessageStatus::Read->value];
-        $time = "COALESCE(meta_timestamp, created_at)";
+        $time = 'COALESCE(meta_timestamp, created_at)';
         $lastReply = Message::query()->where('conversation_id', $conversation->id)->where('direction', Message::OUTBOUND)
             ->whereIn('origin', [MessageOrigin::Agent->value, MessageOrigin::Api->value, MessageOrigin::AppEcho->value])
             ->whereIn('status', $accepted)->max(DB::raw($time));

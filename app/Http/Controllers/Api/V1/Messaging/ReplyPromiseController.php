@@ -103,7 +103,7 @@ final class ReplyPromiseController extends Controller
             'median_reply_minutes' => ['nullable', 'integer', 'min:0', 'max:100000'],
             'note' => ['nullable', 'string', 'max:300'],
         ]);
-        if (isset($data['enquiries'], $data['in_time'], $data['over']) && $data['in_time'] + $data['over'] > $data['enquiries']) {
+        if (isset($data['enquiries'], $data['in_time'], $data['over']) && $data['enquiries'] < $data['in_time'] + $data['over']) {
             throw ValidationException::withMessages(['enquiries' => 'Answered in time and waited over can’t add up to more than the enquiries.']);
         }
         $tenant = $this->context->tenant();

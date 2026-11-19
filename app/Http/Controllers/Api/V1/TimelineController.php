@@ -5,9 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Domain\Audit\AuditLogger;
-use App\Domain\Crm\Models\CrmStage;
+use App\Domain\Crm\Services\EnquiryCards;
 use App\Domain\Messaging\Models\Contact;
-use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\Timeline\Enquiries;
 use App\Domain\Timeline\Enquiry;
@@ -16,7 +15,6 @@ use App\Domain\Timeline\TimelineEvent;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 /** The contact's history (timeline) and enquiries (Contacts). */
@@ -55,45 +53,11 @@ final class TimelineController extends Controller
         ]);
     }
 
-    public function enquiries(Contact $contact): JsonResponse
+    public function enquiries(Contact $contact, EnquiryCards $cards): JsonResponse
     {
-        $list = Enquiry::query()->where('contact_id', $contact->id)->orderByDesc('number')->get();
-        $owners = TenantMembership::query()->with('user')->whereIn('id', $list->pluck('owner_membership_id')->filter())->get()->keyBy('id');
-        $stages = CrmStage::query()->whereIn('id', $list->pluck('stage_id')->filter())->get()->keyBy('id');
-        $orders = DB::table('commerce_orders')->whereIn('enquiry_id', $list->modelKeys())
-            ->get(['id', 'enquiry_id', 'number', 'status', 'total', 'currency', 'paid'])->groupBy('enquiry_id');
-        $counts = DB::table('timeline_events')->whereIn('enquiry_id', $list->modelKeys())->whereIn('type', ['message.received', 'message.sent'])
-            ->groupBy('enquiry_id')->selectRaw('enquiry_id, count(*) AS total')->pluck('total', 'enquiry_id');
-
-        $rows = [];
-        foreach ($list as $e) {
-            $payments = [];
-            foreach ($orders->get($e->id, collect()) as $o) {
-                $payments[] = ['type' => 'order', 'id' => $o->id, 'number' => $o->number, 'status' => $o->status, 'total' => (float) $o->total, 'currency' => $o->currency, 'paid' => (bool) $o->paid];
-            }
-            $rows[] = [
-                'id' => $e->id,
-                'number' => $e->number,
-                'current' => $contact->getAttribute('current_enquiry_id') === $e->id,
-                'started_at' => $e->started_at->toIso8601String(),
-                'started_by' => $e->started_by,
-                'start_reason' => $e->start_reason,
-                'imported' => $e->isImported(),
-                'source' => $e->source,
-                'source_label' => Enquiries::label(['source' => $e->source, 'detail' => (array) $e->source_detail]),
-                'source_confidence' => $e->source_confidence,
-                'confidence_label' => Enquiry::CONFIDENCE_LABELS[$e->source_confidence],
-                'owner' => $e->owner_membership_id !== null ? ['id' => $e->owner_membership_id, 'name' => $owners[$e->owner_membership_id]->user->name ?? 'Former teammate'] : null,
-                'stage' => $e->stage_id !== null ? ['id' => $e->stage_id, 'name' => $stages[$e->stage_id]->name ?? null, 'group' => $stages[$e->stage_id]->group ?? CrmStage::OPEN] : null,
-                // Sent back with a stage change, so two people can't overwrite each other (item 4).
-                'stage_version' => $e->stage_version,
-                'lost_reason' => $e->lost_reason,
-                'verified_paid' => collect($payments)->contains(fn (array $p) => $p['paid']),
-                'last_activity_at' => $e->last_activity_at?->toIso8601String(),
-                'messages' => (int) ($counts[$e->id] ?? 0),
-                'bookings' => [],
-                'payments' => $payments,
-            ];
+        $rows = $cards->rows(Enquiry::query()->where('contact_id', $contact->id)->orderByDesc('number')->get());
+        foreach ($rows as &$row) {
+            $row['current'] = $contact->getAttribute('current_enquiry_id') === $row['id'];
         }
 
         return response()->json(['data' => $rows]);

@@ -30,6 +30,11 @@ use Illuminate\Support\Carbon;
  * @property ?string $lost_reason
  * @property ?Carbon $stage_changed_at
  * @property ?Carbon $last_activity_at
+ * @property ?string $title what the enquiry is about (3.3, B1)
+ * @property ?string $value
+ * @property ?string $value_period once | month | year
+ * @property ?Carbon $expected_close_on
+ * @property int $details_version raised by every edit of the card; a screen sends back the one it loaded
  * @property ?Carbon $created_at
  */
 class Enquiry extends Model
@@ -47,10 +52,13 @@ class Enquiry extends Model
     public const CONFIDENCE_LABELS = ['verified' => 'Verified', 'partial' => 'Partial', 'unknown' => 'Unknown'];
 
     /** Mirror the column default so a new enquiry is complete without a refetch. */
-    protected $attributes = ['stage_version' => 0];
+    protected $attributes = ['stage_version' => 0, 'details_version' => 0];
+
+    public const PERIODS = ['once' => 'one-off', 'month' => '/ month', 'year' => '/ year'];
 
     protected $fillable = ['tenant_id', 'contact_id', 'number', 'conversation_id', 'started_at', 'started_by', 'start_reason', 'source', 'source_confidence',
-        'source_detail', 'owner_membership_id', 'stage_id', 'stage_version', 'lost_reason', 'stage_changed_at', 'last_activity_at'];
+        'source_detail', 'owner_membership_id', 'stage_id', 'stage_version', 'lost_reason', 'stage_changed_at', 'last_activity_at',
+        'title', 'value', 'value_period', 'expected_close_on', 'details_version', 'details_updated_by', 'details_updated_at'];
 
     public function isImported(): bool
     {
@@ -71,6 +79,7 @@ class Enquiry extends Model
 
     protected function casts(): array
     {
-        return ['started_at' => 'datetime', 'last_activity_at' => 'datetime', 'stage_changed_at' => 'datetime', 'stage_version' => 'integer', 'source_detail' => 'array', 'number' => 'integer'];
+        return ['started_at' => 'datetime', 'last_activity_at' => 'datetime', 'stage_changed_at' => 'datetime', 'stage_version' => 'integer', 'source_detail' => 'array', 'number' => 'integer',
+            'expected_close_on' => 'date', 'details_version' => 'integer', 'details_updated_at' => 'datetime'];
     }
 }

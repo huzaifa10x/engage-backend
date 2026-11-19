@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\ChatbotWelcomeController;
 use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Conversions\ConversionsController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
+use App\Http\Controllers\Api\V1\Crm\EnquiryController;
 use App\Http\Controllers\Api\V1\Crm\StageController;
 use App\Http\Controllers\Api\V1\DataController;
 use App\Http\Controllers\Api\V1\DeveloperController;
@@ -544,6 +545,13 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::get('contacts/{contact}/timeline', [TimelineController::class, 'timeline'])->middleware('can:'.Permission::ContactsView->value)->name('contacts.timeline');
     Route::get('contacts/{contact}/enquiries', [TimelineController::class, 'enquiries'])->middleware('can:'.Permission::ContactsView->value)->name('contacts.enquiries');
     Route::post('contacts/{contact}/enquiries', [TimelineController::class, 'startEnquiry'])->middleware(['can:'.Permission::ContactsUpdate->value, 'throttle:30,1'])->name('contacts.enquiries.start');
+    // Enquiries board, the enquiry card and next steps (3.3, B1).
+    Route::get('enquiries/board', [EnquiryController::class, 'board'])->middleware('can:'.Permission::ContactsView->value)->name('enquiries.board');
+    Route::get('enquiries/{enquiry}', [EnquiryController::class, 'show'])->whereUuid('enquiry')->middleware('can:'.Permission::ContactsView->value)->name('enquiries.show');
+    Route::patch('enquiries/{enquiry}', [EnquiryController::class, 'update'])->whereUuid('enquiry')->middleware('can:'.Permission::ContactsUpdate->value)->name('enquiries.update');
+    Route::get('contacts/{contact}/next-steps', [EnquiryController::class, 'steps'])->whereUuid('contact')->middleware('can:'.Permission::ContactsView->value)->name('contacts.next-steps');
+    Route::post('contacts/{contact}/next-steps', [EnquiryController::class, 'addStep'])->whereUuid('contact')->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.next-steps.store');
+    Route::patch('next-steps/{step}', [EnquiryController::class, 'updateStep'])->whereUuid('step')->middleware('can:'.Permission::ContactsUpdate->value)->name('next-steps.update');
     Route::get('tenant/enquiry-settings', [TimelineController::class, 'settings'])->middleware('can:'.Permission::SettingsView->value)->name('tenant.enquiry-settings');
     Route::put('tenant/enquiry-settings', [TimelineController::class, 'updateSettings'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.enquiry-settings.update');
     Route::post('contacts/{contact}/consent', [ContactController::class, 'consent'])->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.consent');
