@@ -60,3 +60,7 @@ Shopify shows "Coming soon" until these are set. WooCommerce and Zapier/Make wor
 - Scope: read_orders
 - Add SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET to /opt/engage/backend/.env, then deploy.sh restart
 - Request protected customer data access (name, phone, email, address); without it orders arrive without the phone number.
+
+npm run deploy:staging
+npm run release:promote
+npm run deploy:production
