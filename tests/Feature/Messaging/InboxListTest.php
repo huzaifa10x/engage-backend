@@ -51,7 +51,12 @@ final class InboxListTest extends TestCase
         $this->tenantContext()->run($this->tenant, fn () => $new->forceFill(['window_expires_at' => now()->subMinute()])->save());   // window closed
 
         $ids = array_column($this->getJson('/api/v1/conversations?sort=priority&status=open')->assertOk()->json('data'), 'id');
-        $this->assertSame([$old->id, $new->id], $ids);     // open window before closed
+        $this->assertSame([$old->id, $new->id], $ids);     // the older chat has less time left on the reply promise
+        // Needs reply is sorted by time left on the promise, not by the WhatsApp window (batch 7).
+        $this->tenantContext()->run($this->tenant, fn () => $new->forceFill(['reply_due_at' => now()->addMinutes(5)])->save());
+        $this->tenantContext()->run($this->tenant, fn () => $old->forceFill(['reply_due_at' => now()->addMinutes(50)])->save());
+        $this->assertSame([$new->id, $old->id], array_column($this->getJson('/api/v1/conversations?sort=priority&status=open')->json('data'), 'id'));
+        $this->tenantContext()->run($this->tenant, fn () => $old->forceFill(['reply_due_at' => now()->subMinute()])->save());
         $this->getJson('/api/v1/conversations?sort=priority&window=closed')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $new->id);
         $this->getJson('/api/v1/conversations?sort=newest&q=quote')->assertJsonCount(1, 'data');                 // message text
         $this->getJson('/api/v1/conversations?sort=priority&followup=1')->assertJsonCount(0, 'data');

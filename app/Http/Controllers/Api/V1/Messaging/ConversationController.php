@@ -154,10 +154,12 @@ final class ConversationController extends Controller
     private static function priority($q): void
     {
         // The app's clock, not the database's, so every server and test agrees on "now".
+        // Needs reply first, by time left on the reply promise (batch 7, pilot kit); then waiting,
+        // snoozed and resolved chats.
         $now = now()->toIso8601String();
         $needs = "status = 'open' AND reply_state = '".ReplyState::NEEDS_REPLY."' AND (snoozed_until IS NULL OR snoozed_until <= ?::timestamptz)";
-        $q->orderByRaw("CASE WHEN {$needs} AND window_expires_at > ?::timestamptz THEN 0 WHEN {$needs} THEN 1 WHEN status = 'closed' THEN 4 WHEN snoozed_until > ?::timestamptz THEN 3 ELSE 2 END", [$now, $now, $now, $now])
-            ->orderByRaw("CASE WHEN {$needs} AND window_expires_at > ?::timestamptz THEN window_expires_at END ASC NULLS LAST", [$now, $now])
+        $q->orderByRaw("CASE WHEN {$needs} THEN 0 WHEN status = 'closed' THEN 3 WHEN snoozed_until > ?::timestamptz THEN 2 ELSE 1 END", [$now, $now])
+            ->orderByRaw("CASE WHEN {$needs} THEN reply_due_at END ASC NULLS LAST", [$now])
             ->orderByRaw("CASE WHEN {$needs} THEN needs_reply_since END ASC NULLS LAST", [$now])
             ->orderByRaw('CASE WHEN snoozed_until > ?::timestamptz THEN snoozed_until END ASC NULLS LAST', [$now])
             ->orderByDesc('last_message_at')->orderByDesc('id');
