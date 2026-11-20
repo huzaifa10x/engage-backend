@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Messaging;
 
 use App\Application\Messaging\ManageContacts;
+use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Crm\Models\Segment;
+use App\Domain\Crm\Services\ContactRecord;
 use App\Domain\Crm\Services\SegmentQuery;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\ConsentAutoReply;
 use App\Domain\Messaging\Services\ConsentService;
+use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\ContactResource;
@@ -112,7 +115,7 @@ final class ContactController extends Controller
         return ContactResource::make($contact->load('syncedFrom'));
     }
 
-    public function update(Request $request, Contact $contact, ManageContacts $contacts): ContactResource
+    public function update(Request $request, Contact $contact, ManageContacts $contacts, ContactRecord $record): ContactResource
     {
         $data = $request->validate([
             'name' => ['sometimes', 'nullable', 'string', 'max:190'],
@@ -120,9 +123,52 @@ final class ContactController extends Controller
             'attributes' => ['sometimes', 'nullable', 'array', 'max:50'],
             'tags' => ['sometimes', 'nullable', 'array', 'max:50'],
             'tags.*' => ['string', 'max:40'],
+            'company' => ['sometimes', 'nullable', 'string', 'max:190'],
+            'job_title' => ['sometimes', 'nullable', 'string', 'max:120'],
+            'city' => ['sometimes', 'nullable', 'string', 'max:80'],
+            'country' => ['sometimes', 'nullable', 'string', 'max:80'],
+            'language' => ['sometimes', 'nullable', 'string', 'max:40'],
+            'lead_status' => ['sometimes', 'nullable', Rule::in(array_keys(ContactRecord::LEAD_STATUSES))],
+            'owner_membership_id' => ['sometimes', 'nullable', 'uuid'],
         ]);
+        if (array_key_exists('lead_status', $data) && $data['lead_status'] !== null && $record->lifecycle($contact)['key'] === 'customer') {
+            throw ValidationException::withMessages(['lead_status' => "Customers don't have a lead status."]);
+        }
+        if (($data['owner_membership_id'] ?? null) !== null && ! TenantMembership::query()->active()->whereKey($data['owner_membership_id'])->exists()) {
+            throw ValidationException::withMessages(['owner_membership_id' => 'Pick someone on the team.']);
+        }
 
         return ContactResource::make($contacts->update($contact, $data));
+    }
+
+    /** The record's field history: who changed what, newest first. */
+    public function changes(Contact $contact, ContactRecord $record): JsonResponse
+    {
+        return response()->json(['data' => $record->changes($contact)]);
+    }
+
+    /**
+     * The contact's chats the current teammate may see, latest first: the record's Open chat button and
+     * its WhatsApp window ring.
+     */
+    public function conversations(Contact $contact, TenantContext $context, NumberAccess $access): JsonResponse
+    {
+        $membership = $context->membership();
+        abort_unless($membership instanceof TenantMembership, 403);
+        $query = Conversation::query()->where('contact_id', $contact->id);
+        $access->scopeChats($query, $membership);
+
+        return response()->json(['data' => $query->orderByDesc('last_message_at')->limit(10)->get()->map(fn (Conversation $c) => [
+            'id' => $c->id, 'phone_number_id' => $c->phone_number_id, 'status' => $c->status->value,
+            'window_expires_at' => $c->window_expires_at?->toIso8601String(), 'window_open' => $c->isWindowOpen(),
+            'assigned_membership_id' => $c->assigned_membership_id, 'last_message_at' => $c->last_message_at?->toIso8601String(),
+        ])->values()->all()]);
+    }
+
+    /** Other contacts with the same number, email or WhatsApp user id. */
+    public function duplicates(Contact $contact, ContactRecord $record): JsonResponse
+    {
+        return response()->json(['data' => $record->duplicates($contact)]);
     }
 
     public function destroy(Contact $contact, ManageContacts $contacts): Response

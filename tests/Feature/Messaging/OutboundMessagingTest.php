@@ -283,7 +283,7 @@ final class OutboundMessagingTest extends TestCase
         $this->fakeSend();
         $this->actingAsMember($this->owner);
 
-        $this->postJson('/api/v1/messages', [
+        $this->postJson('/api/v1/messages', ['permission' => ['via' => 'form'],
             'phone_number_id' => $this->number->id, 'to' => '+971 50 765 4321',
             'type' => 'template', 'template' => ['name' => 'hello_world', 'language' => 'en_US'],
         ])->assertStatus(202);

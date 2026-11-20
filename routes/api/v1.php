@@ -45,6 +45,7 @@ use App\Http\Controllers\Api\V1\Messaging\MediaController;
 use App\Http\Controllers\Api\V1\Messaging\MessageController;
 use App\Http\Controllers\Api\V1\Messaging\ReplyPromiseController;
 use App\Http\Controllers\Api\V1\Messaging\ResolutionController;
+use App\Http\Controllers\Api\V1\Messaging\StartConversationController;
 use App\Http\Controllers\Api\V1\PublicSiteController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
@@ -540,10 +541,13 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::middleware('can:'.Permission::ContactsView->value)->group(function () {
         Route::get('contacts', [ContactController::class, 'index'])->name('contacts.index');
         Route::get('contacts/count', [ContactController::class, 'count'])->name('contacts.count');
-        Route::get('contacts/{contact}', [ContactController::class, 'show'])->name('contacts.show');
+        Route::get('contacts/{contact}', [ContactController::class, 'show'])->whereUuid('contact')->name('contacts.show');
     });
     Route::post('contacts', [ContactController::class, 'store'])->middleware('can:'.Permission::ContactsCreate->value)->name('contacts.store');
     Route::patch('contacts/{contact}', [ContactController::class, 'update'])->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.update');
+    Route::get('contacts/{contact}/changes', [ContactController::class, 'changes'])->whereUuid('contact')->middleware('can:'.Permission::ContactsView->value)->name('contacts.changes');
+    Route::get('contacts/{contact}/conversations', [ContactController::class, 'conversations'])->whereUuid('contact')->middleware('can:'.Permission::ContactsView->value)->name('contacts.conversations');
+    Route::get('contacts/{contact}/duplicates', [ContactController::class, 'duplicates'])->whereUuid('contact')->middleware('can:'.Permission::ContactsView->value)->name('contacts.duplicates');
     Route::get('contacts/{contact}/consent-history', [ContactController::class, 'consentHistory'])->middleware('can:'.Permission::ContactsView->value)->name('contacts.consent-history');
     // Contact timeline and enquiries (batch 6a, item 0).
     Route::get('contacts/{contact}/timeline', [TimelineController::class, 'timeline'])->middleware('can:'.Permission::ContactsView->value)->name('contacts.timeline');
@@ -595,6 +599,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::put('canned-responses/{cannedResponse}', [InboxToolsController::class, 'saveCannedResponse'])->name('canned-responses.update');
         Route::delete('canned-responses/{cannedResponse}', [InboxToolsController::class, 'deleteCannedResponse'])->name('canned-responses.destroy');
         Route::post('messages', [MessageController::class, 'start'])->name('messages.start');
+        Route::get('contacts/search', [StartConversationController::class, 'search'])->middleware('throttle:120,1')->name('contacts.search');
         Route::post('media', [MediaController::class, 'store'])->name('media.store');
     });
 });

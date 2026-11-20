@@ -6,6 +6,7 @@ namespace App\Application\Messaging;
 
 use App\Application\Crm\TagCatalog;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Crm\Services\ContactRecord;
 use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Developer\Services\WebhookDispatcher;
@@ -62,7 +63,12 @@ final class ManageContacts
     public function update(Contact $contact, array $data, bool $partial = false): Contact
     {
         $before = $contact->only(['name', 'email']);
-        $contact->fill($this->attributes($data, ! $partial))->save();
+        $attributes = $this->attributes($data, ! $partial);
+        // Record fields are written through ContactRecord, which keeps who changed what (3.5).
+        $record = array_intersect_key($attributes + $data, ContactRecord::EDITABLE);
+        $contact->fill(array_diff_key($attributes, $record));
+        app(ContactRecord::class)->change($contact, $record, $partial ? 'system' : 'user');
+        $contact->save();
         $this->audit->record('contact.updated', $contact, before: $before, after: $contact->only(['name', 'email']));
         app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.updated', PublicPayload::contact($contact));
 
@@ -85,7 +91,7 @@ final class ManageContacts
      */
     private function attributes(array $data, bool $checkRequired = true): array
     {
-        $out = array_intersect_key($data, array_flip(['name', 'email']));
+        $out = array_intersect_key($data, array_flip(['name', 'email', 'company', 'job_title', 'city', 'country', 'language']));
         if (array_key_exists('attributes', $data)) {
             // Values of the workspace's custom fields are checked against their type and rules.
             $out['custom_fields'] = app(CustomFields::class)->values((array) ($data['attributes'] ?? []), $checkRequired) ?: null;
