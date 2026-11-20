@@ -23,7 +23,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Illuminate\Http\Response;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -265,13 +264,6 @@ final class ContactController extends Controller
     public function duplicates(Contact $contact, ContactRecord $record): JsonResponse
     {
         return response()->json(['data' => $record->duplicates($contact)]);
-    }
-
-    public function destroy(Contact $contact, ManageContacts $contacts): Response
-    {
-        $contacts->delete($contact);
-
-        return response()->noContent();
     }
 
     /** Record consent given or withdrawn outside WhatsApp (form, call, in person). */

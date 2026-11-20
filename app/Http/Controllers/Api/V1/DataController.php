@@ -4,19 +4,23 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Application\Messaging\ManageContacts;
 use App\Application\Tenancy\WorkspaceDeletion;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Data\DataExports;
 use App\Domain\Data\Jobs\BuildDataExport;
 use App\Domain\Data\Models\DataExport;
+use App\Domain\Messaging\Models\Contact;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\RequestWorkspaceDeletionRequest;
 use App\Http\Requests\Api\V1\StartDataExportRequest;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -84,6 +88,30 @@ final class DataController extends Controller
     {
         $this->ownerOnly();
         $deletion->cancel($this->context->tenant());
+
+        return response()->noContent();
+    }
+
+    /**
+     * A legal deletion request for one person (batch 7: the only way anything is deleted). The Owner
+     * names the contact, says why (for example the customer asked to be forgotten) and types ERASE.
+     * Their chats, messages, timeline and enquiries are erased; payments are kept without their details,
+     * and an opted-out number is kept only to never message it again.
+     */
+    public function eraseContact(Request $request, ManageContacts $contacts): Response
+    {
+        $this->ownerOnly();
+        $data = $request->validate([
+            'contact_id' => ['required', 'uuid'],
+            'reason' => ['required', 'string', 'min:5', 'max:300'],
+            'confirm' => ['required', 'string'],
+        ], ['reason.required' => 'Say why this person is being erased (for example: they asked us to delete their data).']);
+        if ($data['confirm'] !== 'ERASE') {
+            throw ValidationException::withMessages(['confirm' => 'Type ERASE to confirm.']);
+        }
+        $contact = Contact::query()->findOrFail($data['contact_id']);
+        $this->audit->record('contact.erasure_requested', $contact, meta: ['reason' => $data['reason']]);
+        $contacts->delete($contact);
 
         return response()->noContent();
     }

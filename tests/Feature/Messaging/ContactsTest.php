@@ -33,20 +33,25 @@ final class ContactsTest extends TestCase
             ->assertOk()->assertJsonPath('data.consent_state', 'opted_out');
         $this->assertSame(2, $this->tenantContext()->run($tenant, fn () => ConsentEvent::query()->count()));
 
-        $this->deleteJson("/api/v1/contacts/{$id}")->assertNoContent();
+        // Nothing is deleted from the record screens: only the Owner's legal deletion request erases a contact.
+        $this->deleteJson("/api/v1/contacts/{$id}")->assertStatus(405);
+        $this->postJson('/api/v1/data/contact-erasures', ['contact_id' => $id, 'reason' => 'The customer asked us to delete their data', 'confirm' => 'ERASE'])->assertNoContent();
         $this->getJson("/api/v1/contacts/{$id}")->assertNotFound();
 
         // Re-adding a deleted number restores the same contact (history stays attached).
         $this->postJson('/api/v1/contacts', ['phone' => '+971501234567'])->assertCreated()->assertJsonPath('data.id', $id);
     }
 
-    public function test_agents_cannot_delete_contacts_and_viewers_cannot_create(): void
+    public function test_only_the_owner_can_erase_a_contact_and_viewers_cannot_create(): void
     {
         $tenant = $this->createTenant();
         $owner = $this->addMember($tenant);
         $id = $this->actingAsMember($owner)->postJson('/api/v1/contacts', ['phone' => '+971501234567'])->json('data.id');
 
-        $this->actingAsMember($this->addMember($tenant, SystemRole::Agent))->deleteJson("/api/v1/contacts/{$id}")->assertForbidden();
+        $erase = ['contact_id' => $id, 'reason' => 'The customer asked us to delete their data', 'confirm' => 'ERASE'];
+        $this->actingAsMember($this->addMember($tenant, SystemRole::Agent))->postJson('/api/v1/data/contact-erasures', $erase)->assertForbidden();
+        $this->actingAsMember($this->addMember($tenant, SystemRole::Admin))->postJson('/api/v1/data/contact-erasures', $erase)->assertForbidden();
+        $this->actingAsMember($owner)->postJson('/api/v1/data/contact-erasures', ['confirm' => 'erase'] + $erase)->assertUnprocessable();
         $this->actingAsMember($this->addMember($tenant, SystemRole::Viewer))->postJson('/api/v1/contacts', ['phone' => '+971509999999'])->assertForbidden();
     }
 

@@ -18,7 +18,6 @@ enum Permission: string
     case ContactsView = 'contacts.view';
     case ContactsCreate = 'contacts.create';
     case ContactsUpdate = 'contacts.update';
-    case ContactsDelete = 'contacts.delete';
     case ContactsImport = 'contacts.import';
     case ContactsExport = 'contacts.export';
 
@@ -101,7 +100,6 @@ enum Permission: string
             self::ContactsView => 'See contacts',
             self::ContactsCreate => 'Add contacts',
             self::ContactsUpdate => 'Edit contacts',
-            self::ContactsDelete => 'Delete contacts',
             self::ContactsImport => 'Import contacts',
             self::ContactsExport => 'Export contacts',
             self::ContactsViewPhone => 'See phone numbers',

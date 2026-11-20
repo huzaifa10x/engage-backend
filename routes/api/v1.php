@@ -140,6 +140,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::get('tenant/deletion', [DataController::class, 'deletion'])->name('tenant.deletion');
     Route::post('tenant/deletion', [DataController::class, 'requestDeletion'])->middleware('throttle:5,1')->name('tenant.deletion.request');
     Route::delete('tenant/deletion', [DataController::class, 'cancelDeletion'])->name('tenant.deletion.cancel');
+    // The legal deletion request for one person: the only way a contact (and their chats) is deleted (batch 7).
+    Route::post('data/contact-erasures', [DataController::class, 'eraseContact'])->middleware('throttle:20,1')->name('data.contact-erasures');
     Route::patch('tenant', [TenantController::class, 'update'])
         ->middleware('can:'.Permission::SettingsManage->value)->name('tenant.update');
 
@@ -568,7 +570,6 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::get('tenant/enquiry-settings', [TimelineController::class, 'settings'])->middleware('can:'.Permission::SettingsView->value)->name('tenant.enquiry-settings');
     Route::put('tenant/enquiry-settings', [TimelineController::class, 'updateSettings'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.enquiry-settings.update');
     Route::post('contacts/{contact}/consent', [ContactController::class, 'consent'])->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.consent');
-    Route::delete('contacts/{contact}', [ContactController::class, 'destroy'])->middleware('can:'.Permission::ContactsDelete->value)->name('contacts.destroy');
 
     Route::middleware('can:'.Permission::InboxView->value)->group(function () {
         Route::get('conversations', [ConversationController::class, 'index'])->name('conversations.index');

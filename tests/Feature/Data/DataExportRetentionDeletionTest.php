@@ -99,7 +99,7 @@ final class DataExportRetentionDeletionTest extends TestCase
             'placed_at' => now(), 'created_at' => now(), 'updated_at' => now(),
         ]));
 
-        $this->deleteJson("/api/v1/contacts/{$contact->id}")->assertNoContent();
+        $this->postJson('/api/v1/data/contact-erasures', ['contact_id' => $contact->id, 'reason' => 'The customer asked us to delete their data', 'confirm' => 'ERASE'])->assertNoContent();
 
         $this->inTenant(function () use ($contact): void {
             foreach (['messages', 'conversations', 'timeline_events', 'enquiries'] as $table) {
@@ -117,7 +117,7 @@ final class DataExportRetentionDeletionTest extends TestCase
         $this->says('STOP');
         $contact = $this->contact();
         $this->assertSame('opted_out', $contact->consent_state->value);
-        $this->deleteJson("/api/v1/contacts/{$contact->id}")->assertNoContent();
+        $this->postJson('/api/v1/data/contact-erasures', ['contact_id' => $contact->id, 'reason' => 'The customer asked us to delete their data', 'confirm' => 'ERASE'])->assertNoContent();
 
         $kept = $this->inTenant(fn () => Contact::withTrashed()->find($contact->id));
         $this->assertNotNull($kept?->deleted_at);

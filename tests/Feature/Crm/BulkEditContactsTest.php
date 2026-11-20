@@ -74,7 +74,7 @@ final class BulkEditContactsTest extends TestCase
     public function test_the_confirmed_count_must_still_match_and_edits_are_validated_before_anything_changes(): void
     {
         // A contact deleted after the teammate confirmed: nothing changes, they confirm again.
-        $this->deleteJson("/api/v1/contacts/{$this->ids[2]}")->assertNoContent();
+        $this->postJson('/api/v1/data/contact-erasures', ['contact_id' => $this->ids[2], 'reason' => 'The customer asked us to delete their data', 'confirm' => 'ERASE'])->assertNoContent();
         $this->edit(['tags_add' => ['VIP']], confirm: 3)->assertStatus(422);
         $this->assertSame(['Lead'], $this->contacts()->first()->tags);
 
