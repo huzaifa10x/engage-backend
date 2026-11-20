@@ -79,6 +79,7 @@ final class ConversationTracker
             app(Scheduler::class)->cancelForConversation((string) $conversation->id, 'customer_replied');
             if ($conversation->status === ConversationStatus::Closed && ! $rating) {
                 $updates += ['status' => ConversationStatus::Open, 'closed_at' => null];
+                Resolutions::reopened($conversation, 'customer');
             }
         }
 

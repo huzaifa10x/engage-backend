@@ -201,8 +201,10 @@ final class ReplyState
      *
      * @return array<string, mixed>
      */
-    public static function closed(Conversation $conversation, ?string $membershipId = null): array
+    public static function closed(Conversation $conversation, ?string $membershipId = null, string $reason = 'resolved'): array
     {
+        // Each closure is kept with who, when and why (the Resolved tab, 3.5).
+        Resolutions::closed($conversation, $membershipId, $reason);
         $opened = $conversation->getAttribute('opened_at');
         if ($opened !== null) {
             self::record($conversation, 'resolution', Carbon::parse($opened), now(), $membershipId);

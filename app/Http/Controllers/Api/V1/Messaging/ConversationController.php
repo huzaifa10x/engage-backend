@@ -19,6 +19,7 @@ use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\InboxCounts;
 use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Messaging\Services\ReplyState;
+use App\Domain\Messaging\Services\Resolutions;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
@@ -136,6 +137,10 @@ final class ConversationController extends Controller
         $this->authorizeThread($conversation);
         $data = $request->validate([
             'status' => ['sometimes', Rule::enum(ConversationStatus::class)],
+            // Why it was resolved (3.5): Resolved, Not a lead / spam, No action needed.
+            'reason' => ['sometimes', Rule::in(array_keys(Resolutions::REASONS))],
+            // Undo straight after resolving: the closure is removed and the chat is as it was.
+            'undo' => ['sometimes', 'boolean'],
             'assigned_membership_id' => ['sometimes', 'nullable', 'uuid'],
             'assigned_team_id' => ['sometimes', 'nullable', 'uuid'],
             // false = no automatic replies in this conversation (a person is handling it).
@@ -177,8 +182,13 @@ final class ConversationController extends Controller
             $conversation->closed_at = $data['status'] === ConversationStatus::Closed->value ? now() : null;
             // Resolved by an agent: the wait ends and the resolution time is recorded.
             if ($closing) {
-                $conversation->forceFill(ReplyState::closed($conversation, $this->membership()->id));
+                $conversation->forceFill(ReplyState::closed($conversation, $this->membership()->id, $data['reason'] ?? 'resolved'));
+            } elseif ($reopening && ($data['undo'] ?? false) && Resolutions::undo($conversation, $this->membership()->id)) {
+                // Undone: who it waits on is worked out again from the messages, as if it was never closed.
+                $conversation->forceFill(['reply_state' => null, 'needs_reply_since' => null]);
+                $conversation->forceFill(ReplyState::recalculate($conversation));
             } elseif ($reopening) {
+                Resolutions::reopened($conversation, 'agent', $this->membership()->id);
                 $conversation->forceFill(ReplyState::reopened());
             }
         }

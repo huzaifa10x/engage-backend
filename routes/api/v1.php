@@ -44,6 +44,7 @@ use App\Http\Controllers\Api\V1\Messaging\InboxToolsController;
 use App\Http\Controllers\Api\V1\Messaging\MediaController;
 use App\Http\Controllers\Api\V1\Messaging\MessageController;
 use App\Http\Controllers\Api\V1\Messaging\ReplyPromiseController;
+use App\Http\Controllers\Api\V1\Messaging\ResolutionController;
 use App\Http\Controllers\Api\V1\PublicSiteController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
@@ -260,6 +261,9 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::put('tenant/feedback', [FeedbackController::class, 'update'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.feedback.update');
     Route::get('analytics/feedback', [FeedbackController::class, 'report'])->middleware('can:'.Permission::AnalyticsView->value)->name('analytics.feedback');
     // The reply promise and the weekly missed-leads report (3.3, A3).
+    // Flag for review and the weekly resolution review: people who manage the inbox (3.5).
+    Route::post('resolutions/{resolution}/flag', [ResolutionController::class, 'flag'])->whereUuid('resolution')->middleware('can:'.Permission::InboxAssign->value)->name('resolutions.flag');
+    Route::get('resolutions/review', [ResolutionController::class, 'review'])->middleware('can:'.Permission::InboxAssign->value)->name('resolutions.review');
     Route::get('tenant/reply-promise', [ReplyPromiseController::class, 'show'])->middleware('can:'.Permission::InboxView->value)->name('tenant.reply-promise');
     Route::put('tenant/reply-promise', [ReplyPromiseController::class, 'update'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.reply-promise.update');
     Route::get('conversations/{conversation}/wait-alerts', [ReplyPromiseController::class, 'alerts'])->middleware('can:'.Permission::InboxView->value)->name('conversations.wait-alerts');
@@ -574,6 +578,8 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::get('conversations/{conversation}/assignees', [ConversationController::class, 'assignees'])->name('conversations.assignees');
         Route::post('conversations/{conversation}/read', [ConversationController::class, 'read'])->name('conversations.read');
         Route::get('conversations/{conversation}/messages', [MessageController::class, 'index'])->name('conversations.messages.index');
+        // The Resolved tab: one row per closure (3.5).
+        Route::get('resolutions', [ResolutionController::class, 'index'])->name('resolutions.index');
         Route::get('media/{media}', [MediaController::class, 'show'])->name('media.show');
     });
 

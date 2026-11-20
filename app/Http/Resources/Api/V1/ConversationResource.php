@@ -9,10 +9,12 @@ use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Chatbots\Services\Chatbots;
+use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Messaging\Services\ReplyPromise;
 use App\Domain\Messaging\Services\ReplyState;
+use App\Domain\Messaging\Services\Resolutions;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -52,6 +54,8 @@ final class ConversationResource extends JsonResource
             'ad_lead' => (bool) $this->getAttribute('ad_lead'),
             // The reply promise (3.3, A3): business time waited and left on the limit, paused outside hours.
             'promise' => ReplyPromise::clock(app(TenantContext::class)->tenantOrNull(), $this->resource),
+            // Closed: who resolved it, when and why (3.5).
+            'resolution' => $this->status === ConversationStatus::Closed ? (($r = Resolutions::current((string) $this->id)) !== null ? Resolutions::present($r, self::memberNames($request)) : null) : null,
             'unread_count' => $this->unread_count,
             'last_message_at' => $this->last_message_at?->toIso8601String(),
             'last_message_preview' => $this->getAttribute('last_message_preview'),
