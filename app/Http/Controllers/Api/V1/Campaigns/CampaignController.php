@@ -84,7 +84,8 @@ final class CampaignController extends Controller
             'phone_number_id' => ['nullable', 'uuid'],
             'opted_in_only' => ['nullable', 'boolean'],
         ]);
-        $optedInOnly = (bool) ($data['opted_in_only'] ?? false);
+        // Soft consent (Batch 7): the counts show everyone not opted out; unknown contacts need the tick at launch.
+        $optedInOnly = false;
         $filter = app(SegmentQuery::class)->filter($data['filter'] ?? null);
         $segment = isset($data['segment_id']) ? Segment::query()->findOrFail($data['segment_id']) : null;
         $template = isset($data['template_id']) ? MessageTemplate::query()->find($data['template_id']) : null;

@@ -173,7 +173,7 @@ final class ConsentCaptureTest extends TestCase
 
         $id = $this->campaign($template);
         $this->postJson("/api/v1/campaigns/{$id}/launch")->assertUnprocessable()
-            ->assertJsonPath('error.details.fields.consent_confirmed.0', '30 contacts have no consent record. Confirm these contacts agreed to receive messages from your business, or send only to opted-in contacts.');
+            ->assertJsonPath('error.details.fields.consent_confirmed.0', '30 contacts have no consent record. Confirm these contacts agreed to receive messages from your business.');
         $this->postJson("/api/v1/campaigns/{$id}/launch", ['consent_confirmed' => true])->assertOk();
 
         $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.stats.sent', 90)->assertJsonPath('data.stats.skipped', 10)
@@ -187,15 +187,16 @@ final class ConsentCaptureTest extends TestCase
         $this->assertNotNull($log->getAttribute('actor_id'));
     }
 
-    public function test_send_only_to_opted_in_contacts_sends_to_60_without_a_confirmation(): void
+    public function test_there_is_no_opted_in_only_switch_unknown_contacts_still_need_the_tick(): void
     {
         $template = $this->hundred();
         $this->getJson("/api/v1/campaigns/audience?audience_tag=Sale&template_id={$template}&phone_number_id={$this->number->id}&opted_in_only=1")
-            ->assertJsonPath('data.eligible', 60)->assertJsonPath('data.excluded.no_consent_record', 30);
+            ->assertJsonPath('data.eligible', 90)->assertJsonPath('data.consent.unknown', 30);
         $id = $this->campaign($template, true);
-        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertOk();
-        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.stats.sent', 60)->assertJsonPath('data.opted_in_only', true)
-            ->assertJsonPath('data.consent_confirmation', null);
+        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.opted_in_only', false);
+        $this->postJson("/api/v1/campaigns/{$id}/launch")->assertUnprocessable()->assertJsonValidationErrors('consent_confirmed', 'error.details.fields');
+        $this->postJson("/api/v1/campaigns/{$id}/launch", ['consent_confirmed' => true])->assertOk();
+        $this->getJson("/api/v1/campaigns/{$id}")->assertJsonPath('data.stats.sent', 90);
     }
 
     public function test_utility_templates_ignore_marketing_consent(): void

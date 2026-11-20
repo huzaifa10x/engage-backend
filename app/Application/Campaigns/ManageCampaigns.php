@@ -94,7 +94,8 @@ final class ManageCampaigns
             'audience_filter' => $this->segments->filter($data['filter'] ?? null),
             'notes' => isset($data['notes']) && trim((string) $data['notes']) !== '' ? trim((string) $data['notes']) : null,
             'objective' => $data['objective'] ?? null,
-            'opted_in_only' => (bool) ($data['opted_in_only'] ?? false),
+            // Soft consent (Batch 7): unknown contacts are sent to after the tick, so there is no opted-in-only switch.
+            'opted_in_only' => false,
             'ab_test' => $abTest,
         ])->save();
 
@@ -252,7 +253,7 @@ final class ManageCampaigns
         $unknown = $counts['consent'] !== null ? $counts['consent']['unknown'] : 0;
         $needsConfirmation = strtoupper((string) $campaign->template_category) === 'MARKETING' && ! $campaign->opted_in_only && $unknown > 0;
         if ($needsConfirmation && ! $consentConfirmed) {
-            throw ValidationException::withMessages(['consent_confirmed' => "{$unknown} contacts have no consent record. Confirm these contacts agreed to receive messages from your business, or send only to opted-in contacts."]);
+            throw ValidationException::withMessages(['consent_confirmed' => "{$unknown} contacts have no consent record. Confirm these contacts agreed to receive messages from your business."]);
         }
 
         $scheduled = $at !== null && $at->isFuture();
