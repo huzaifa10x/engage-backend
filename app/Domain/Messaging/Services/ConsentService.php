@@ -6,6 +6,7 @@ namespace App\Domain\Messaging\Services;
 
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Compliance\ComplianceSettings;
+use App\Domain\Crm\Services\ContactRecord;
 use App\Domain\Messaging\Enums\ConsentState;
 use App\Domain\Messaging\Models\ConsentEvent;
 use App\Domain\Messaging\Models\Contact;
@@ -154,6 +155,7 @@ final class ConsentService
 
         $contact->forceFill(['consent_state' => ConsentState::OptedOut, 'opted_out_at' => now(), 'consent_requested_at' => null])->save();
         $this->record($contact, 'opted_out', $source, $detail, $messageId, $membershipId, $wording);
+        app(ContactRecord::class)->refresh($contact);
 
         return true;
     }
@@ -167,6 +169,7 @@ final class ConsentService
 
         $contact->forceFill(['consent_state' => ConsentState::OptedIn, 'opted_in_at' => now(), 'opted_out_at' => null, 'consent_requested_at' => null])->save();
         $this->record($contact, 'opted_in', $source, $detail, $messageId, $membershipId, $wording);
+        app(ContactRecord::class)->refresh($contact);
 
         return true;
     }

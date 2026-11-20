@@ -20,6 +20,8 @@ Schedule::command('engage:workspace-deletions')->hourly()->onOneServer()->withou
 Schedule::command('engage:inbox:wake-snoozed')->everyMinute()->onOneServer()->withoutOverlapping();
 // Safety net behind the follow-up rules: every waiting chat has the alerts of its current wait.
 Schedule::command('engage:followups:sweep')->everyFiveMinutes()->onOneServer()->withoutOverlapping();
+// Monday morning (Dubai): last week's missed-leads report to each workspace's Owners (3.3, A3).
+Schedule::command('engage:reports:missed-leads')->weeklyOn(1, '04:37')->onOneServer()->withoutOverlapping();
 Schedule::command('engage:campaigns:dispatch')->everyMinute()->onOneServer()->withoutOverlapping();
 // Safety net behind the template webhooks (statuses, edits and deletions made on Meta).
 Schedule::command('engage:templates:sync')->everyFiveMinutes()->onOneServer()->withoutOverlapping();

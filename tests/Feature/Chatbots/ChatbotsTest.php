@@ -413,7 +413,7 @@ final class ChatbotsTest extends TestCase
         $conversation = $this->conversation();
         $this->actingAsMember($this->owner);
         $this->postJson("/api/v1/conversations/{$conversation->id}/bot/take-over")->assertOk();
-        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['state' => 'opted_out', 'notify' => false])->assertOk();
+        $this->postJson("/api/v1/contacts/{$conversation->contact_id}/consent", ['method' => 'phone_call', 'state' => 'opted_out', 'notify' => false])->assertOk();
         $count = count($this->sent);
 
         // Nothing is sent on hand-back: they have not written since opting out.

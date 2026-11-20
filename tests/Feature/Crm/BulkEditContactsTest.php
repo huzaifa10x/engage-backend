@@ -107,7 +107,7 @@ final class BulkEditContactsTest extends TestCase
 
     public function test_a_bulk_opt_in_needs_its_source_and_never_resubscribes_someone_who_opted_out(): void
     {
-        $this->postJson("/api/v1/contacts/{$this->ids[0]}/consent", ['state' => 'opted_out', 'notify' => false])->assertOk();
+        $this->postJson("/api/v1/contacts/{$this->ids[0]}/consent", ['method' => 'phone_call', 'state' => 'opted_out', 'notify' => false])->assertOk();
 
         $this->edit(['consent' => ['state' => 'opted_in']])->assertStatus(422);
         $this->edit(['consent' => ['state' => 'opted_in', 'note' => 'Signed the paper form at the open day']])

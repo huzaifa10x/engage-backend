@@ -13,6 +13,7 @@ use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\MediaStorage;
 use App\Domain\Messaging\Services\MessagingLimits;
 use App\Domain\Messaging\Services\PayloadBuilder;
+use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Messaging\Services\SendThroughput;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Exceptions\WhatsappException;
@@ -185,6 +186,8 @@ final class SendWhatsappMessage implements ShouldQueue
         }
 
         $message->forceFill(['wamid' => $result['wamid'], 'status' => MessageStatus::Accepted, 'send_route' => $route, 'accepted_at' => now()])->save();
+        // A person's reply counts once WhatsApp accepted it: the chat stops waiting on the team.
+        ReplyState::accepted($message);
 
         // Learn identifiers Meta returns (phone for a BSUID send, or vice versa).
         $contact = $message->contact;
@@ -242,6 +245,8 @@ final class SendWhatsappMessage implements ShouldQueue
 
         // It never reached Meta: it does not count against the daily messaging limit.
         app(MessagingLimits::class)->release($message);
+        // A person's reply that failed never counts: who the chat waits on is worked out again.
+        ReplyState::failed($message);
 
         MessageStored::dispatch($message, false);
     }

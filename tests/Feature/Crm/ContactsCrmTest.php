@@ -109,7 +109,7 @@ final class ContactsCrmTest extends TestCase
         $this->postJson('/api/v1/contact-fields', ['label' => 'City'])->assertCreated();
         $existing = $this->contact('+971501110001', ['name' => 'Sara Ahmed', 'tags' => ['Member']]);
         $optedOut = $this->contact('+971501110002', ['name' => 'Omar']);
-        $this->postJson("/api/v1/contacts/{$optedOut}/consent", ['state' => 'opted_out'])->assertOk();
+        $this->postJson("/api/v1/contacts/{$optedOut}/consent", ['method' => 'phone_call', 'state' => 'opted_out'])->assertOk();
 
         $csv = "Phone,Name,Email,Tags,City,opted_in\n"
             ."+971 50 111 0001,,sara@example.com,VIP;Member,Dubai,yes\n"   // existing: enriched, name kept

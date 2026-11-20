@@ -60,6 +60,7 @@ class Contact extends Model
     protected $fillable = [
         'tenant_id', 'wa_id', 'bsuid', 'parent_bsuid', 'username', 'profile_name', 'name', 'email', 'custom_fields', 'tags', 'source',
         'consent_state', 'opted_in_at', 'opted_out_at', 'consent_requested_at', 'marketing_opted_out', 'last_inbound_at', 'synced_from_phone_number_id',
+        'company', 'job_title', 'city', 'country', 'language', 'lead_status', 'owner_membership_id', 'contact_permission',
     ];
 
     /**
@@ -86,6 +87,7 @@ class Contact extends Model
     {
         return [
             'custom_fields' => 'array',
+            'contact_permission' => 'array',
             'tags' => PgTextArray::class,
             'consent_state' => ConsentState::class,
             'opted_in_at' => 'datetime',

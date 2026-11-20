@@ -9,12 +9,18 @@ use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Chatbots\Services\Chatbots;
+use App\Domain\Crm\Models\NextStep;
+use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\InboxTools;
+use App\Domain\Messaging\Services\ReplyPromise;
 use App\Domain\Messaging\Services\ReplyState;
+use App\Domain\Messaging\Services\Resolutions;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /** @mixin Conversation */
 final class ConversationResource extends JsonResource
@@ -29,6 +35,8 @@ final class ConversationResource extends JsonResource
             'snoozed_until' => ($until = $this->getAttribute('snoozed_until')) !== null && $until->isFuture() ? $until->toIso8601String() : null,
             'auto_reply_enabled' => (bool) ($this->getAttribute('auto_reply_enabled') ?? true),
             'assigned_membership_id' => $this->assigned_membership_id,
+            // The assignee's name for the wait clock ("Waiting 0:42 · Ahmed").
+            'assigned_name' => $this->assigned_membership_id !== null ? (self::memberNames($request)[$this->assigned_membership_id] ?? null) : null,
             'assigned_team_id' => $this->assigned_team_id,
             // Who answers now: "bot" (a chatbot session is running), "human", or null (nobody yet).
             'handler' => $this->getAttribute('handler'),
@@ -46,6 +54,14 @@ final class ConversationResource extends JsonResource
             'needs_reply_since' => $this->getAttribute('reply_state') === ReplyState::NEEDS_REPLY ? $this->getAttribute('needs_reply_since')?->toIso8601String() : null,
             'after_hours' => (bool) $this->getAttribute('after_hours'),
             'ad_lead' => (bool) $this->getAttribute('ad_lead'),
+            // The reply promise (3.3, A3): business time waited and left on the limit, paused outside hours.
+            'promise' => ReplyPromise::clock(app(TenantContext::class)->tenantOrNull(), $this->resource),
+            // Closed: who resolved it, when and why (3.5).
+            'resolution' => $this->status === ConversationStatus::Closed ? (($r = Resolutions::current((string) $this->id)) !== null ? Resolutions::present($r, self::memberNames($request)) : null) : null,
+            // Who wrote the last message, for the card's "You:", "Auto:", "Sara:" prefix (3.5).
+            'last_message_by' => $this->lastSender($request),
+            // The contact's earliest open next step and how many are overdue (the card's follow-up chip).
+            'next_step' => $this->nextStep($request),
             'unread_count' => $this->unread_count,
             'last_message_at' => $this->last_message_at?->toIso8601String(),
             'last_message_preview' => $this->getAttribute('last_message_preview'),
@@ -69,6 +85,58 @@ final class ConversationResource extends JsonResource
             ]),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
+    }
+
+    /** @return array<string, string> membership id → name, loaded once per request */
+    /** @return array{kind: string, name: ?string}|null */
+    private function lastSender(Request $request): ?array
+    {
+        $raw = $this->getAttribute('last_sender');
+        if (! is_string($raw) || $raw === '') {
+            return null;
+        }
+        [$origin, $member] = array_pad(explode(':', $raw, 2), 2, '');
+        $me = app(TenantContext::class)->membership()?->id;
+
+        return match ($origin) {
+            'customer', 'history' => ['kind' => 'customer', 'name' => null],
+            'agent' => $member !== '' && $member === $me ? ['kind' => 'you', 'name' => 'You'] : ['kind' => 'agent', 'name' => $member !== '' ? strtok(self::memberNames($request)[$member] ?? 'Teammate', ' ') : 'Teammate'],
+            'app_echo' => ['kind' => 'agent', 'name' => 'App'],
+            default => ['kind' => 'auto', 'name' => 'Auto'],
+        };
+    }
+
+    /** @return array<string, mixed>|null */
+    private function nextStep(Request $request): ?array
+    {
+        $all = $request->attributes->get('inbox.steps');
+        if (! is_array($all)) {
+            $rows = DB::table('next_steps')->where('contact_id', $this->contact_id)->whereNull('done_at')->whereNull('cancelled_at')->orderBy('due_at')
+                ->get(['id', 'contact_id', 'enquiry_id', 'type', 'title', 'due_at', 'assigned_membership_id']);
+            $mine = $rows->isEmpty() ? null : ['first' => $rows->first(), 'open' => $rows->count(), 'overdue' => $rows->filter(fn ($r) => Carbon::parse($r->due_at)->isPast())->count()];
+        } else {
+            $mine = $all[$this->contact_id] ?? null;
+        }
+        if ($mine === null) {
+            return null;
+        }
+        $f = $mine['first'];
+
+        return [
+            'id' => $f->id, 'type' => $f->type, 'type_label' => NextStep::TYPES[$f->type] ?? 'Other', 'title' => $f->title,
+            'due_at' => Carbon::parse($f->due_at)->toIso8601String(), 'enquiry_id' => $f->enquiry_id,
+            'open' => $mine['open'], 'overdue' => $mine['overdue'],
+        ];
+    }
+
+    private static function memberNames(Request $request): array
+    {
+        if (! $request->attributes->has('inbox.member_names')) {
+            $request->attributes->set('inbox.member_names', DB::table('tenant_memberships')->join('users', 'users.id', '=', 'tenant_memberships.user_id')
+                ->pluck('users.name', 'tenant_memberships.id')->all());
+        }
+
+        return (array) $request->attributes->get('inbox.member_names');
     }
 
     private static function warningMinutes(Request $request): int

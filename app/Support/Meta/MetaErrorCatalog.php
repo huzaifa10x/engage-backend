@@ -55,6 +55,9 @@ final class MetaErrorCatalog
         131053 => 'The attachment could not be uploaded to WhatsApp. Use a supported file type within the size limit (images 5 MB, video and audio 16 MB, documents 100 MB).',
         131056 => 'Too many messages were sent to this recipient in a short time. Wait a moment and try again.',
         131057 => 'The WhatsApp Business Account is in maintenance mode. Try again later.',
+        // Not on Meta's public error page yet: wording to confirm against the first real occurrence.
+        131062 => 'This customer can only be reached by their WhatsApp username for now. The message will go out once Meta shares their number or user ID.',
+        131070 => 'Another app is handling this conversation (for example the WhatsApp Business app or another tool). Reply from there, or wait until it hands the chat back.',
         132000 => 'The number of variables does not match the template. Fill in exactly the variables the template defines.',
         132001 => 'This template does not exist in the selected language or is not approved yet. Sync templates and pick an approved one.',
         132005 => 'The filled-in template text is too long. Shorten the variable values.',
@@ -72,6 +75,49 @@ final class MetaErrorCatalog
         2388023 => 'A template with this name is being deleted. Wait up to 4 weeks or use a different name.',
         2388024 => 'A template with this name and language already exists. Use a different name or language.',
     ];
+
+    /** Temporary errors: sending the same message again can work, so the inbox offers Retry for these only. */
+    public const TEMPORARY = [1, 2, 4, 17, 32, 613, 80007, 130429, 131000, 131016, 131048, 131056, 131057, 133004];
+
+    /** A short plain reason for the inbox, for the errors teammates meet most. */
+    private const PLAIN = [
+        130429 => 'Too many messages were sent from this number at once.',
+        131000 => 'WhatsApp had a temporary problem.',
+        131016 => 'WhatsApp is temporarily unavailable.',
+        131026 => 'WhatsApp could not deliver this message to this customer.',
+        131047 => 'More than 24 hours have passed since the customer last wrote, so only a template can be sent.',
+        131048 => 'Meta is slowing this number down because of spam signals.',
+        131049 => 'Meta’s limit on marketing messages for this person was reached.',
+        131050 => 'The customer stopped marketing messages from you.',
+        131056 => 'Too many messages were sent to this customer in a short time.',
+        131062 => 'This customer can only be reached by their WhatsApp username for now.',
+        131070 => 'Another app is handling this conversation.',
+    ];
+
+    public static function temporary(int|string|null $code): bool
+    {
+        return is_numeric($code) && in_array((int) $code, self::TEMPORARY, true);
+    }
+
+    public static function known(int|string|null $code): bool
+    {
+        return is_numeric($code) && (isset(self::HINTS[(int) $code]) || isset(self::PLAIN[(int) $code]));
+    }
+
+    public static function plain(int|string|null $code): ?string
+    {
+        return is_numeric($code) ? (self::PLAIN[(int) $code] ?? null) : null;
+    }
+
+    /** What the inbox offers: retry (temporary), template (131047), or none. */
+    public static function action(int|string|null $code): ?string
+    {
+        return match (true) {
+            (string) $code === '131047' => 'template',
+            self::temporary($code) => 'retry',
+            default => null,
+        };
+    }
 
     public static function hint(int|string|null $code, int|string|null $subcode = null): ?string
     {

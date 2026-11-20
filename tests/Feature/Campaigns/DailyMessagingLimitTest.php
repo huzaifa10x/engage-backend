@@ -85,7 +85,7 @@ final class DailyMessagingLimitTest extends TestCase
 
     private function template(string $phone): TestResponse
     {
-        return $this->postJson('/api/v1/messages', [
+        return $this->postJson('/api/v1/messages', ['permission' => ['via' => 'form'],
             'phone_number_id' => $this->number->id, 'to' => $phone, 'type' => 'template', 'template' => ['name' => 'class_reminder', 'language' => 'en'],
         ]);
     }

@@ -117,7 +117,7 @@ final class InboxEngagementTest extends TestCase
         $this->assertFalse($this->getJson("/api/v1/conversations/{$c->id}")->json('data.after_hours'));
     }
 
-    public function test_needs_reply_lists_ad_leads_first_then_the_longest_waiting(): void
+    public function test_needs_reply_lists_the_least_time_left_on_the_reply_promise_first(): void
     {
         $this->customer('First', '971500000001');
         $this->travel(5)->minutes();
@@ -126,7 +126,7 @@ final class InboxEngagementTest extends TestCase
         $this->customer('Third', '971500000003');
 
         $phones = array_map(fn ($c) => $c['contact']['wa_id'] ?? null, $this->getJson('/api/v1/conversations?state=needs_reply')->json('data'));
-        $this->assertSame(['971500000002', '971500000001', '971500000003'], $phones);
+        $this->assertSame(['971500000001', '971500000002', '971500000003'], $phones, 'same limit: the longest waiting has the least time left');
     }
 
     public function test_closing_records_the_resolution_and_a_new_message_reopens_it_as_needs_reply(): void

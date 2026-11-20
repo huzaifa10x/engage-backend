@@ -29,7 +29,7 @@ final class ContactsTest extends TestCase
 
         $this->patchJson("/api/v1/contacts/{$id}", ['email' => 'omar@example.com'])->assertOk()->assertJsonPath('data.email', 'omar@example.com');
 
-        $this->postJson("/api/v1/contacts/{$id}/consent", ['state' => 'opted_out', 'note' => 'Asked by phone'])
+        $this->postJson("/api/v1/contacts/{$id}/consent", ['method' => 'phone_call', 'state' => 'opted_out', 'note' => 'Asked by phone'])
             ->assertOk()->assertJsonPath('data.consent_state', 'opted_out');
         $this->assertSame(2, $this->tenantContext()->run($tenant, fn () => ConsentEvent::query()->count()));
 

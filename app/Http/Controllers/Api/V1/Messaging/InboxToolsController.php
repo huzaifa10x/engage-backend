@@ -20,6 +20,7 @@ use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\Timeline\Timeline;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\ConversationResource;
@@ -133,6 +134,7 @@ final class InboxToolsController extends Controller
         $scheduler->cancelForConversation($conversation->id, 'resnoozed', 'snooze_return');
         $scheduler->schedule('snooze_return', $until, "snooze:{$conversation->id}:{$until->getTimestamp()}", $conversation, payload: ['until' => $until->toIso8601String(), 'cancel_on_reply' => true]);
         $this->audit->record('conversation.snoozed', $conversation, after: ['until' => $data['until']]);
+        Timeline::record((string) $conversation->contact_id, 'conversation.snoozed', null, 'conversation', $conversation->id, ['until' => $until->toIso8601String()]);
 
         return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }
@@ -142,6 +144,7 @@ final class InboxToolsController extends Controller
         $this->authorizeThread($conversation);
         $conversation->forceFill(['snoozed_until' => null])->save();
         app(Scheduler::class)->cancelForConversation($conversation->id, 'unsnoozed', 'snooze_return');
+        Timeline::record((string) $conversation->contact_id, 'conversation.unsnoozed', null, 'conversation', $conversation->id);
 
         return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }

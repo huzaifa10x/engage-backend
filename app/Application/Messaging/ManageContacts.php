@@ -6,11 +6,13 @@ namespace App\Application\Messaging;
 
 use App\Application\Crm\TagCatalog;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Crm\Services\ContactRecord;
 use App\Domain\Crm\Services\CustomFields;
 use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\ConsentService;
+use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Validation\ValidationException;
 
@@ -26,11 +28,18 @@ final class ManageContacts
     /** @param array{phone: string, name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, tags?: ?array<int, string>, opted_in?: bool} $data */
     public function create(array $data): Contact
     {
-        $waId = Contact::checkedPhone($data['phone']);
+        $waId = ($data['phone'] ?? null) !== null && trim((string) $data['phone']) !== '' ? Contact::checkedPhone($data['phone']) : null;
 
-        $existing = Contact::query()->withTrashed()->where('wa_id', $waId)->first();
+        $existing = $waId !== null ? Contact::query()->withTrashed()->where('wa_id', $waId)->first() : null;
         if ($existing !== null && ! $existing->trashed()) {
-            throw ValidationException::withMessages(['phone' => 'A contact with this number already exists.']);
+            throw ValidationException::withMessages(['phone' => 'Already in Engage as '.$existing->displayName().'.']);
+        }
+        $email = isset($data['email']) ? mb_strtolower(trim((string) $data['email'])) : '';
+        if ($email !== '' && ($same = Contact::query()->whereRaw('lower(email) = ?', [$email])->first()) !== null) {
+            throw ValidationException::withMessages(['email' => 'Already in Engage as '.$same->displayName().'.']);
+        }
+        if (($data['owner_membership_id'] ?? null) !== null && ! TenantMembership::query()->active()->whereKey($data['owner_membership_id'])->exists()) {
+            throw ValidationException::withMessages(['owner_membership_id' => 'Pick someone on the team.']);
         }
 
         // Required custom fields apply to new contacts too, even when no attributes were sent.
@@ -42,7 +51,8 @@ final class ManageContacts
             $existing->fill($this->attributes($data))->save();
             $contact = $existing;
         } else {
-            $contact = Contact::query()->create(['wa_id' => $waId, 'source' => 'manual'] + $this->attributes($data));
+            $contact = Contact::query()->create(['wa_id' => $waId, 'source' => 'manual'] + $this->attributes($data)
+                + array_filter(['source_detail' => $data['source_detail'] ?? null, 'owner_membership_id' => $data['owner_membership_id'] ?? null]));
         }
 
         if (($data['opted_in'] ?? false) === true) {
@@ -50,6 +60,7 @@ final class ManageContacts
         }
 
         $this->audit->record('contact.created', $contact);
+        app(ContactRecord::class)->refresh($contact);
 
         return $contact;
     }
@@ -62,7 +73,12 @@ final class ManageContacts
     public function update(Contact $contact, array $data, bool $partial = false): Contact
     {
         $before = $contact->only(['name', 'email']);
-        $contact->fill($this->attributes($data, ! $partial))->save();
+        $attributes = $this->attributes($data, ! $partial);
+        // Record fields are written through ContactRecord, which keeps who changed what (3.5).
+        $record = array_intersect_key($attributes + $data, ContactRecord::EDITABLE);
+        $contact->fill(array_diff_key($attributes, $record));
+        app(ContactRecord::class)->change($contact, $record, $partial ? 'system' : 'user');
+        $contact->save();
         $this->audit->record('contact.updated', $contact, before: $before, after: $contact->only(['name', 'email']));
         app(WebhookDispatcher::class)->emit($contact->tenant_id, 'contact.updated', PublicPayload::contact($contact));
 
@@ -85,7 +101,7 @@ final class ManageContacts
      */
     private function attributes(array $data, bool $checkRequired = true): array
     {
-        $out = array_intersect_key($data, array_flip(['name', 'email']));
+        $out = array_intersect_key($data, array_flip(['name', 'email', 'company', 'job_title', 'city', 'country', 'language']));
         if (array_key_exists('attributes', $data)) {
             // Values of the workspace's custom fields are checked against their type and rules.
             $out['custom_fields'] = app(CustomFields::class)->values((array) ($data['attributes'] ?? []), $checkRequired) ?: null;

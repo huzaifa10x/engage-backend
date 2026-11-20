@@ -13,6 +13,7 @@ use App\Domain\Chatbots\Services\DataTriggers;
 use App\Domain\Conversions\Models\MetaDataset;
 use App\Domain\Conversions\Services\ConversionTriggers;
 use App\Domain\Crm\Models\CrmStage;
+use App\Domain\Crm\Models\NextStep;
 use App\Domain\Data\Models\DataExport;
 use App\Domain\Developer\Services\EmitMessageWebhooks;
 use App\Domain\Forms\Form;
@@ -112,6 +113,7 @@ class AppServiceProvider extends ServiceProvider
             'enquiry' => Enquiry::class,
             'data_export' => DataExport::class,
             'crm_stage' => CrmStage::class,
+            'next_step' => NextStep::class,
             'conversation' => Conversation::class,
             'message' => Message::class,
             'message_template' => MessageTemplate::class,

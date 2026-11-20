@@ -258,7 +258,7 @@ final class TemplatesTest extends TestCase
         Http::fake([self::SEND => fn () => Http::response(['messaging_product' => 'whatsapp', 'contacts' => [['input' => '971501234567', 'wa_id' => '971501234567']], 'messages' => [['id' => 'wamid.TPL'.bin2hex(random_bytes(4))]]])]);
 
         // Outside any window: a new contact by phone number, approved template with variables.
-        $this->postJson('/api/v1/messages', [
+        $this->postJson('/api/v1/messages', ['permission' => ['via' => 'form'],
             'phone_number_id' => $this->number->id, 'to' => '+971 50 123 4567', 'type' => 'template',
             'template' => ['name' => 'order_ready', 'language' => 'en_US', 'variables' => ['body' => ['Sara', '#1042']]],
         ])->assertStatus(202)->assertJsonPath('data.body', 'Hi Sara, your order #1042 is ready.')->assertJsonPath('data.template.rendered.footer', 'Nova Fitness');
@@ -269,7 +269,7 @@ final class TemplatesTest extends TestCase
             && array_column($r['template']['components'][0]['parameters'], 'text') === ['Sara', '#1042']);
 
         // The same contact is reused, not recreated.
-        $this->postJson('/api/v1/messages', [
+        $this->postJson('/api/v1/messages', ['permission' => ['via' => 'form'],
             'phone_number_id' => $this->number->id, 'to' => '00971501234567', 'type' => 'template',
             'template' => ['name' => 'order_ready', 'language' => 'en_US', 'variables' => ['body' => ['Sara', '#1043']]],
         ])->assertStatus(202);
@@ -282,7 +282,7 @@ final class TemplatesTest extends TestCase
             ['name' => 'promo_june', 'language' => 'en_US'],
             ['name' => 'does_not_exist', 'language' => 'en_US'],
         ] as $template) {
-            $this->postJson('/api/v1/messages', ['phone_number_id' => $this->number->id, 'to' => '+971501234567', 'type' => 'template', 'template' => $template])
+            $this->postJson('/api/v1/messages', ['permission' => ['via' => 'form'], 'phone_number_id' => $this->number->id, 'to' => '+971501234567', 'type' => 'template', 'template' => $template])
                 ->assertStatus(422)->assertJsonPath('error.code', 'template_unavailable');
         }
 

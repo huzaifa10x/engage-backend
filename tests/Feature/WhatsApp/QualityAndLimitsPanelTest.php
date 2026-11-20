@@ -103,7 +103,7 @@ final class QualityAndLimitsPanelTest extends TestCase
     public function test_the_panel_shows_rating_limit_used_and_campaign_pace(): void
     {
         $this->tenantContext()->run($this->tenant, fn () => WabaAccount::query()->update(['meta_business_id' => '5550001']));
-        $this->postJson('/api/v1/messages', ['phone_number_id' => $this->number->id, 'to' => '+971502220001', 'type' => 'template',
+        $this->postJson('/api/v1/messages', ['permission' => ['via' => 'form'], 'phone_number_id' => $this->number->id, 'to' => '+971502220001', 'type' => 'template',
             'template' => ['name' => 'big_sale', 'language' => 'en']])->assertStatus(202);
 
         $panel = $this->panel();
@@ -221,7 +221,7 @@ final class QualityAndLimitsPanelTest extends TestCase
 
         // The same refusal arriving later in a status webhook gets the same label.
         $this->sendError = null;
-        $this->postJson('/api/v1/messages', ['phone_number_id' => $this->number->id, 'to' => '+971502220003', 'type' => 'template',
+        $this->postJson('/api/v1/messages', ['permission' => ['via' => 'form'], 'phone_number_id' => $this->number->id, 'to' => '+971502220003', 'type' => 'template',
             'template' => ['name' => 'big_sale', 'language' => 'en']])->assertStatus(202);
         $wamid = (string) $this->tenantContext()->run($this->tenant, fn () => Message::query()->whereNull('campaign_id')->latest()->value('wamid'));
         $this->postWebhook($this->now($this->webhookBody('messages', ['messaging_product' => 'whatsapp', 'metadata' => ['display_phone_number' => '971585496310', 'phone_number_id' => '106540352242922'],

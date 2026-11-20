@@ -135,21 +135,26 @@ final class StagesTest extends TestCase
         $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['Quote sent']])->assertUnprocessable(); // the version is required
     }
 
-    public function test_won_needs_a_verified_payment_or_an_approval_with_a_reference(): void
+    public function test_won_needs_a_verified_payment_or_a_reference_from_anyone_who_replies(): void
     {
         $s = $this->suggested();
         $id = $this->contact('+971501110003');
         $this->move($id, $s['Booked'])->assertOk();
 
-        // An Agent, no payment: refused.
+        // An Agent (any role that can reply), no payment: a reference of at least 3 characters is required.
         $this->actingAsMember($this->addMember($this->tenant, SystemRole::Agent));
-        $this->move($id, $s['Won'])->assertUnprocessable()->assertJsonPath('error.details.fields.stage_id.0', 'Won needs a verified payment. Someone allowed to approve Won can mark it with a reference.');
-
-        // The Owner can approve, but only with a reference.
-        $this->actingAsMember($this->owner);
-        $this->move($id, $s['Won'])->assertUnprocessable()->assertJsonPath('error.details.fields.reason.0', 'Add a reference for marking Won without a verified payment (an invoice or receipt number).');
+        $this->move($id, $s['Won'])->assertUnprocessable()->assertJsonPath('error.details.fields.reason.0', 'Add a reference for marking Won without a verified payment (an invoice, receipt or contract number).');
+        $this->move($id, $s['Won'], ['reason' => 'ab'])->assertUnprocessable();
         $this->move($id, $s['Won'], ['reason' => 'Receipt 4471'])->assertOk()->assertJsonPath('data.stage.name', 'Won');
         $this->assertSame('Receipt 4471', $this->tenantContext()->run($this->tenant, fn () => ContactStageEvent::query()->where('to_stage_id', $s['Won'])->value('reason')));
+
+        // A Marketing teammate can too; a Viewer cannot change stages at all.
+        $third = $this->contact('+971501110013');
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Marketing));
+        $this->move($third, $s['Won'], ['reason' => 'INV-2209'])->assertOk();
+        $this->actingAsMember($this->addMember($this->tenant, SystemRole::Viewer));
+        $this->move($third, $s['Lost'], ['reason' => 'Too expensive'])->assertForbidden();
+        $this->actingAsMember($this->owner);
 
         // With a verified payment (a paid store order on the enquiry), an Agent can mark Won.
         $other = $this->contact('+971501110004');
@@ -207,6 +212,36 @@ final class StagesTest extends TestCase
         $this->assertTrue($all['Booked']['archived'], 'kept for history');
         $this->assertFalse($all->has('Quote sent'), 'never used: deleted');
         $this->move($id, $s['Booked'])->assertUnprocessable();
+    }
+
+    public function test_archiving_checks_every_enquiry_and_keeps_one_open_won_and_lost_stage(): void
+    {
+        $s = $this->suggested();
+        $id = $this->contact('+971501110017');
+        $this->move($id, $s['Quote sent'])->assertOk();
+        $first = $this->current($id)['id'];
+        // A second enquiry becomes the current one and moves to New: only the first stays on "Quote sent".
+        $this->postJson("/api/v1/contacts/{$id}/enquiries")->assertCreated();
+        $this->move($id, $s['New'], ['version' => 0])->assertOk();
+        $this->getJson("/api/v1/contacts/{$id}")->assertJsonPath('data.stage.name', 'New');
+
+        $this->deleteJson("/api/v1/crm/stages/{$s['Quote sent']}")->assertUnprocessable()
+            ->assertJsonPath('error.details.fields.stage.0', '1 enquiry is in this stage. Move it to another stage first.');
+        $this->assertSame(1, collect($this->getJson('/api/v1/crm/stages')->json('data'))->firstWhere('id', $s['Quote sent'])['enquiries']);
+        $this->postJson("/api/v1/contacts/{$id}/stage", ['stage_id' => $s['New'], 'version' => 1, 'enquiry_id' => $first])->assertOk();
+        $this->deleteJson("/api/v1/crm/stages/{$s['Quote sent']}")->assertNoContent();
+
+        // The only Won and Lost stages cannot be archived or moved to another group.
+        $this->deleteJson("/api/v1/crm/stages/{$s['Won']}")->assertUnprocessable()
+            ->assertJsonPath('error.details.fields.stage.0', 'Archiving this stage would leave no Won stage. Keep at least one Open, one Won and one Lost stage.');
+        $this->patchJson("/api/v1/crm/stages/{$s['Lost']}", ['group' => 'open'])->assertUnprocessable();
+        $paid = $this->postJson('/api/v1/crm/stages', ['name' => 'Paid', 'group' => 'won'])->assertCreated()->json('data.id');
+        $this->deleteJson("/api/v1/crm/stages/{$s['Won']}")->assertNoContent();
+        $this->assertSame('won', collect($this->getJson('/api/v1/crm/stages')->json('data'))->firstWhere('id', $paid)['group']);
+
+        // An archived stage comes back with Restore.
+        $this->postJson("/api/v1/crm/stages/{$s['Quote sent']}/restore")->assertOk()->assertJsonPath('data.name', 'Quote sent');
+        $this->postJson("/api/v1/crm/stages/{$s['Quote sent']}/restore")->assertStatus(422);
     }
 
     public function test_names_are_unique_and_order_can_change(): void

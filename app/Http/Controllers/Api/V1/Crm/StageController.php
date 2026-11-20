@@ -33,8 +33,14 @@ final class StageController extends Controller
         $stages = CrmStage::query()->when(! $request->boolean('include_archived'), fn ($q) => $q->active())
             ->orderBy('position')->orderBy('created_at')->get();
         $counts = Contact::query()->whereNotNull('stage_id')->groupBy('stage_id')->selectRaw('stage_id, count(*) AS n')->pluck('n', 'stage_id');
+        $enquiries = Enquiry::query()->whereNotNull('stage_id')->groupBy('stage_id')->selectRaw('stage_id, count(*) AS n')->pluck('n', 'stage_id');
 
-        return response()->json(['data' => $stages->map(fn (CrmStage $s) => $s->summary() + ['position' => $s->position, 'contacts' => (int) ($counts[$s->id] ?? 0)])]);
+        return response()->json(['data' => $stages->map(fn (CrmStage $s) => $s->summary() + [
+            'position' => $s->position,
+            'contacts' => (int) ($counts[$s->id] ?? 0),
+            'enquiries' => (int) ($enquiries[$s->id] ?? 0),
+            'archived' => $s->archived_at !== null,
+        ])]);
     }
 
     public function store(Request $request): JsonResponse
@@ -89,6 +95,9 @@ final class StageController extends Controller
             $data['name'] = trim($data['name']);
             $this->ensureUniqueName($data['name'], $stage->id);
         }
+        if (isset($data['group']) && $data['group'] !== $stage->group) {
+            $this->ensureGroupKept($stage, 'Moving');
+        }
         $before = $stage->summary();
         $stage->fill($data)->save();
         $this->audit->record('crm_stage.updated', $stage, before: $before, after: $stage->summary());
@@ -114,19 +123,38 @@ final class StageController extends Controller
     }
 
     /**
-     * Removes a stage. Contacts on it must be moved first. A stage that appears in any contact's
-     * history is archived (kept for reports), otherwise it is deleted.
+     * Removes a stage. Every enquiry on it (open or closed, current or not) must be moved first, and
+     * the pipeline always keeps at least one Open, one Won and one Lost stage. A stage that appears in
+     * any history is archived (kept for reports and can be restored), otherwise it is deleted.
      */
     public function destroy(CrmStage $stage): JsonResponse
     {
-        if (Contact::query()->withTrashed()->where('stage_id', $stage->id)->exists()) {
-            throw ValidationException::withMessages(['stage' => 'Move the contacts on this stage to another stage first.']);
+        $enquiries = Enquiry::query()->where('stage_id', $stage->id)->count();
+        if ($enquiries > 0 || Contact::query()->withTrashed()->where('stage_id', $stage->id)->exists()) {
+            throw ValidationException::withMessages(['stage' => $enquiries === 1
+                ? '1 enquiry is in this stage. Move it to another stage first.'
+                : "{$enquiries} enquiries are in this stage. Move them to another stage first."]);
         }
+        $this->ensureGroupKept($stage, 'Archiving');
         $used = ContactStageEvent::query()->where(fn ($q) => $q->where('from_stage_id', $stage->id)->orWhere('to_stage_id', $stage->id))->exists();
         $used ? $stage->forceFill(['archived_at' => now()])->save() : $stage->delete();
         $this->audit->record($used ? 'crm_stage.archived' : 'crm_stage.deleted', $used ? $stage : null, before: $stage->summary());
 
         return response()->json(null, 204);
+    }
+
+    /** Brings an archived stage back at the end of its group's place in the order. */
+    public function restore(CrmStage $stage): JsonResponse
+    {
+        abort_if($stage->archived_at === null, 422, 'This stage is not archived.');
+        if (CrmStage::query()->active()->count() >= self::MAX_STAGES) {
+            throw ValidationException::withMessages(['stage' => 'A pipeline can have up to '.self::MAX_STAGES.' stages.']);
+        }
+        $this->ensureUniqueName($stage->name);
+        $stage->forceFill(['archived_at' => null, 'position' => (int) CrmStage::query()->max('position') + 1])->save();
+        $this->audit->record('crm_stage.restored', $stage, after: $stage->summary());
+
+        return response()->json(['data' => $stage->summary() + ['position' => $stage->position, 'contacts' => 0]]);
     }
 
     /**
@@ -176,6 +204,16 @@ final class StageController extends Controller
             'enquiry_id' => $e->enquiry_id,
             'changed_at' => $e->changed_at->toIso8601String(),
         ])]);
+    }
+
+    /** Open, Won and Lost each keep at least one active stage: reports and closing rely on them. */
+    private function ensureGroupKept(CrmStage $stage, string $doing): void
+    {
+        $left = CrmStage::query()->active()->where('group', $stage->group)->whereKeyNot($stage->id)->count();
+        if ($left === 0) {
+            $label = ucfirst($stage->group);
+            throw ValidationException::withMessages(['stage' => "{$doing} this stage would leave no {$label} stage. Keep at least one Open, one Won and one Lost stage."]);
+        }
     }
 
     private function ensureUniqueName(string $name, ?string $except = null): void
