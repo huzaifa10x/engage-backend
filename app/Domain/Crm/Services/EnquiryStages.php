@@ -114,6 +114,7 @@ final class EnquiryStages
             if ($tenant !== null && GrowthAccess::full($tenant)) {
                 RefreshMarketingAnalytics::dispatch($tenant->id)->afterCommit();
             }
+            app(ContactRecord::class)->refresh($locked);   // lifecycle moves forward (3.5)
 
             return $event;
         });

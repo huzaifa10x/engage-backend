@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Domain\Timeline;
 
 use App\Domain\Conversions\Services\AdClicks;
+use App\Domain\Crm\Services\ContactRecord;
 use App\Domain\Growth\Links\LinkCode;
 use App\Domain\Growth\Links\WaLink;
 use App\Domain\Growth\Website\Reference;
@@ -139,6 +140,8 @@ final class Enquiries
             'number' => $number, 'reason' => $reason, 'source' => $source['source'], 'confidence' => $source['confidence'],
             'source_label' => self::label($source), 'message_id' => $messageId,
         ], $at, $enquiry->id);
+
+        app(ContactRecord::class)->refresh($contact);   // lifecycle (3.5)
 
         return $enquiry;
     }

@@ -13,6 +13,7 @@ use App\Domain\Messaging\Models\Contact;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\Timeline\Enquiry;
+use App\Domain\Timeline\Timeline;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -143,6 +144,20 @@ final class EnquiryController extends Controller
         return response()->json(['data' => $this->cards->rows(collect([$fresh]), withContact: true)[0]]);
     }
 
+    /**
+     * "Work on this deal" (3.5): the enquiry the chat's Sales card shows. Viewing another deal never changes
+     * it; only this does.
+     */
+    public function setCurrent(Request $request, Contact $contact, AuditLogger $audit): JsonResponse
+    {
+        $id = $request->validate(['enquiry_id' => ['required', 'uuid']])['enquiry_id'];
+        $enquiry = Enquiry::query()->where('contact_id', $contact->id)->findOrFail($id);
+        DB::table('contacts')->where('id', $contact->id)->update(['current_enquiry_id' => $enquiry->id]);
+        $audit->record('enquiry.made_current', $enquiry);
+
+        return response()->json(['data' => $this->cards->rows(collect([$enquiry]), withContact: true)[0]]);
+    }
+
     // ── Next steps ─────────────────────────────────────────────────────────────────────────
 
     public function steps(Request $request, Contact $contact): JsonResponse
@@ -166,6 +181,7 @@ final class EnquiryController extends Controller
             'assigned_membership_id' => $data['assigned_membership_id'] ?? $this->context->membership()?->id,
         ]);
         $audit->record('next_step.created', $step, after: ['title' => $step->title, 'due_at' => $step->due_at->toIso8601String()]);
+        Timeline::record($contact->id, 'next_step.added', null, 'next_step', $step->id, ['type' => $step->type, 'type_label' => NextStep::TYPES[$step->type] ?? 'Other', 'title' => $step->title, 'due_at' => $step->due_at->toIso8601String()], enquiryId: $step->enquiry_id);
 
         return response()->json(['data' => $step->summary($this->names())], 201);
     }
@@ -185,6 +201,9 @@ final class EnquiryController extends Controller
             default => null,
         };
         $step->forceFill($changes)->save();
+        if (in_array($data['status'] ?? null, ['done', 'cancelled'], true)) {
+            Timeline::record((string) $step->contact_id, 'next_step.'.$data['status'], null, 'next_step', $step->id, ['type' => $step->type, 'type_label' => NextStep::TYPES[$step->type] ?? 'Other', 'title' => $step->title], enquiryId: $step->enquiry_id);
+        }
         $audit->record('next_step.updated', $step, after: array_map(fn ($v) => $v instanceof Carbon ? $v->toIso8601String() : $v, $changes));
 
         return response()->json(['data' => $step->summary($this->names())]);

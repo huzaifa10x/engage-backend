@@ -67,8 +67,10 @@ final class ContactResource extends JsonResource
             'country' => $this->country,
             'language' => $this->language,
             'owner' => $this->owner_membership_id === null ? null : ['id' => $this->owner_membership_id, 'name' => self::memberNames($request)[$this->owner_membership_id] ?? 'Former teammate'],
-            'lifecycle' => $lifecycle = self::record($request)->lifecycle($this->resource),
-            'lead_status' => self::record($request)->leadStatus($this->resource, $lifecycle['key']),
+            'lifecycle' => $lifecycle = self::recordFor($request)->lifecycle($this->resource),
+            'lead_status' => self::recordFor($request)->leadStatus($this->resource, $lifecycle['key']),
+            // Open deals, last human reply and the latest chat (Contacts list, record Activity fields).
+            ...self::recordFor($request)->summary($this->resource),
             'contact_permission' => $this->contact_permission === null ? null : $this->contact_permission + ['via_label' => ContactRecord::PERMISSION_VIA[$this->contact_permission['via'] ?? 'other'] ?? 'Other'],
         ];
     }
@@ -81,13 +83,13 @@ final class ContactResource extends JsonResource
     public static function collection($resource)
     {
         $items = $resource instanceof AbstractPaginator ? $resource->getCollection() : collect($resource);
-        self::record(request())->preload($items->filter(fn ($c) => $c instanceof Contact));
+        self::recordFor(request())->preload($items->filter(fn ($c) => $c instanceof Contact));
 
         return parent::collection($resource);
     }
 
     /** One ContactRecord per request, so a page of contacts shares the facts loaded for it. */
-    private static function record(Request $request): ContactRecord
+    public static function recordFor(Request $request): ContactRecord
     {
         if (! $request->attributes->has('crm.contact_record')) {
             $request->attributes->set('crm.contact_record', new ContactRecord);

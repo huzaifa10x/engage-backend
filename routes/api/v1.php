@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\ChatbotWelcomeController;
 use App\Http\Controllers\Api\V1\Compliance\ComplianceController;
 use App\Http\Controllers\Api\V1\Conversions\ConversionsController;
 use App\Http\Controllers\Api\V1\Crm\CrmController;
+use App\Http\Controllers\Api\V1\Crm\CrmSyncController;
 use App\Http\Controllers\Api\V1\Crm\EnquiryController;
 use App\Http\Controllers\Api\V1\Crm\StageController;
 use App\Http\Controllers\Api\V1\DataController;
@@ -541,6 +542,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::middleware('can:'.Permission::ContactsView->value)->group(function () {
         Route::get('contacts', [ContactController::class, 'index'])->name('contacts.index');
         Route::get('contacts/count', [ContactController::class, 'count'])->name('contacts.count');
+        Route::get('contacts/funnel', [ContactController::class, 'funnel'])->name('contacts.funnel');
         Route::get('contacts/{contact}', [ContactController::class, 'show'])->whereUuid('contact')->name('contacts.show');
     });
     Route::post('contacts', [ContactController::class, 'store'])->middleware('can:'.Permission::ContactsCreate->value)->name('contacts.store');
@@ -554,9 +556,12 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::get('contacts/{contact}/enquiries', [TimelineController::class, 'enquiries'])->middleware('can:'.Permission::ContactsView->value)->name('contacts.enquiries');
     Route::post('contacts/{contact}/enquiries', [TimelineController::class, 'startEnquiry'])->middleware(['can:'.Permission::ContactsUpdate->value, 'throttle:30,1'])->name('contacts.enquiries.start');
     // Enquiries board, the enquiry card and next steps (3.3, B1).
+    Route::get('crm/sync', [CrmSyncController::class, 'show'])->middleware('can:'.Permission::ContactsView->value)->name('crm.sync');
+    Route::put('crm/sync', [CrmSyncController::class, 'update'])->middleware('can:'.Permission::SettingsManage->value)->name('crm.sync.update');
     Route::get('enquiries/board', [EnquiryController::class, 'board'])->middleware('can:'.Permission::ContactsView->value)->name('enquiries.board');
     Route::get('enquiries/{enquiry}', [EnquiryController::class, 'show'])->whereUuid('enquiry')->middleware('can:'.Permission::ContactsView->value)->name('enquiries.show');
     Route::patch('enquiries/{enquiry}', [EnquiryController::class, 'update'])->whereUuid('enquiry')->middleware('can:'.Permission::ContactsUpdate->value)->name('enquiries.update');
+    Route::post('contacts/{contact}/current-enquiry', [EnquiryController::class, 'setCurrent'])->whereUuid('contact')->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.current-enquiry');
     Route::get('contacts/{contact}/next-steps', [EnquiryController::class, 'steps'])->whereUuid('contact')->middleware('can:'.Permission::ContactsView->value)->name('contacts.next-steps');
     Route::post('contacts/{contact}/next-steps', [EnquiryController::class, 'addStep'])->whereUuid('contact')->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.next-steps.store');
     Route::patch('next-steps/{step}', [EnquiryController::class, 'updateStep'])->whereUuid('step')->middleware('can:'.Permission::ContactsUpdate->value)->name('next-steps.update');
@@ -572,6 +577,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::put('inbox/teams/{team}', [InboxTeamController::class, 'update'])->whereUuid('team')->name('inbox.teams.update');
         Route::delete('inbox/teams/{team}', [InboxTeamController::class, 'destroy'])->whereUuid('team')->name('inbox.teams.destroy');
         Route::get('conversations/counts', [ConversationController::class, 'counts'])->name('conversations.counts');
+        Route::get('inbox/health', [ConversationController::class, 'health'])->name('inbox.health');
         Route::get('conversations/{conversation}', [ConversationController::class, 'show'])->name('conversations.show');
         Route::get('conversations/{conversation}/notes', [InboxToolsController::class, 'notes'])->name('conversations.notes');
         Route::get('canned-responses', [InboxToolsController::class, 'cannedResponses'])->name('canned-responses.index');
@@ -581,6 +587,9 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         Route::patch('conversations/{conversation}', [ConversationController::class, 'update'])->name('conversations.update');
         Route::get('conversations/{conversation}/assignees', [ConversationController::class, 'assignees'])->name('conversations.assignees');
         Route::post('conversations/{conversation}/read', [ConversationController::class, 'read'])->name('conversations.read');
+        Route::post('conversations/{conversation}/unread', [ConversationController::class, 'unread'])->name('conversations.unread');
+        Route::get('conversations/{conversation}/events', [ConversationController::class, 'events'])->name('conversations.events');
+        Route::post('conversations/{conversation}/typing', [ConversationController::class, 'typing'])->middleware('throttle:60,1')->name('conversations.typing');
         Route::get('conversations/{conversation}/messages', [MessageController::class, 'index'])->name('conversations.messages.index');
         // The Resolved tab: one row per closure (3.5).
         Route::get('resolutions', [ResolutionController::class, 'index'])->name('resolutions.index');

@@ -12,6 +12,7 @@ use App\Domain\Developer\Services\PublicPayload;
 use App\Domain\Developer\Services\WebhookDispatcher;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Services\ConsentService;
+use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Validation\ValidationException;
 
@@ -27,11 +28,18 @@ final class ManageContacts
     /** @param array{phone: string, name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, tags?: ?array<int, string>, opted_in?: bool} $data */
     public function create(array $data): Contact
     {
-        $waId = Contact::checkedPhone($data['phone']);
+        $waId = ($data['phone'] ?? null) !== null && trim((string) $data['phone']) !== '' ? Contact::checkedPhone($data['phone']) : null;
 
-        $existing = Contact::query()->withTrashed()->where('wa_id', $waId)->first();
+        $existing = $waId !== null ? Contact::query()->withTrashed()->where('wa_id', $waId)->first() : null;
         if ($existing !== null && ! $existing->trashed()) {
-            throw ValidationException::withMessages(['phone' => 'A contact with this number already exists.']);
+            throw ValidationException::withMessages(['phone' => 'Already in Engage as '.$existing->displayName().'.']);
+        }
+        $email = isset($data['email']) ? mb_strtolower(trim((string) $data['email'])) : '';
+        if ($email !== '' && ($same = Contact::query()->whereRaw('lower(email) = ?', [$email])->first()) !== null) {
+            throw ValidationException::withMessages(['email' => 'Already in Engage as '.$same->displayName().'.']);
+        }
+        if (($data['owner_membership_id'] ?? null) !== null && ! TenantMembership::query()->active()->whereKey($data['owner_membership_id'])->exists()) {
+            throw ValidationException::withMessages(['owner_membership_id' => 'Pick someone on the team.']);
         }
 
         // Required custom fields apply to new contacts too, even when no attributes were sent.
@@ -43,7 +51,8 @@ final class ManageContacts
             $existing->fill($this->attributes($data))->save();
             $contact = $existing;
         } else {
-            $contact = Contact::query()->create(['wa_id' => $waId, 'source' => 'manual'] + $this->attributes($data));
+            $contact = Contact::query()->create(['wa_id' => $waId, 'source' => 'manual'] + $this->attributes($data)
+                + array_filter(['source_detail' => $data['source_detail'] ?? null, 'owner_membership_id' => $data['owner_membership_id'] ?? null]));
         }
 
         if (($data['opted_in'] ?? false) === true) {
@@ -51,6 +60,7 @@ final class ManageContacts
         }
 
         $this->audit->record('contact.created', $contact);
+        app(ContactRecord::class)->refresh($contact);
 
         return $contact;
     }

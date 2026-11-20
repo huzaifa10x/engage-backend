@@ -31,7 +31,7 @@ class NextStep extends Model
 {
     use BelongsToTenant, HasUuids;
 
-    public const TYPES = ['call' => 'Call', 'message' => 'Message', 'meeting' => 'Meeting', 'quote' => 'Send quote', 'other' => 'Other'];
+    public const TYPES = ['call' => 'Call', 'message' => 'Follow up', 'meeting' => 'Schedule meeting', 'quote' => 'Send quote', 'other' => 'Other'];
 
     protected $fillable = ['tenant_id', 'contact_id', 'enquiry_id', 'type', 'title', 'due_at', 'assigned_membership_id', 'created_by_membership_id',
         'done_at', 'done_by_membership_id', 'cancelled_at', 'cancel_reason'];

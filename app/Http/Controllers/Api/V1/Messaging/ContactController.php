@@ -69,6 +69,10 @@ final class ContactController extends Controller
             'source' => ['nullable', 'string', 'max:40'],  // how the contact was added: manual, import, inbound …
             'stage_id' => ['nullable', 'string', 'max:36'],  // a stage id, or "none" for contacts without a stage
             'filter' => ['nullable'],                 // {match, rules} (JSON): conditions on any field, custom fields included
+            // Contacts & CRM 3.5: the lifecycle chips, the owner filter and "Possible duplicates".
+            'lifecycle' => ['nullable', Rule::in(['subscriber', 'lead', 'opportunity', 'customer', 'other'])],
+            'owner' => ['nullable', 'string', 'max:36'],       // a membership id, or "none"
+            'duplicates' => ['nullable', 'boolean'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
@@ -82,6 +86,9 @@ final class ContactController extends Controller
             ->when($segment, fn ($q) => $segments->apply($q, $segment->match, $segment->rules))
             ->when($filter, fn ($q) => $segments->apply($q, $filter['match'], $filter['rules']))
             ->when($data['tag'] ?? null, fn ($q, string $tag) => $q->whereRaw('tags @> ARRAY[?]::text[]', [$tag]))
+            ->when($data['lifecycle'] ?? null, fn ($q, string $l) => $q->whereRaw("coalesce(lifecycle, 'lead') = ?", [$l]))
+            ->when($data['owner'] ?? null, fn ($q, string $o) => $o === 'none' ? $q->whereNull('owner_membership_id') : $q->where('owner_membership_id', $o))
+            ->when($request->boolean('duplicates'), fn ($q) => $q->whereRaw(self::DUPLICATE_SQL))
             ->when($data['q'] ?? null, function ($q, string $term) {
                 $digits = preg_replace('/\D+/', '', $term);
                 $q->where(fn ($w) => $w
@@ -89,17 +96,47 @@ final class ContactController extends Controller
                     ->orWhere('profile_name', 'ilike', "%{$term}%")
                     ->orWhere('username', 'ilike', "%{$term}%")
                     ->orWhere('email', 'ilike', "%{$term}%")
-                    ->when($digits !== '', fn ($w) => $w->orWhere('wa_id', 'like', "%{$digits}%")));
+                    ->orWhere('company', 'ilike', "%{$term}%")
+                    // The engageX ID shown on the record (EX- and the end of the contact's id).
+                    ->when(preg_match('/^(?:EX-)?([0-9a-f]{6,12})$/i', trim($term), $m) === 1, fn ($w) => $w->orWhereRaw('id::text ILIKE ?', ['%'.strtolower($m[1])]))
+                    ->when(ltrim($digits, '0') !== '', fn ($w) => $w->orWhere('wa_id', 'like', '%'.ltrim($digits, '0').'%')));
             })
             ->when($data['consent'] ?? null, fn ($q, string $c) => $q->where('consent_state', $c));
+    }
+
+    /** Another contact has the same phone digits, email or WhatsApp user id. */
+    private const DUPLICATE_SQL = 'EXISTS (SELECT 1 FROM contacts o WHERE o.id <> contacts.id AND o.tenant_id = contacts.tenant_id AND o.deleted_at IS NULL AND ('
+        ."(contacts.wa_id IS NOT NULL AND regexp_replace(coalesce(o.wa_id, ''), '\\D', '', 'g') = regexp_replace(contacts.wa_id, '\\D', '', 'g'))"
+        ." OR (contacts.email IS NOT NULL AND contacts.email <> '' AND lower(o.email) = lower(contacts.email))"
+        .' OR (contacts.bsuid IS NOT NULL AND o.bsuid = contacts.bsuid)))';
+
+    /**
+     * The lifecycle chips of the Contacts list (3.5): how many contacts are at each stage, and how many
+     * pairs look like the same person.
+     */
+    public function funnel(): JsonResponse
+    {
+        $by = Contact::query()->selectRaw("coalesce(lifecycle, 'lead') AS l, count(*) AS n")->groupBy('l')->pluck('n', 'l');
+        $dupes = Contact::query()->whereRaw(self::DUPLICATE_SQL)->count();
+
+        return response()->json(['data' => [
+            'all' => (int) $by->sum(),
+            'subscriber' => (int) ($by['subscriber'] ?? 0), 'lead' => (int) ($by['lead'] ?? 0), 'opportunity' => (int) ($by['opportunity'] ?? 0),
+            'customer' => (int) ($by['customer'] ?? 0), 'other' => (int) ($by['other'] ?? 0),
+            'duplicates' => $dupes,
+        ]]);
     }
 
     public function store(Request $request, ManageContacts $contacts): JsonResponse
     {
         $data = $request->validate([
-            'phone' => ['required', 'string', 'max:32'],
+            // A WhatsApp number or an email (3.5: a CRM contact can wait for its first chat).
+            'phone' => ['required_without:email', 'nullable', 'string', 'max:32'],
             'name' => ['nullable', 'string', 'max:190'],
-            'email' => ['nullable', 'email:rfc', 'max:190'],
+            'email' => ['required_without:phone', 'nullable', 'email:rfc', 'max:190'],
+            'company' => ['nullable', 'string', 'max:190'],
+            'source_detail' => ['nullable', 'string', 'max:80'],
+            'owner_membership_id' => ['nullable', 'uuid'],
             'attributes' => ['nullable', 'array', 'max:50'],
             'tags' => ['nullable', 'array', 'max:50'],
             'tags.*' => ['string', 'max:40'],
@@ -124,6 +161,7 @@ final class ContactController extends Controller
             'tags' => ['sometimes', 'nullable', 'array', 'max:50'],
             'tags.*' => ['string', 'max:40'],
             'company' => ['sometimes', 'nullable', 'string', 'max:190'],
+            'source_detail' => ['sometimes', 'nullable', 'string', 'max:80'],
             'job_title' => ['sometimes', 'nullable', 'string', 'max:120'],
             'city' => ['sometimes', 'nullable', 'string', 'max:80'],
             'country' => ['sometimes', 'nullable', 'string', 'max:80'],

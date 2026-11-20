@@ -19,7 +19,7 @@ use Illuminate\Support\Str;
  */
 final class ContactRecord
 {
-    /** @var array<string, array{stages: Collection<int, object>, resolution: ?object, last_human: ?string}> facts loaded for a page of contacts at once */
+    /** @var array<string, array{stages: Collection<int, object>, resolution: ?object, last_human: ?string, chat?: ?object}> facts loaded for a page of contacts at once */
     private array $facts = [];
 
     private ?int $firstOpen = null;
@@ -45,7 +45,7 @@ final class ContactRecord
     public const EDITABLE = [
         'name' => 'Name', 'email' => 'Email', 'company' => 'Company', 'job_title' => 'Job title', 'city' => 'City',
         'country' => 'Country', 'language' => 'Preferred language', 'lead_status' => 'Lead status',
-        'owner_membership_id' => 'Contact owner', 'tags' => 'Tags',
+        'owner_membership_id' => 'Contact owner', 'tags' => 'Tags', 'source_detail' => 'Source detail',
     ];
 
     /**
@@ -56,6 +56,47 @@ final class ContactRecord
      * @return array{key: string, label: string}
      */
     public function lifecycle(Contact $contact): array
+    {
+        $stored = $contact->getAttribute('lifecycle');
+        if (is_string($stored) && isset(self::LIFECYCLE_LABELS[$stored])) {
+            return ['key' => $stored, 'label' => self::LIFECYCLE_LABELS[$stored]];
+        }
+
+        return $this->derive($contact);
+    }
+
+    /**
+     * Works the stage out again after something happened (an enquiry moved or started, a chat was closed,
+     * consent changed) and keeps it. It never moves backwards: Customer stays Customer. "Other" only applies
+     * while the contact has no enquiry.
+     */
+    public function refresh(Contact|string|null $contact): void
+    {
+        if ($contact === null) {
+            return;
+        }
+        $model = $contact instanceof Contact ? $contact : Contact::query()->withTrashed()->find($contact);
+        if ($model === null) {
+            return;
+        }
+        unset($this->facts[$model->id]);
+        $next = $this->derive($model)['key'];
+        $now = $model->getAttribute('lifecycle');
+        $rank = array_flip(self::LIFECYCLE);
+        if (is_string($now) && isset($rank[$now], $rank[$next]) && $rank[$now] > $rank[$next]) {
+            return;
+        }
+        if (is_string($now) && in_array($now, ['opportunity', 'customer'], true) && $next === 'other') {
+            return;
+        }
+        if ($now !== $next) {
+            DB::table('contacts')->where('id', $model->id)->update(['lifecycle' => $next]);
+            $model->setAttribute('lifecycle', $next);
+        }
+    }
+
+    /** @return array{key: string, label: string} */
+    private function derive(Contact $contact): array
     {
         $stages = $this->facts($contact)['stages'];
         $first = $this->firstOpen();
@@ -225,14 +266,39 @@ final class ContactRecord
             return;
         }
         $stages = DB::table('enquiries')->leftJoin('crm_stages', 'crm_stages.id', '=', 'enquiries.stage_id')
-            ->whereIn('enquiries.contact_id', $ids)->get(['enquiries.contact_id', 'crm_stages.group', 'crm_stages.position'])->groupBy('contact_id');
+            ->whereIn('enquiries.contact_id', $ids)->get(['enquiries.contact_id', 'enquiries.value', 'crm_stages.group', 'crm_stages.position'])->groupBy('contact_id');
+        $chats = DB::table('conversations')->whereIn('contact_id', $ids)->selectRaw('DISTINCT ON (contact_id) contact_id, id, status, reply_state, window_expires_at, snoozed_until, last_message_at')
+            ->orderBy('contact_id')->orderByRaw('last_message_at DESC NULLS LAST')->get()->keyBy('contact_id');
         $resolutions = DB::table('conversation_resolutions')->whereIn('contact_id', $ids)
             ->selectRaw('DISTINCT ON (contact_id) contact_id, reason, reopened_at')->orderBy('contact_id')->orderByDesc('resolved_at')->get()->keyBy('contact_id');
         $human = DB::table('messages')->whereIn('contact_id', $ids)->where('direction', 'outbound')->whereIn('origin', ['agent', 'app_echo'])
             ->where('status', '!=', 'failed')->groupBy('contact_id')->selectRaw('contact_id, max(created_at) AS at')->pluck('at', 'contact_id');
         foreach ($ids as $id) {
-            $this->facts[$id] = ['stages' => $stages->get($id, collect())->values(), 'resolution' => $resolutions->get($id), 'last_human' => $human->get($id)];
+            $this->facts[$id] = ['stages' => $stages->get($id, collect())->values(), 'resolution' => $resolutions->get($id), 'last_human' => $human->get($id), 'chat' => $chats->get($id)];
         }
+    }
+
+    /**
+     * Open deals (enquiries in an open stage) with their total value, the last human reply and the
+     * contact's latest chat: the Contacts list and the record's Activity fields.
+     *
+     * @return array{open_deals: array{count: int, value: float}, last_human_reply_at: ?string, chat: ?array<string, mixed>}
+     */
+    public function summary(Contact $contact): array
+    {
+        $f = $this->facts($contact);
+        $open = $f['stages']->filter(fn ($s) => $s->group === CrmStage::OPEN);
+        $chat = $f['chat'] ?? null;
+
+        return [
+            'open_deals' => ['count' => $open->count(), 'value' => (float) $open->sum(fn ($s) => (float) ($s->value ?? 0))],
+            'last_human_reply_at' => $f['last_human'] !== null ? Carbon::parse($f['last_human'])->toIso8601String() : null,
+            'chat' => $chat === null ? null : [
+                'id' => $chat->id,
+                'state' => $chat->status === 'closed' ? 'resolved' : ($chat->snoozed_until !== null && Carbon::parse($chat->snoozed_until)->isFuture() ? 'snoozed' : ($chat->reply_state === 'needs_reply' ? 'needs_reply' : 'waiting')),
+                'window_expires_at' => $chat->window_expires_at !== null ? Carbon::parse($chat->window_expires_at)->toIso8601String() : null,
+            ],
+        ];
     }
 
     /** Facts change when a contact is edited, so a single contact is always read fresh. */
@@ -241,7 +307,7 @@ final class ContactRecord
         unset($this->facts[$contactId]);
     }
 
-    /** @return array{stages: Collection<int, object>, resolution: ?object, last_human: ?string} */
+    /** @return array{stages: Collection<int, object>, resolution: ?object, last_human: ?string, chat?: ?object} */
     private function facts(Contact $contact): array
     {
         if (! isset($this->facts[$contact->id])) {

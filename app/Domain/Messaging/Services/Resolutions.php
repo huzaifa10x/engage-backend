@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Services;
 
+use App\Domain\Crm\Services\ContactRecord;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Support\Carbon;
@@ -34,6 +35,7 @@ final class Resolutions
             'resolved_by_membership_id' => $membershipId, 'resolved_at' => $at ?? now(),
             'created_at' => now(), 'updated_at' => now(),
         ]);
+        app(ContactRecord::class)->refresh($conversation->contact_id);
 
         return $id;
     }
@@ -47,6 +49,7 @@ final class Resolutions
                 'reopened_at' => now(), 'reopen_how' => $how, 'reopened_by_membership_id' => $membershipId, 'updated_at' => now(),
             ]);
         }
+        app(ContactRecord::class)->refresh($conversation->contact_id);
     }
 
     /** The closure the chat is in now (not reopened yet). */
@@ -67,6 +70,7 @@ final class Resolutions
             return false;
         }
         DB::table('conversation_resolutions')->where('id', $open->id)->delete();
+        app(ContactRecord::class)->refresh($conversation->contact_id);
         DB::table('inbox_response_times')->where('conversation_id', $conversation->id)->where('kind', 'resolution')
             ->where('ended_at', '>=', Carbon::parse($open->resolved_at)->subSecond())->delete();
 

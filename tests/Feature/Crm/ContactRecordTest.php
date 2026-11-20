@@ -7,6 +7,7 @@ namespace Tests\Feature\Crm;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\SystemRole;
 use App\Domain\Crm\Models\CrmStage;
+use App\Domain\Crm\Services\ContactRecord;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -70,6 +71,7 @@ final class ContactRecordTest extends TestCase
         $this->tenantContext()->run($this->tenant, function () use ($id) {
             $won = CrmStage::query()->create(['name' => 'Won', 'color' => 'good', 'group' => 'won', 'position' => 9])->id;
             app(Enquiries::class)->manual(Contact::query()->findOrFail($id))->forceFill(['stage_id' => $won])->save();
+            app(ContactRecord::class)->refresh($id);   // what a stage move does
         });
         $this->getJson("/api/v1/contacts/{$id}")->assertJsonPath('data.lifecycle.label', 'Customer')->assertJsonPath('data.lead_status.key', null);
         $this->patchJson("/api/v1/contacts/{$id}", ['lead_status' => 'new'])->assertUnprocessable()->assertJsonValidationErrors('lead_status', self::ERRORS);
@@ -78,11 +80,20 @@ final class ContactRecordTest extends TestCase
     public function test_duplicates_by_phone_and_email(): void
     {
         $a = $this->postJson('/api/v1/contacts', ['phone' => '+971501112233', 'name' => 'Layla', 'email' => 'layla@example.com'])->json('data.id');
-        $b = $this->postJson('/api/v1/contacts', ['phone' => '+971509998877', 'name' => 'Layla H', 'email' => 'LAYLA@example.com'])->json('data.id');
+        // Creating a second contact with the same email is refused; an edit can still make one (an import, a typo).
+        $this->postJson('/api/v1/contacts', ['phone' => '+971509998877', 'name' => 'Layla H', 'email' => 'LAYLA@example.com'])->assertUnprocessable();
+        $b = $this->postJson('/api/v1/contacts', ['phone' => '+971509998877', 'name' => 'Layla H'])->json('data.id');
+        $this->patchJson("/api/v1/contacts/{$b}", ['email' => 'LAYLA@example.com'])->assertOk();
         $this->postJson('/api/v1/contacts', ['phone' => '+971507776655', 'name' => 'Omar']);
 
         $this->getJson("/api/v1/contacts/{$a}/duplicates")->assertOk()->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', $b)->assertJsonPath('data.0.match', 'email');
+        $this->getJson('/api/v1/contacts?duplicates=1')->assertJsonCount(2, 'data');
+        $this->getJson('/api/v1/contacts/funnel')->assertJsonPath('data.duplicates', 2)->assertJsonPath('data.all', 3)->assertJsonPath('data.lead', 3);
+        $this->getJson('/api/v1/contacts?lifecycle=customer')->assertJsonCount(0, 'data');
+        $this->postJson('/api/v1/contacts', ['email' => 'no-phone@example.com', 'name' => 'Email Only', 'company' => 'Acme', 'owner_membership_id' => $this->owner->id])
+            ->assertCreated()->assertJsonPath('data.owner.id', $this->owner->id)->assertJsonPath('data.company', 'Acme');
+        $this->getJson('/api/v1/contacts?owner='.$this->owner->id)->assertJsonCount(1, 'data');
     }
 
     public function test_search_says_what_starting_a_chat_will_do(): void

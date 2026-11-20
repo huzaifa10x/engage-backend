@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\Permission;
+use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Support\Facades\Broadcast;
@@ -42,6 +43,29 @@ Broadcast::channel('tenant.{tenantId}.member.{membershipId}', function ($user, s
     $membership = $context->membership();
 
     return $membership !== null && $context->id() === $tenantId && $membership->id === $membershipId && $membership->isActive();
+});
+
+/*
+| Presence (3.5): who has a chat open, and who is typing in it, so two people don't answer the same
+| customer twice. Only people who may see the chat join; they are listed by name.
+*/
+Broadcast::channel('tenant.{tenantId}.conversation.{conversationId}', function ($user, string $tenantId, string $conversationId): array|false {
+    $context = app(TenantContext::class);
+    $membership = $context->membership();
+    if ($membership === null || $context->id() !== $tenantId) {
+        return false;
+    }
+    $conversation = Conversation::query()->find($conversationId);
+    if ($conversation === null) {
+        return false;
+    }
+    try {
+        app(NumberAccess::class)->ensureCanSeeChat($membership, $conversation);
+    } catch (Throwable) {
+        return false;
+    }
+
+    return ['id' => $membership->id, 'name' => $user->name];
 });
 
 Broadcast::channel('tenant.{tenantId}.templates', function ($user, string $tenantId): bool {

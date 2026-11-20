@@ -12,21 +12,28 @@ use App\Domain\Automation\Scheduler;
 use App\Domain\Chatbots\Services\Chatbots;
 use App\Domain\Feedback\FeedbackRequests;
 use App\Domain\Messaging\Enums\ConversationStatus;
+use App\Domain\Messaging\Events\TeammateTyping;
 use App\Domain\Messaging\Jobs\SendReadReceipt;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\InboxTeam;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\InboxCounts;
+use App\Domain\Messaging\Services\InboxHealth;
 use App\Domain\Messaging\Services\InboxTools;
 use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Messaging\Services\Resolutions;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
+use App\Http\Resources\Api\V1\ContactResource;
 use App\Http\Resources\Api\V1\ConversationResource;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -46,45 +53,132 @@ final class ConversationController extends Controller
             'view' => ['nullable', Rule::in(['bot', 'waiting', 'abandoned', 'completed', 'handed_off'])],
             'unread' => ['nullable', 'boolean'],
             'snoozed' => ['nullable', 'boolean'],
+            // Inbox 3.5: All shows snoozed chats too (with their wake-up time).
+            'include_snoozed' => ['nullable', 'boolean'],
             // Who it is waiting on (Engagement Plan §II); after_hours = "Arrived after hours".
             'state' => ['nullable', Rule::in(['needs_reply', 'waiting'])],
             'after_hours' => ['nullable', 'boolean'],
+            // Inbox 3.5 filters: the WhatsApp window, an open follow-up on the contact, a tag.
+            'window' => ['nullable', Rule::in(['open', 'closed'])],
+            'followup' => ['nullable', 'boolean'],
+            'tag' => ['nullable', 'string', 'max:40'],
+            // Inbox 3.5 sort. Without it the list keeps its cursor pages, newest first.
+            'sort' => ['nullable', Rule::in(['priority', 'newest', 'waiting'])],
+            'cursor' => ['nullable', 'string', 'max:500'],
             'q' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
         $membership = $this->membership();
+        $searching = trim((string) ($data['q'] ?? '')) !== '';
 
         $query = Conversation::query()->with(['contact.stage', 'phoneNumber'])->whereNotNull('last_message_at');
         $this->access->scopeChats($query, $membership); // agents: only the chats assigned to them
 
         $query
             ->when($data['phone_number_id'] ?? null, fn ($q, $id) => $q->where('phone_number_id', $id))
-            ->when($data['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
+            ->when(! $searching ? ($data['status'] ?? null) : null, fn ($q, $s) => $q->where('status', $s))
             ->when($data['team'] ?? null, fn ($q, $team) => $q->where('assigned_team_id', $team))
-            ->when(($data['assigned'] ?? null) === 'me', fn ($q) => $q->where('assigned_membership_id', $membership->id))
-            ->when(($data['assigned'] ?? null) === 'unassigned', fn ($q) => $q->whereNull('assigned_membership_id'))
-            ->when(($data['assigned'] ?? null) === 'others', fn ($q) => $q->whereNotNull('assigned_membership_id')->where('assigned_membership_id', '!=', $membership->id))
+            ->when(! $searching && ($data['assigned'] ?? null) === 'me', fn ($q) => $q->where('assigned_membership_id', $membership->id))
+            ->when(! $searching && ($data['assigned'] ?? null) === 'unassigned', fn ($q) => $q->whereNull('assigned_membership_id'))
+            ->when(! $searching && ($data['assigned'] ?? null) === 'others', fn ($q) => $q->whereNotNull('assigned_membership_id')->where('assigned_membership_id', '!=', $membership->id))
             ->when(($data['view'] ?? null) === 'bot', fn ($q) => $q->where('handler', 'bot'))
             ->when(($data['view'] ?? null) === 'waiting', fn ($q) => $q->where('last_message_direction', 'outbound')->where(fn ($w) => $w->whereNull('handler')->orWhere('handler', '!=', 'bot')))
             ->when(in_array($data['view'] ?? null, ['abandoned', 'completed', 'handed_off'], true), fn ($q) => $q->where('bot_state', $data['view']))
             ->when($request->boolean('unread'), fn ($q) => $q->where('unread_count', '>', 0))
-            ->when(($data['state'] ?? null) === 'needs_reply', fn ($q) => $q->where('status', ConversationStatus::Open->value)->where('reply_state', ReplyState::NEEDS_REPLY))
-            ->when(($data['state'] ?? null) === 'waiting', fn ($q) => $q->where('status', ConversationStatus::Open->value)->where(fn ($w) => $w->whereNull('reply_state')->orWhere('reply_state', ReplyState::WAITING)))
+            ->when(! $searching && ($data['state'] ?? null) === 'needs_reply', fn ($q) => $q->where('status', ConversationStatus::Open->value)->where('reply_state', ReplyState::NEEDS_REPLY))
+            ->when(! $searching && ($data['state'] ?? null) === 'waiting', fn ($q) => $q->where('status', ConversationStatus::Open->value)->where(fn ($w) => $w->whereNull('reply_state')->orWhere('reply_state', ReplyState::WAITING)))
             ->when($request->boolean('after_hours'), fn ($q) => $q->where('reply_state', ReplyState::NEEDS_REPLY)->where('after_hours', true))
+            ->when(($data['window'] ?? null) === 'open', fn ($q) => $q->where('window_expires_at', '>', now()))
+            ->when(($data['window'] ?? null) === 'closed', fn ($q) => $q->where(fn ($w) => $w->whereNull('window_expires_at')->orWhere('window_expires_at', '<=', now())))
+            ->when($request->boolean('followup'), fn ($q) => $q->whereExists(fn ($e) => $e->selectRaw('1')->from('next_steps')
+                ->whereColumn('next_steps.contact_id', 'conversations.contact_id')->whereNull('next_steps.done_at')->whereNull('next_steps.cancelled_at')))
+            ->when($data['tag'] ?? null, fn ($q, string $tag) => $q->whereHas('contact', fn ($c) => $c->whereRaw('tags @> ARRAY[?]::text[]', [$tag])))
             // Snoozed conversations stay out of the way until their time (or until the customer writes).
-            ->when($request->boolean('snoozed'), fn ($q) => $q->where('snoozed_until', '>', now()), fn ($q) => $q->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now())))
-            ->when($data['q'] ?? null, function ($q, string $term) {
-                $digits = preg_replace('/\D+/', '', $term);
-                $q->whereHas('contact', fn ($c) => $c->withTrashed()->where(fn ($w) => $w
-                    ->where('name', 'ilike', "%{$term}%")
-                    ->orWhere('profile_name', 'ilike', "%{$term}%")
-                    ->when($digits !== '', fn ($w) => $w->orWhere('wa_id', 'like', "%{$digits}%"))));
-            })
-            // Needs reply: ad leads first (they cost money), then the longest waiting.
-            ->when(($data['state'] ?? null) === 'needs_reply' || $request->boolean('after_hours'), fn ($q) => $q->orderBy('reply_due_at')->orderBy('needs_reply_since')->orderByDesc('ad_lead')->orderBy('id'),
-                fn ($q) => $q->orderByDesc('last_message_at')->orderByDesc('id'));
+            // Search covers everything; All (include_snoozed) lists them with their wake-up time.
+            ->when($request->boolean('snoozed'), fn ($q) => $q->where('snoozed_until', '>', now()),
+                fn ($q) => $searching || $request->boolean('include_snoozed') ? $q : $q->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now())))
+            ->when($searching ? trim((string) $data['q']) : null, function ($q, string $term) {
+                $digits = ltrim((string) preg_replace('/\D+/', '', $term), '0');
+                $like = '%'.addcslashes($term, '%_\\').'%';
+                $q->where(fn ($outer) => $outer
+                    ->whereHas('contact', fn ($c) => $c->withTrashed()->where(fn ($w) => $w
+                        ->where('name', 'ilike', $like)
+                        ->orWhere('profile_name', 'ilike', $like)
+                        ->orWhere('username', 'ilike', $like)
+                        ->orWhere('email', 'ilike', $like)
+                        ->orWhere('company', 'ilike', $like)
+                        ->when(strlen($digits) >= 3, fn ($w) => $w->orWhere('wa_id', 'like', "%{$digits}%"))))
+                    // …and what was written in the chat.
+                    ->orWhereExists(fn ($m) => $m->selectRaw('1')->from('messages')->whereColumn('messages.conversation_id', 'conversations.id')
+                        ->where('messages.body', 'ilike', $like)));
+            });
 
-        return ConversationResource::collection($query->cursorPaginate((int) ($data['per_page'] ?? 30)));
+        $query->addSelect(['conversations.*', 'last_sender' => Message::query()->selectRaw("concat(origin, ':', coalesce(sent_by_membership_id::text, ''))")
+            ->whereColumn('messages.conversation_id', 'conversations.id')->orderByDesc('created_at')->limit(1)]);
+
+        $perPage = (int) ($data['per_page'] ?? 30);
+        $sort = $data['sort'] ?? null;
+        if ($sort !== null) {
+            // Offset pages ("cursor" = page number): the priority order is worked out, not a column.
+            $page = max(0, (int) ($data['cursor'] ?? 0));
+            match ($sort) {
+                'newest' => $query->orderByDesc('last_message_at')->orderByDesc('id'),
+                'waiting' => $query->orderByRaw('needs_reply_since ASC NULLS LAST')->tap(fn ($q) => self::priority($q)),
+                default => self::priority($query),
+            };
+            $rows = $query->offset($page * $perPage)->limit($perPage + 1)->get();
+            $more = $rows->count() > $perPage;
+            $rows = $rows->take($perPage);
+            self::withSteps($request, $rows);
+
+            return ConversationResource::collection($rows)->additional(['meta' => ['next_cursor' => $more ? (string) ($page + 1) : null, 'per_page' => $perPage]]);
+        }
+
+        // Needs reply: ad leads first (they cost money), then the longest waiting.
+        ($data['state'] ?? null) === 'needs_reply' || $request->boolean('after_hours')
+            ? $query->orderBy('reply_due_at')->orderBy('needs_reply_since')->orderByDesc('ad_lead')->orderBy('id')
+            : $query->orderByDesc('last_message_at')->orderByDesc('id');
+        $page = $query->cursorPaginate($perPage);
+        self::withSteps($request, collect($page->items()));
+
+        return ConversationResource::collection($page);
+    }
+
+    /**
+     * Priority (3.5): needs a reply with the window open (soonest to close first), needs a reply with the
+     * window closed (longest waiting first), waiting for the customer (latest activity), snoozed (soonest
+     * wake-up), resolved (latest).
+     *
+     * @param  Builder<Conversation>  $q
+     */
+    private static function priority($q): void
+    {
+        // The app's clock, not the database's, so every server and test agrees on "now".
+        $now = now()->toIso8601String();
+        $needs = "status = 'open' AND reply_state = '".ReplyState::NEEDS_REPLY."' AND (snoozed_until IS NULL OR snoozed_until <= ?::timestamptz)";
+        $q->orderByRaw("CASE WHEN {$needs} AND window_expires_at > ?::timestamptz THEN 0 WHEN {$needs} THEN 1 WHEN status = 'closed' THEN 4 WHEN snoozed_until > ?::timestamptz THEN 3 ELSE 2 END", [$now, $now, $now, $now])
+            ->orderByRaw("CASE WHEN {$needs} AND window_expires_at > ?::timestamptz THEN window_expires_at END ASC NULLS LAST", [$now, $now])
+            ->orderByRaw("CASE WHEN {$needs} THEN needs_reply_since END ASC NULLS LAST", [$now])
+            ->orderByRaw('CASE WHEN snoozed_until > ?::timestamptz THEN snoozed_until END ASC NULLS LAST', [$now])
+            ->orderByDesc('last_message_at')->orderByDesc('id');
+    }
+
+    /**
+     * The earliest open next step of each listed contact (the card's follow-up chip, "overdue").
+     *
+     * @param  Collection<int, Conversation>  $rows
+     */
+    private static function withSteps(Request $request, $rows): void
+    {
+        $ids = $rows->pluck('contact_id')->filter()->unique()->values();
+        $steps = $ids->isEmpty() ? collect() : DB::table('next_steps')->whereIn('contact_id', $ids)->whereNull('done_at')->whereNull('cancelled_at')
+            ->orderBy('due_at')->get(['id', 'contact_id', 'enquiry_id', 'type', 'title', 'due_at', 'assigned_membership_id'])->groupBy('contact_id');
+        $request->attributes->set('inbox.steps', $steps->map(fn ($g) => [
+            'first' => $g->first(),
+            'overdue' => $g->filter(fn ($s) => Carbon::parse($s->due_at)->isPast())->count(),
+            'open' => $g->count(),
+        ])->all());
+        ContactResource::recordFor($request)->preload($rows->pluck('contact')->filter());
     }
 
     /**
@@ -128,7 +222,71 @@ final class ConversationController extends Controller
     {
         $this->authorizeThread($conversation);
 
+        $conversation->setAttribute('last_sender', Message::query()->where('conversation_id', $conversation->id)->orderByDesc('created_at')
+            ->selectRaw("concat(origin, ':', coalesce(sent_by_membership_id::text, '')) AS s")->value('s'));
+
         return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
+    }
+
+    /** Inbox health (3.5): window expiry rate, human and automation first response, sales follow-up. */
+    public function health(Request $request, InboxHealth $health): JsonResponse
+    {
+        $id = $request->validate(['phone_number_id' => ['nullable', 'uuid']])['phone_number_id'] ?? null;
+
+        return response()->json(['data' => $health->report($this->membership(), $id)]);
+    }
+
+    /** "I'm typing" (3.5): told to the teammates who have this chat open. Throttled by the client. */
+    public function typing(Request $request, Conversation $conversation): JsonResponse
+    {
+        $this->authorizeThread($conversation);
+        $typing = $request->validate(['typing' => ['required', 'boolean']])['typing'];
+        $me = $this->membership();
+        try {
+            TeammateTyping::dispatch((string) $conversation->tenant_id, $conversation->id, $me->id, (string) ($me->user()->value('name') ?? 'A teammate'), (bool) $typing);
+        } catch (\Throwable) {
+            // Realtime is optional: without it the chat still warns before a duplicate reply is sent.
+        }
+
+        return response()->json(['data' => ['ok' => true]]);
+    }
+
+    /** Mark as unread (3.5, the chat's ⋯ menu): the chat shows its unread dot again. */
+    public function unread(Conversation $conversation): ConversationResource
+    {
+        $this->authorizeThread($conversation);
+        $conversation->forceFill(['unread_count' => max(1, (int) $conversation->unread_count)])->save();
+
+        return $this->show($conversation);
+    }
+
+    /**
+     * The chat's event lines (3.5): assignments, closures and reopenings, snoozes, the bot stopping,
+     * consent, stage moves, enquiries and next steps, shown between the messages and in the panel.
+     */
+    public function events(Conversation $conversation): JsonResponse
+    {
+        $this->authorizeThread($conversation);
+        $types = ['conversation.assigned', 'conversation.snoozed', 'conversation.unsnoozed', 'consent.changed', 'stage.changed', 'enquiry.started',
+            'flow.ended', 'next_step.added', 'next_step.done', 'next_step.cancelled', 'enquiry.updated', 'contact.updated'];
+        $rows = DB::table('timeline_events')->where('contact_id', $conversation->contact_id)->whereIn('type', $types)
+            ->where(fn ($w) => $w->where('subject_type', '!=', 'conversation')->orWhereNull('subject_type')->orWhere('subject_id', $conversation->id))
+            ->orderByDesc('occurred_at')->limit(200)->get();
+        $names = Resolutions::names();
+        $out = $rows->map(fn ($e) => ['id' => $e->id, 'type' => $e->type, 'at' => Carbon::parse($e->occurred_at)->toIso8601String(),
+            'actor' => $e->actor, 'actor_name' => $e->actor_name, 'data' => json_decode((string) $e->data, true) ?: (object) []])->all();
+        foreach (DB::table('conversation_resolutions')->where('conversation_id', $conversation->id)->get() as $r) {
+            $p = Resolutions::present($r, $names);
+            $out[] = ['id' => 'res-'.$r->id, 'type' => 'conversation.resolved', 'at' => $p['resolved_at'], 'actor' => $p['resolved_by'] ? 'agent' : 'system',
+                'actor_name' => $p['resolved_by']['name'] ?? null, 'data' => ['reason' => $p['reason'], 'reason_label' => $p['reason_label']]];
+            if ($p['reopened_at'] !== null) {
+                $out[] = ['id' => 'reo-'.$r->id, 'type' => 'conversation.reopened', 'at' => $p['reopened_at'], 'actor' => $p['reopened_by'] ? 'agent' : 'system',
+                    'actor_name' => $p['reopened_by']['name'] ?? null, 'data' => ['how' => $p['reopen_how']]];
+            }
+        }
+        usort($out, fn ($a, $b) => strcmp($a['at'], $b['at']));
+
+        return response()->json(['data' => array_values($out)]);
     }
 
     /** Open / close and (re)assign. Assignment needs inbox.assign; anyone with access may close. */

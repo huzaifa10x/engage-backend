@@ -9,6 +9,7 @@ use App\Domain\Chatbots\Models\ChatbotFlow;
 use App\Domain\Chatbots\Models\ChatbotFlowVersion;
 use App\Domain\Chatbots\Models\ChatbotSession;
 use App\Domain\Chatbots\Services\Chatbots;
+use App\Domain\Crm\Models\NextStep;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\InboxTools;
@@ -18,6 +19,7 @@ use App\Domain\Messaging\Services\Resolutions;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /** @mixin Conversation */
@@ -56,6 +58,10 @@ final class ConversationResource extends JsonResource
             'promise' => ReplyPromise::clock(app(TenantContext::class)->tenantOrNull(), $this->resource),
             // Closed: who resolved it, when and why (3.5).
             'resolution' => $this->status === ConversationStatus::Closed ? (($r = Resolutions::current((string) $this->id)) !== null ? Resolutions::present($r, self::memberNames($request)) : null) : null,
+            // Who wrote the last message, for the card's "You:", "Auto:", "Sara:" prefix (3.5).
+            'last_message_by' => $this->lastSender($request),
+            // The contact's earliest open next step and how many are overdue (the card's follow-up chip).
+            'next_step' => $this->nextStep($request),
             'unread_count' => $this->unread_count,
             'last_message_at' => $this->last_message_at?->toIso8601String(),
             'last_message_preview' => $this->getAttribute('last_message_preview'),
@@ -82,6 +88,47 @@ final class ConversationResource extends JsonResource
     }
 
     /** @return array<string, string> membership id → name, loaded once per request */
+    /** @return array{kind: string, name: ?string}|null */
+    private function lastSender(Request $request): ?array
+    {
+        $raw = $this->getAttribute('last_sender');
+        if (! is_string($raw) || $raw === '') {
+            return null;
+        }
+        [$origin, $member] = array_pad(explode(':', $raw, 2), 2, '');
+        $me = app(TenantContext::class)->membership()?->id;
+
+        return match ($origin) {
+            'customer', 'history' => ['kind' => 'customer', 'name' => null],
+            'agent' => $member !== '' && $member === $me ? ['kind' => 'you', 'name' => 'You'] : ['kind' => 'agent', 'name' => $member !== '' ? strtok(self::memberNames($request)[$member] ?? 'Teammate', ' ') : 'Teammate'],
+            'app_echo' => ['kind' => 'agent', 'name' => 'App'],
+            default => ['kind' => 'auto', 'name' => 'Auto'],
+        };
+    }
+
+    /** @return array<string, mixed>|null */
+    private function nextStep(Request $request): ?array
+    {
+        $all = $request->attributes->get('inbox.steps');
+        if (! is_array($all)) {
+            $rows = DB::table('next_steps')->where('contact_id', $this->contact_id)->whereNull('done_at')->whereNull('cancelled_at')->orderBy('due_at')
+                ->get(['id', 'contact_id', 'enquiry_id', 'type', 'title', 'due_at', 'assigned_membership_id']);
+            $mine = $rows->isEmpty() ? null : ['first' => $rows->first(), 'open' => $rows->count(), 'overdue' => $rows->filter(fn ($r) => Carbon::parse($r->due_at)->isPast())->count()];
+        } else {
+            $mine = $all[$this->contact_id] ?? null;
+        }
+        if ($mine === null) {
+            return null;
+        }
+        $f = $mine['first'];
+
+        return [
+            'id' => $f->id, 'type' => $f->type, 'type_label' => NextStep::TYPES[$f->type] ?? 'Other', 'title' => $f->title,
+            'due_at' => Carbon::parse($f->due_at)->toIso8601String(), 'enquiry_id' => $f->enquiry_id,
+            'open' => $mine['open'], 'overdue' => $mine['overdue'],
+        ];
+    }
+
     private static function memberNames(Request $request): array
     {
         if (! $request->attributes->has('inbox.member_names')) {
