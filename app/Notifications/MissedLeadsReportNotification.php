@@ -47,6 +47,6 @@ final class MissedLeadsReportNotification extends Notification implements Should
             $mail->line("• {$row['customer']}: waited ".intdiv((int) $row['waited_seconds'], 60).' min'.($row['answered'] ? '' : ', no reply yet').($row['owner'] ? " · {$row['owner']}" : ''));
         }
 
-        return $mail->action('Open the report', config('engage.frontend_url').'/insights#missed-leads');
+        return $mail->action('Open the report', config('engage.frontend_url').'/growth/leads?tab=missed');
     }
 }

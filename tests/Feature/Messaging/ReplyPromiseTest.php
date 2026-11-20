@@ -300,7 +300,9 @@ final class ReplyPromiseTest extends TestCase
         Notification::fake();
         $this->at(7, 8, 37);
         Artisan::call('engage:reports:missed-leads');
-        Notification::assertSentTo($this->owner->user, MissedLeadsReportNotification::class, fn ($n) => $n->report['over'] === 3 && $n->report['week']['from'] === '2026-11-23');
+        Notification::assertSentTo($this->owner->user, MissedLeadsReportNotification::class, fn ($n) => $n->report['over'] === 3 && $n->report['week']['from'] === '2026-11-23'
+            // The email opens the report in Growth Hub.
+            && str_ends_with((string) $n->toMail($this->owner->user)->actionUrl, '/growth/leads?tab=missed'));
     }
 
     /** @return array<string, array{0: list<array{0: string, 1: int, 2: int, 3?: int}>, 1: ?array{0: int, 1: int, 2: int}, 2: bool, 3?: int}> */
