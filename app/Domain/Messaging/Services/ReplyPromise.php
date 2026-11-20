@@ -47,7 +47,9 @@ final class ReplyPromise
         $phone = preg_replace('/\D+/', '', (string) ($s['owner_whatsapp']['phone'] ?? '')) ?: null;
 
         return [
-            'enabled' => (bool) ($s['enabled'] ?? true),
+            // On only with business hours set: the promise counts business minutes (pilot kit).
+            'enabled' => (bool) ($s['enabled'] ?? true) && BusinessHours::enabled($tenant),
+            'needs_business_hours' => ! BusinessHours::enabled($tenant),
             'limit_minutes' => $limit,
             'ladder' => $ladder,
             'owner_whatsapp' => ['phone' => $phone, 'template' => $template, 'ready' => $phone !== null && $template !== null],
@@ -71,7 +73,7 @@ final class ReplyPromise
     public static function clock(?Tenant $tenant, Conversation $conversation, ?Carbon $now = null): ?array
     {
         $since = $conversation->getAttribute('needs_reply_since');
-        if ($since === null || ReplyState::shown($conversation) !== ReplyState::NEEDS_REPLY) {
+        if ($since === null || ReplyState::shown($conversation) !== ReplyState::NEEDS_REPLY || ! self::settings($tenant)['enabled']) {
             return null;
         }
         $now ??= now();

@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Messaging;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Services\BusinessHours;
 use App\Domain\Messaging\Services\MissedLeadsReport;
 use App\Domain\Messaging\Services\ReplyPromise;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -54,6 +55,10 @@ final class ReplyPromiseController extends Controller
         }
 
         $tenant = $this->context->tenant();
+        // The promise counts business minutes, so it needs business hours (pilot kit).
+        if (($data['enabled'] ?? false) === true && ! BusinessHours::enabled($tenant)) {
+            throw ValidationException::withMessages(['enabled' => 'Set your business hours first: the reply promise counts only time when you are open.']);
+        }
         $settings = (array) ($tenant->settings ?? []);
         $before = ReplyPromise::settings($tenant);
         $settings['promise'] = array_replace((array) ($settings['promise'] ?? []), $data);

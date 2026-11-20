@@ -419,4 +419,22 @@ final class ReplyPromiseTest extends TestCase
         $since = $this->getJson("/api/v1/conversations/{$c->id}")->json('data.needs_reply_since');
         $this->assertSame(Carbon::parse('2026-11-23 17:00', 'Asia/Dubai')->utc()->toIso8601String(), Carbon::parse($since)->utc()->toIso8601String());
     }
+
+    public function test_the_promise_needs_business_hours_to_be_on(): void
+    {
+        $week = [];
+        foreach (['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as $d) {
+            $week[$d] = ['open' => true, 'from' => '09:00', 'to' => '18:00'];
+        }
+        $this->putJson('/api/v1/tenant/inbox-settings', ['business_hours' => ['enabled' => false, 'days' => $week]])->assertOk();
+        $this->getJson('/api/v1/tenant/reply-promise')->assertOk()->assertJsonPath('data.enabled', false)->assertJsonPath('data.needs_business_hours', true);
+        $this->putJson('/api/v1/tenant/reply-promise', ['enabled' => true])->assertUnprocessable()
+            ->assertJsonPath('error.details.fields.enabled.0', 'Set your business hours first: the reply promise counts only time when you are open.');
+
+        $this->customer('Hi');
+        $this->assertNull($this->getJson("/api/v1/conversations/{$this->conversation()->id}")->json('data.promise'));
+
+        $this->putJson('/api/v1/tenant/inbox-settings', ['business_hours' => ['enabled' => true, 'days' => $week]])->assertOk();
+        $this->putJson('/api/v1/tenant/reply-promise', ['enabled' => true])->assertOk()->assertJsonPath('data.enabled', true);
+    }
 }
