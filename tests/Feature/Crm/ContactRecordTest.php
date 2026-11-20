@@ -149,4 +149,25 @@ final class ContactRecordTest extends TestCase
         $this->assertSame($this->owner->id, $this->tenantContext()->run($this->tenant, fn () => Contact::query()->findOrFail($id)->owner_membership_id));
         $this->assertTrue($this->tenantContext()->run($this->tenant, fn () => DB::table('member_notifications')->where('membership_id', $this->owner->id)->where('title', 'like', '%started a chat with your customer Omar%')->exists()));
     }
+
+    public function test_phone_is_editable_until_the_contact_has_a_chat_and_duplicates_are_refused(): void
+    {
+        $a = $this->postJson('/api/v1/contacts', ['email' => 'mina@example.com', 'name' => 'Mina'])->assertCreated()->json('data.id');
+        $b = $this->postJson('/api/v1/contacts', ['phone' => '+971502223344', 'name' => 'Omar'])->assertCreated()->json('data.id');
+
+        $this->patchJson("/api/v1/contacts/{$a}", ['phone' => '+971 50 222 3344'])->assertUnprocessable()
+            ->assertJsonPath(self::ERRORS.'.phone.0', fn (string $m) => str_contains($m, 'Omar') && str_contains($m, 'Merge instead'));
+        $this->patchJson("/api/v1/contacts/{$a}", ['phone' => '+971 50 999 8877'])->assertOk()->assertJsonPath('data.wa_id', '971509998877');
+        $this->getJson("/api/v1/contacts/{$a}/changes")->assertOk()->assertJsonPath('data.0.field', 'phone');
+
+        // Once WhatsApp gave the number for a chat, it is read-only.
+        $this->postJson('/api/v1/messages', ['phone_number_id' => $this->number->id, 'contact_id' => $b, 'permission' => ['via' => 'form']] + $this->template())->assertSuccessful();
+        $this->patchJson("/api/v1/contacts/{$b}", ['phone' => '+971 50 111 0000'])->assertUnprocessable();
+
+        // Sorted by last activity, newest first, with page numbers as the cursor.
+        $page = $this->getJson('/api/v1/contacts?sort=activity&per_page=1')->assertOk();
+        $this->assertSame($b, $page->json('data.0.id'));
+        $this->assertSame('2', $page->json('meta.next_cursor'));
+        $this->getJson('/api/v1/contacts?sort=activity&per_page=1&cursor=2')->assertOk()->assertJsonPath('data.0.id', $a)->assertJsonPath('meta.next_cursor', null);
+    }
 }

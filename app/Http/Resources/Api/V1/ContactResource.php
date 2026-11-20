@@ -15,6 +15,7 @@ use App\Domain\Tenancy\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Pagination\AbstractPaginator;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /** @mixin Contact */
@@ -57,6 +58,7 @@ final class ContactResource extends JsonResource
             'marketing_opted_out' => $this->marketing_opted_out,
             'last_inbound_at' => $this->last_inbound_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
+            'last_activity_at' => $this->last_activity_at !== null ? Carbon::parse($this->last_activity_at)->toIso8601String() : null,
             // Growth Hub: where this contact came from. Null while Growth Hub is off for the workspace;
             // the chip only ({status, label}) for people without growth.view (Agents).
             'acquisition' => $this->acquisition(),

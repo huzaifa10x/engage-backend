@@ -31,6 +31,23 @@ final class ContactController extends Controller
 {
     public function index(Request $request, SegmentQuery $segments): AnonymousResourceCollection
     {
+        // Contacts & CRM 3.5 lists by last activity (a message either way, an edit, or creation), newest first.
+        if ($request->input('sort') === 'activity') {
+            $per = (int) ($request->integer('per_page') ?: 50);
+            $page = max(1, (int) $request->input('cursor', 1));
+            $rows = $this->filtered($request, $segments)
+                ->with(['syncedFrom', 'stage'])
+                ->select('contacts.*')
+                ->selectRaw(self::ACTIVITY_SQL.' AS last_activity_at')
+                ->orderByDesc('last_activity_at')
+                ->orderByDesc('id')
+                ->offset(($page - 1) * $per)
+                ->limit($per + 1)
+                ->get();
+
+            return ContactResource::collection($rows->take($per))
+                ->additional(['meta' => ['next_cursor' => $rows->count() > $per ? (string) ($page + 1) : null, 'per_page' => $per]]);
+        }
         $contacts = $this->filtered($request, $segments)
             ->with(['syncedFrom', 'stage'])
             ->orderByDesc('created_at')
@@ -104,6 +121,10 @@ final class ContactController extends Controller
             ->when($data['consent'] ?? null, fn ($q, string $c) => $q->where('consent_state', $c));
     }
 
+    /** The latest of: the contact's last chat message, an edit to the record, its creation. */
+    private const ACTIVITY_SQL = 'greatest(contacts.updated_at, contacts.created_at, '
+        .'coalesce((SELECT max(cv.last_message_at) FROM conversations cv WHERE cv.contact_id = contacts.id), contacts.created_at))';
+
     /** Another contact has the same phone digits, email or WhatsApp user id. */
     private const DUPLICATE_SQL = 'EXISTS (SELECT 1 FROM contacts o WHERE o.id <> contacts.id AND o.tenant_id = contacts.tenant_id AND o.deleted_at IS NULL AND ('
         ."(contacts.wa_id IS NOT NULL AND regexp_replace(coalesce(o.wa_id, ''), '\\D', '', 'g') = regexp_replace(contacts.wa_id, '\\D', '', 'g'))"
@@ -168,7 +189,15 @@ final class ContactController extends Controller
             'language' => ['sometimes', 'nullable', 'string', 'max:40'],
             'lead_status' => ['sometimes', 'nullable', Rule::in(array_keys(ContactRecord::LEAD_STATUSES))],
             'owner_membership_id' => ['sometimes', 'nullable', 'uuid'],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
         ]);
+        if (array_key_exists('phone', $data)) {
+            $this->changePhone($contact, $data['phone'], array_key_exists('email', $data) ? $data['email'] : $contact->email, $record);
+            unset($data['phone']);
+        }
+        if (array_key_exists('email', $data) && ($data['email'] === null || trim((string) $data['email']) === '') && $contact->wa_id === null && $contact->bsuid === null) {
+            throw ValidationException::withMessages(['email' => 'A contact needs a phone, a WhatsApp ID or an email.']);
+        }
         if (array_key_exists('lead_status', $data) && $data['lead_status'] !== null && $record->lifecycle($contact)['key'] === 'customer') {
             throw ValidationException::withMessages(['lead_status' => "Customers don't have a lead status."]);
         }
@@ -177,6 +206,35 @@ final class ContactController extends Controller
         }
 
         return ContactResource::make($contacts->update($contact, $data));
+    }
+
+    /**
+     * The WhatsApp phone can be typed in only while the contact has no chat: once WhatsApp gave the number,
+     * it is read-only. Another contact with the same number blocks it (merge instead).
+     */
+    private function changePhone(Contact $contact, ?string $phone, ?string $email, ContactRecord $record): void
+    {
+        if ($contact->wa_id !== null && Conversation::query()->where('contact_id', $contact->id)->exists()) {
+            throw ValidationException::withMessages(['phone' => 'Comes from WhatsApp for this chat. Read-only.']);
+        }
+        $waId = $phone === null || trim($phone) === '' ? null : Contact::checkedPhone($phone);
+        if ($waId === null && ($email === null || trim($email) === '') && $contact->bsuid === null) {
+            throw ValidationException::withMessages(['phone' => 'A contact needs a phone, a WhatsApp ID or an email.']);
+        }
+        if ($waId !== null && ($other = Contact::query()->where('wa_id', $waId)->whereKeyNot($contact->id)->first()) !== null) {
+            throw ValidationException::withMessages(['phone' => $other->displayName().' ('.self::engageId($other->id).') already has this number. Merge instead.']);
+        }
+        if ($waId === $contact->wa_id) {
+            return;
+        }
+        $record->note($contact, 'phone', 'WhatsApp phone', $contact->wa_id !== null ? '+'.$contact->wa_id : null, $waId !== null ? '+'.$waId : null);
+        $contact->forceFill(['wa_id' => $waId])->save();
+    }
+
+    /** The short engageX ID people see: "EX-" and the last 6 characters of the contact id. */
+    public static function engageId(string $id): string
+    {
+        return 'EX-'.mb_strtoupper(mb_substr(str_replace('-', '', $id), -6));
     }
 
     /** The record's field history: who changed what, newest first. */

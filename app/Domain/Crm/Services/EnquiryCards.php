@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\Domain\Crm\Services;
 
+use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Crm\Models\NextStep;
 use App\Domain\Messaging\Models\Contact;
+use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\Timeline\Enquiries;
 use App\Domain\Timeline\Enquiry;
 use Illuminate\Support\Carbon;
@@ -42,6 +45,13 @@ final class EnquiryCards
         $won = DB::table('contact_stage_events')->whereIn('enquiry_id', $ids)->whereIn('to_stage_id', $wonIds)
             ->orderByDesc('changed_at')->get(['enquiry_id', 'reason', 'changed_by_membership_id', 'changed_at', 'source'])->unique('enquiry_id')->keyBy('enquiry_id');
         $contacts = $withContact ? Contact::query()->withTrashed()->whereIn('id', $list->pluck('contact_id')->unique())->get()->keyBy('id') : collect();
+        $chats = [];
+        $member = app(TenantContext::class)->membership();
+        if ($withContact && $member !== null) {
+            $q = Conversation::query()->whereIn('contact_id', $list->pluck('contact_id')->unique())->orderBy('last_message_at');
+            app(NumberAccess::class)->scopeChats($q, $member);
+            $chats = $q->pluck('id', 'contact_id')->all();   // later rows win: the latest chat per contact
+        }
 
         $rows = [];
         foreach ($list as $e) {
@@ -98,7 +108,8 @@ final class EnquiryCards
             ];
             if ($withContact) {
                 $c = $contacts[$e->contact_id] ?? null;
-                $row['contact'] = $c !== null ? ['id' => $c->id, 'name' => $c->displayName(), 'deleted' => $c->trashed()] : null;
+                // The latest chat the viewer may open (the board card's chat button, 3.5).
+                $row['contact'] = $c !== null ? ['id' => $c->id, 'name' => $c->displayName(), 'deleted' => $c->trashed(), 'chat_id' => $chats[$c->id] ?? null] : null;
             }
             $rows[] = $row;
         }
