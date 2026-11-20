@@ -142,7 +142,7 @@ final class InboxEngagementTest extends TestCase
         $this->assertSame('needs_reply', $this->getJson("/api/v1/conversations/{$c->id}")->json('data.state'));
     }
 
-    public function test_a_snoozed_chat_comes_back_as_needs_reply_through_the_scheduler(): void
+    public function test_a_snoozed_chat_comes_back_through_the_scheduler_with_its_reply_state_worked_out(): void
     {
         $this->customer('Hi');
         $c = $this->conversation();
@@ -152,7 +152,8 @@ final class InboxEngagementTest extends TestCase
 
         $this->travel(121)->minutes();
         Artisan::call('engage:inbox:wake-snoozed');
-        $this->assertSame('needs_reply', $this->getJson("/api/v1/conversations/{$c->id}")->json('data.state'));
+        // The team replied last, so it is back waiting for the customer (batch 7: reply state is always calculated).
+        $this->assertSame('waiting', $this->getJson("/api/v1/conversations/{$c->id}")->json('data.state'));
         $this->tenantContext()->run($this->tenant, fn () => $this->assertSame('done', DB::table('scheduled_actions')->where('kind', 'snooze_return')->value('status')));
     }
 

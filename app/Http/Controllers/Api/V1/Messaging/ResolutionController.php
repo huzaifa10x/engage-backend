@@ -93,12 +93,15 @@ final class ResolutionController extends Controller
             ]);
             if ($conversation->status === ConversationStatus::Closed && $row->reopened_at === null) {
                 DB::table('conversation_resolutions')->where('id', $row->id)->update(['reopened_at' => now(), 'reopen_how' => 'flag', 'reopened_by_membership_id' => $this->membership()->id]);
-                $conversation->forceFill(['status' => ConversationStatus::Open, 'closed_at' => null] + ReplyState::reopened());
+                $conversation->forceFill(['status' => ConversationStatus::Open, 'closed_at' => null] + ReplyState::reopened($conversation));
             }
             if ($row->resolved_by_membership_id !== null && TenantMembership::query()->active()->whereKey($row->resolved_by_membership_id)->exists()) {
                 $conversation->assigned_membership_id = $row->resolved_by_membership_id;
             }
             $conversation->save();
+            if ($conversation->wasChanged('status')) {
+                ReplyState::alertsFromNow($conversation);
+            }
             ConversationNote::query()->create([
                 'conversation_id' => $conversation->id, 'membership_id' => $this->membership()->id,
                 'body' => 'Flagged for review: '.$data['note'], 'mentions' => array_filter([$row->resolved_by_membership_id]),

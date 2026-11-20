@@ -347,7 +347,8 @@ final class ConversationController extends Controller
                 $conversation->forceFill(ReplyState::recalculate($conversation));
             } elseif ($reopening) {
                 Resolutions::reopened($conversation, 'agent', $this->membership()->id);
-                $conversation->forceFill(ReplyState::reopened());
+                $conversation->forceFill(ReplyState::reopened($conversation));
+                $alertsFromNow = true;
             }
         }
         if (array_key_exists('assigned_membership_id', $data)) {
@@ -357,6 +358,9 @@ final class ConversationController extends Controller
             $conversation->assigned_team_id = $data['assigned_team_id'];
         }
         $conversation->save();
+        if ($alertsFromNow ?? false) {
+            ReplyState::alertsFromNow($conversation);
+        }
         // Closing ends any chatbot session; the next customer message may start the bot again.
         if (($data['status'] ?? null) === ConversationStatus::Closed->value && $before['status'] !== 'closed') {
             app(Chatbots::class)->stop($conversation, 'closed');

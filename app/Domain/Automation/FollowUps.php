@@ -102,7 +102,7 @@ final class FollowUps
     }
 
     /** A chat started needing a reply: schedule the team-side rules for this wait. */
-    public static function waitStarted(Conversation $conversation, Carbon $since, ?Carbon $windowEnds): void
+    public static function waitStarted(Conversation $conversation, Carbon $since, ?Carbon $windowEnds, ?Carbon $alertsFrom = null): void
     {
         $context = app(TenantContext::class);
         $tenant = $context->tenantOrNull();
@@ -117,10 +117,12 @@ final class FollowUps
         // One action per rule and wait. The key also carries the rule's setting, so a changed setting
         // schedules again (FollowUpController cancels the pending ones); a rule that already ran or was
         // skipped for this wait never runs twice.
-        $prefix = fn (string $kind) => "{$kind}:{$conversation->id}:{$since->getTimestamp()}";
+        // $alertsFrom: the wait is older (a reopened chat, a snooze that ended) but its alerts count from then.
+        $stamp = $since->getTimestamp().($alertsFrom !== null ? '-'.$alertsFrom->getTimestamp() : '');
+        $prefix = fn (string $kind) => "{$kind}:{$conversation->id}:{$stamp}";
         $decided = fn (string $kind) => DB::table('scheduled_actions')->where('tenant_id', $tenant->id)
             ->where('dedupe_key', 'like', $prefix($kind).'%')->whereIn('status', ['pending', 'done', 'skipped'])->exists();
-        $after = fn (int $minutes) => BusinessHours::addSeconds($tenant, $number, $since, $minutes * 60);
+        $after = fn (int $minutes) => BusinessHours::addSeconds($tenant, $number, $alertsFrom ?? $since, $minutes * 60);
 
         if ($can['team'] && $s['reply_alert']['enabled'] && ! $decided('reply_alert')) {
             $scheduler->schedule('reply_alert', $after($s['reply_alert']['minutes']), $prefix('reply_alert').':'.$s['reply_alert']['minutes'], $conversation, payload: ['episode' => $episode, 'minutes' => $s['reply_alert']['minutes']], priority: 50);

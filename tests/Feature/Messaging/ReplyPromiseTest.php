@@ -378,4 +378,45 @@ final class ReplyPromiseTest extends TestCase
             $this->assertCount($alerts, $this->getJson("/api/v1/conversations/{$c->id}/wait-alerts")->json('data'));
         }
     }
+
+    public function test_reopening_and_a_snooze_ending_work_the_reply_state_out_from_the_messages(): void
+    {
+        // Answered, then resolved: reopening by hand leaves it waiting for the customer.
+        $this->at(0, 10);
+        $this->customer('Do you have it in blue?');
+        $c = $this->conversation();
+        $this->at(0, 10, 5);
+        $this->reply($c);
+        $this->patchJson("/api/v1/conversations/{$c->id}", ['status' => 'closed', 'reason' => 'resolved'])->assertOk();
+        $this->patchJson("/api/v1/conversations/{$c->id}", ['status' => 'open'])->assertOk();
+        $this->assertSame('waiting', $this->state($c));
+
+        // The customer wrote last and nobody answered: reopening needs a reply, waiting since that message.
+        $this->at(0, 11);
+        $this->customer('And in red?');
+        $this->at(0, 11, 10);
+        $this->patchJson("/api/v1/conversations/{$c->id}", ['status' => 'closed', 'reason' => 'no_action'])->assertOk();
+        $this->at(0, 15);
+        $this->patchJson("/api/v1/conversations/{$c->id}", ['status' => 'open'])->assertOk();
+        $this->assertSame('needs_reply', $this->state($c));
+        $since = $this->getJson("/api/v1/conversations/{$c->id}")->json('data.needs_reply_since');
+        $this->assertSame(Carbon::parse('2026-11-23 11:00', 'Asia/Dubai')->utc()->toIso8601String(), Carbon::parse($since)->utc()->toIso8601String());
+
+        // Answered, then snoozed: when the snooze ends it is still waiting for the customer, not Needs reply.
+        $this->reply($c);
+        $this->postJson("/api/v1/conversations/{$c->id}/snooze", ['until' => now()->addHour()->toIso8601String()])->assertOk();
+        $this->at(0, 16, 30);
+        Artisan::call('engage:inbox:wake-snoozed');
+        $this->assertSame('waiting', $this->state($c));
+
+        // Unanswered, then snoozed: it comes back as Needs reply, from the customer's message.
+        $this->at(0, 17);
+        $this->customer('Hello?');
+        $this->postJson("/api/v1/conversations/{$c->id}/snooze", ['until' => now()->addMinutes(30)->toIso8601String()])->assertOk();
+        $this->at(1, 9, 15);
+        Artisan::call('engage:inbox:wake-snoozed');
+        $this->assertSame('needs_reply', $this->state($c));
+        $since = $this->getJson("/api/v1/conversations/{$c->id}")->json('data.needs_reply_since');
+        $this->assertSame(Carbon::parse('2026-11-23 17:00', 'Asia/Dubai')->utc()->toIso8601String(), Carbon::parse($since)->utc()->toIso8601String());
+    }
 }

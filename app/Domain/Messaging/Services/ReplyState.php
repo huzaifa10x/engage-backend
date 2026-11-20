@@ -215,25 +215,66 @@ final class ReplyState
     }
 
     /**
-     * A chat was reopened by hand: nobody is waiting yet.
+     * A chat was reopened by hand (or flagged and reopened): who it waits on is worked out from its
+     * messages, never set. When the customer's message is still unanswered it needs a reply, waiting
+     * since that message; the alerts for this wait start now, so reopening never fires a burst of
+     * overdue alerts.
      *
      * @return array<string, mixed>
      */
-    public static function reopened(): array
+    public static function reopened(Conversation $conversation): array
     {
-        return ['reply_state' => self::WAITING, 'needs_reply_since' => null, 'reply_due_at' => null, 'opened_at' => now()];
+        return self::fromMessages($conversation) + ['opened_at' => now()];
     }
 
     /**
-     * A snooze ended: the chat comes back as Needs reply.
+     * A snooze ended: the chat is back in the queue, and its reply state is worked out from its messages
+     * (Needs reply only while the customer's last message is unanswered). Alerts start now.
      *
      * @return array<string, mixed>
      */
     public static function snoozeEnded(Conversation $conversation): array
     {
-        return ['snoozed_until' => null, 'reply_state' => self::NEEDS_REPLY, 'needs_reply_since' => now(),
-            'reply_due_at' => ReplyPromise::dueAt(app(TenantContext::class)->tenantOrNull(), $conversation->phone_number_id, now())]
+        return ['snoozed_until' => null] + self::fromMessages($conversation)
             + ($conversation->getAttribute('opened_at') === null ? ['opened_at' => now()] : []);
+    }
+
+    /**
+     * The reply state from the human-reply rule alone: the customer's first message after the last
+     * person's reply WhatsApp accepted. No side effects.
+     *
+     * @return array<string, mixed>
+     */
+    public static function fromMessages(Conversation $conversation): array
+    {
+        $accepted = [MessageStatus::Accepted->value, MessageStatus::Sent->value, MessageStatus::Delivered->value, MessageStatus::Read->value];
+        $time = 'COALESCE(meta_timestamp, created_at)';
+        $lastReply = Message::query()->where('conversation_id', $conversation->id)->where('direction', Message::OUTBOUND)
+            ->whereIn('origin', [MessageOrigin::Agent->value, MessageOrigin::Api->value, MessageOrigin::AppEcho->value])
+            ->whereIn('status', $accepted)->max(DB::raw($time));
+        $firstUnanswered = Message::query()->where('conversation_id', $conversation->id)->where('direction', Message::INBOUND)
+            ->where('origin', MessageOrigin::Customer->value)
+            ->when($lastReply !== null, fn ($q) => $q->where(DB::raw($time), '>', $lastReply))->min(DB::raw($time));
+        if ($firstUnanswered === null) {
+            return ['reply_state' => self::WAITING, 'needs_reply_since' => null, 'reply_due_at' => null, 'after_hours' => false];
+        }
+        $since = Carbon::parse($firstUnanswered);
+        $tenant = app(TenantContext::class)->tenantOrNull();
+
+        return [
+            'reply_state' => self::NEEDS_REPLY,
+            'needs_reply_since' => $since,
+            'reply_due_at' => ReplyPromise::dueAt($tenant, $conversation->phone_number_id, $since),
+            'after_hours' => ! BusinessHours::isOpen($tenant, $conversation->phone_number_id, $since),
+        ];
+    }
+
+    /** After reopening or a snooze ending: a chat that needs a reply gets its alerts, counted from now. */
+    public static function alertsFromNow(Conversation $conversation): void
+    {
+        if ($conversation->getAttribute('reply_state') === self::NEEDS_REPLY) {
+            FollowUps::waitStarted($conversation, Carbon::parse($conversation->getAttribute('needs_reply_since')), $conversation->window_expires_at, now());
+        }
     }
 
     /** The state shown in the inbox. */

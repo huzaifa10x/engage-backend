@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
-use App\Domain\Automation\FollowUps;
 use App\Domain\Automation\Scheduler;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\InboxTools;
@@ -13,7 +12,6 @@ use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use Illuminate\Console\Command;
-use Illuminate\Support\Carbon;
 
 /**
  * Every minute: runs the scheduler's due actions (snooze returns, the after-hours ledger, later
@@ -42,11 +40,10 @@ final class WakeSnoozedConversations extends Command
                     if (Conversation::query()->whereKey($conversation->id)->whereNotNull('snoozed_until')->where('snoozed_until', '<=', now())->update($back) !== 1) {
                         continue;
                     }
-                    // A new wait: its follow-up alerts start now.
+                    // Still unanswered: its alerts start now.
                     $fresh = $conversation->fresh();
                     if ($fresh !== null) {
-                        $since = Carbon::parse($back['needs_reply_since']);
-                        FollowUps::waitStarted($fresh, $since, $fresh->window_expires_at);
+                        ReplyState::alertsFromNow($fresh);
                     }
                     $member = $conversation->assigned_membership_id !== null ? TenantMembership::query()->find($conversation->assigned_membership_id) : null;
                     if ($member !== null) {
