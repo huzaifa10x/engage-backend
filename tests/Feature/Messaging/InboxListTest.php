@@ -82,7 +82,12 @@ final class InboxListTest extends TestCase
         $won = collect($map)->firstWhere('stage.group', 'won');
         $this->assertSame('closedwon', $won['hubspot']);
         $first = $map[0]['stage']['id'];
-        $this->putJson('/api/v1/crm/sync', ['stage_map' => [$first => ['hubspot' => 'qualifiedtobuy', 'zoho' => 'Needs Analysis']]])->assertOk()
+        $this->putJson('/api/v1/crm/sync', ['stage_map' => [$first => ['hubspot' => 'qualifiedtobuy']]])->assertOk()
             ->assertJsonPath('data.stage_map.0.hubspot', 'qualifiedtobuy');
+        // HubSpot only: Zoho is hidden everywhere (batch 7).
+        $sync = $this->getJson('/api/v1/crm/sync')->json('data');
+        $this->assertArrayNotHasKey('zoho_stages', $sync);
+        $this->assertArrayNotHasKey('zoho', $sync['stage_map'][0]);
+        $this->assertStringNotContainsStringIgnoringCase('zoho', (string) json_encode($sync));
     }
 }

@@ -13,15 +13,13 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 /**
- * Contacts & CRM › Fields & sync (3.5). How Engage's fields and stages map to HubSpot and Zoho CRM, kept
- * for when a CRM is connected. Connecting HubSpot or Zoho is not available yet, so every contact shows
- * "Not connected" and nothing leaves Engage.
+ * Contacts & CRM › Fields & sync (3.5). How Engage's fields and stages map to HubSpot, kept for when it is
+ * connected. HubSpot is the only CRM offered (batch 7: Zoho is hidden). Connecting is not available yet,
+ * so every contact shows "Not connected" and nothing leaves Engage.
  */
 final class CrmSyncController extends Controller
 {
     public const HUBSPOT_STAGES = ['appointmentscheduled', 'qualifiedtobuy', 'presentationscheduled', 'decisionmakerboughtin', 'contractsent', 'closedwon', 'closedlost'];
-
-    public const ZOHO_STAGES = ['Qualification', 'Needs Analysis', 'Value Proposition', 'Identify Decision Makers', 'Proposal/Price Quote', 'Negotiation/Review', 'Closed Won', 'Closed Lost'];
 
     public function __construct(private readonly TenantContext $context) {}
 
@@ -35,10 +33,9 @@ final class CrmSyncController extends Controller
         $data = $request->validate([
             'stage_map' => ['required', 'array', 'max:50'],
             'stage_map.*.hubspot' => ['nullable', Rule::in(self::HUBSPOT_STAGES)],
-            'stage_map.*.zoho' => ['nullable', Rule::in(self::ZOHO_STAGES)],
         ]);
         $ids = CrmStage::query()->pluck('id')->flip();
-        $map = array_filter($data['stage_map'], fn ($v, $k) => isset($ids[$k]), ARRAY_FILTER_USE_BOTH);
+        $map = array_map(fn ($v) => ['hubspot' => $v['hubspot'] ?? null], array_filter($data['stage_map'], fn ($v, $k) => isset($ids[$k]), ARRAY_FILTER_USE_BOTH));
         $tenant = $this->context->tenant();
         $settings = (array) ($tenant->settings ?? []);
         $before = $settings['crm_sync']['stage_map'] ?? [];
@@ -58,20 +55,19 @@ final class CrmSyncController extends Controller
         $map = $stages->mapWithKeys(function (CrmStage $s) use ($saved, &$openIndex) {
             // Defaults: open stages in order, Won and Lost to the closed stages.
             $default = match ($s->group) {
-                CrmStage::WON => ['hubspot' => 'closedwon', 'zoho' => 'Closed Won'],
-                CrmStage::LOST => ['hubspot' => 'closedlost', 'zoho' => 'Closed Lost'],
-                default => ['hubspot' => self::HUBSPOT_STAGES[min($openIndex, 4)], 'zoho' => self::ZOHO_STAGES[min($openIndex++, 5)]],
+                CrmStage::WON => 'closedwon',
+                CrmStage::LOST => 'closedlost',
+                default => self::HUBSPOT_STAGES[min($openIndex++, 4)],
             };
 
-            return [$s->id => ['stage' => $s->summary(), 'hubspot' => $saved[$s->id]['hubspot'] ?? $default['hubspot'], 'zoho' => $saved[$s->id]['zoho'] ?? $default['zoho']]];
+            return [$s->id => ['stage' => $s->summary(), 'hubspot' => $saved[$s->id]['hubspot'] ?? $default]];
         });
 
         return [
             'provider' => 'none',
-            'providers_available' => [],      // HubSpot and Zoho CRM come in a later release
+            'providers_available' => [],      // HubSpot comes in a later release
             'stage_map' => $map->values()->all(),
             'hubspot_stages' => self::HUBSPOT_STAGES,
-            'zoho_stages' => self::ZOHO_STAGES,
         ];
     }
 }
