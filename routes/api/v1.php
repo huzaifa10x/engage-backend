@@ -366,29 +366,23 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
         ->middleware('can:'.Permission::TemplatesCreate->value)->name('templates.destroy');
 
     /*
-    | Billing: plan, invoice details (company, country, VAT TRN), invoices, Stripe Checkout / Portal
+    | Billing (Batch 6): plan, invoice details, invoices. Every money action opens a Stripe-hosted page
+    | (Checkout or the Customer Portal); the plan changes when Stripe's webhook confirms it.
     */
     Route::middleware('can:'.Permission::BillingView->value)->group(function () {
         Route::get('billing', [BillingController::class, 'show'])->name('billing.show');
+        Route::get('billing/summary', [BillingController::class, 'show'])->name('billing.summary');
         Route::get('billing/invoices', [BillingController::class, 'invoices'])->name('billing.invoices');
-        Route::get('billing/payment-methods', [BillingController::class, 'paymentMethods'])->name('billing.payment-methods');
+        Route::get('billing/invoices/{invoice}/pdf', [BillingController::class, 'invoicePdf'])->middleware('throttle:30,1')->name('billing.invoices.pdf');
+        Route::get('billing/payment-method', [BillingController::class, 'paymentMethod'])->name('billing.payment-method');
         Route::get('billing/payments', [BillingController::class, 'payments'])->name('billing.payments');
     });
     Route::middleware(['can:'.Permission::BillingManage->value, 'throttle:40,1'])->group(function () {
         Route::put('billing/details', [BillingController::class, 'updateDetails'])->name('billing.details');
-        Route::post('billing/preview', [BillingController::class, 'preview'])->name('billing.preview');
-        Route::post('billing/subscribe', [BillingController::class, 'subscribe'])->name('billing.subscribe');
-        Route::post('billing/refresh', [BillingController::class, 'refresh'])->name('billing.refresh');
-        Route::post('billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
-        Route::post('billing/resume', [BillingController::class, 'resume'])->name('billing.resume');
+        Route::post('billing/checkout', [BillingController::class, 'checkout'])->name('billing.checkout');
+        Route::post('billing/portal', [BillingController::class, 'portal'])->name('billing.portal');
+        Route::post('billing/return', [BillingController::class, 'confirmReturn'])->name('billing.return');
         Route::post('billing/switch-to-free', [BillingController::class, 'switchToFree'])->name('billing.switch-to-free');
-        Route::post('billing/payment-methods/setup-intent', [BillingController::class, 'setupIntent'])->name('billing.payment-methods.setup');
-        Route::put('billing/payment-methods/{paymentMethod}/default', [BillingController::class, 'setDefaultPaymentMethod'])
-            ->where('paymentMethod', 'pm_[A-Za-z0-9]+')->name('billing.payment-methods.default');
-        Route::delete('billing/payment-methods/{paymentMethod}', [BillingController::class, 'removePaymentMethod'])
-            ->where('paymentMethod', 'pm_[A-Za-z0-9]+')->name('billing.payment-methods.remove');
-        Route::post('billing/invoices/{invoice}/pay', [BillingController::class, 'payInvoice'])->name('billing.invoices.pay');
-        Route::post('billing/invoices/{invoice}/refresh', [BillingController::class, 'refreshInvoice'])->name('billing.invoices.refresh');
     });
 
     /*

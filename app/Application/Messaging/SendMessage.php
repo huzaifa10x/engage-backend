@@ -16,9 +16,11 @@ use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\ConversationTracker;
 use App\Domain\Messaging\Services\MessagingLimits;
+use App\Domain\Plans\Entitlements\ReplySeats;
 use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Templates\Services\TemplateMessage;
 use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Support\Facades\DB;
@@ -53,6 +55,13 @@ final class SendMessage
 
         if ($number->status !== PhoneNumberStatus::Connected) {
             throw MessagingException::numberUnavailable();
+        }
+        if ($origin === MessageOrigin::Agent && $sender !== null) {
+            $seats = app(ReplySeats::class);
+            $tenant = app(TenantContext::class)->tenant();
+            if (! $seats->canReply($tenant, $sender)) {
+                throw MessagingException::seatNotPaid($seats->limit($tenant));
+            }
         }
         $freeForm = in_array($data['type'], self::FREE_FORM, true);
         // Opted out (STOP): no marketing, ever, until they send START. Utility and authentication templates

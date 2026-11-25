@@ -30,19 +30,21 @@ final class StripeWebhookController extends Controller
         }
 
         $id = (string) $event['id'];
-        if (DB::table('stripe_events')->where('id', $id)->exists()) {
+        // Claim the event first: of two deliveries arriving together, only one processes it.
+        $claimed = DB::table('stripe_events')->insertOrIgnore(['id' => $id, 'type' => mb_substr((string) $event['type'], 0, 64), 'processed_at' => now()]);
+        if ($claimed === 0) {
             return response()->json(['received' => true, 'duplicate' => true]);
         }
 
         try {
             $billing->handleEvent($event);
         } catch (Throwable $e) {
+            // Release the claim so Stripe's retry processes it again.
+            DB::table('stripe_events')->where('id', $id)->delete();
             Log::error('Stripe webhook failed', ['event' => $id, 'type' => $event['type'], 'error' => $e->getMessage()]);
 
             return response()->json(['error' => 'Processing failed; please retry.'], 500);
         }
-
-        DB::table('stripe_events')->insertOrIgnore(['id' => $id, 'type' => mb_substr((string) $event['type'], 0, 64), 'processed_at' => now()]);
 
         return response()->json(['received' => true]);
     }

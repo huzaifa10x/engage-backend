@@ -82,7 +82,7 @@ final class RegisterWorkspace
             $this->context->run($tenant, function (Tenant $tenant) use ($membership) {
                 $this->audit->record('tenant.created', $tenant, after: $tenant->only(['name', 'slug', 'timezone', 'currency']));
                 $this->audit->record('membership.created', $membership, after: ['role' => SystemRole::Owner->value]);
-                $this->subscriptions->startTrial($tenant); // inside the owner's context → audited as the owner
+                $this->subscriptions->startNewWorkspace($tenant); // inside the owner's context → audited as the owner
             }, $membership);
 
             return ['user' => $user, 'tenant' => $tenant, 'membership' => $membership];

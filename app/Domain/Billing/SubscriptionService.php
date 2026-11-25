@@ -29,6 +29,16 @@ final class SubscriptionService
         private readonly AuditLogger $audit,
     ) {}
 
+    /** A new workspace's first plan: the trial, or Free when trials are off (ENGAGE_TRIAL_DAYS=0). */
+    public function startNewWorkspace(Tenant $tenant): Subscription
+    {
+        if ((int) config('engage.plans.trial_days') <= 0 || (string) config('engage.plans.trial_plan') === '') {
+            return $this->assign($tenant, Plan::byKey((string) config('engage.plans.fallback'))->activeVersionOrFail(), SubscriptionStatus::Active, null, 'started_on_free');
+        }
+
+        return $this->startTrial($tenant);
+    }
+
     public function startTrial(Tenant $tenant): Subscription
     {
         $version = Plan::byKey((string) config('engage.plans.trial_plan'))->activeVersionOrFail();

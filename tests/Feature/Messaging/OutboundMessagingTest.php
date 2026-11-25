@@ -82,6 +82,27 @@ final class OutboundMessagingTest extends TestCase
         });
     }
 
+    public function test_members_beyond_the_plans_seats_cannot_reply_until_the_seats_are_paid(): void
+    {
+        $conversation = $this->thread();
+        // A new wamid for every send (this test sends more than once).
+        Http::fake([self::SEND => fn () => Http::response(['messaging_product' => 'whatsapp', 'messages' => [['id' => 'wamid.OUT'.bin2hex(random_bytes(4))]]])]);
+        $agent = $this->addMember($this->tenant, SystemRole::Admin); // sees every chat, but is not the owner
+        $this->subscribe($this->tenant, 'free'); // 1 seat (after a downgrade, or while a renewal is unpaid)
+
+        $this->actingAsMember($agent);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hello'])
+            ->assertStatus(402)->assertJsonPath('error.code', 'plan_limit_reached');
+        $this->getJson("/api/v1/conversations/{$conversation->id}/messages")->assertOk(); // still reads the chat
+
+        $this->actingAsMember($this->owner);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hello'])->assertStatus(202);
+
+        $this->subscribe($this->tenant, 'starter'); // 2 seats
+        $this->actingAsMember($agent);
+        $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'text', 'body' => 'Hi again'])->assertStatus(202);
+    }
+
     public function test_emoji_reach_whatsapp_unchanged_and_are_stored_exactly(): void
     {
         $conversation = $this->thread();

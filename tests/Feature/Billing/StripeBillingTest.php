@@ -7,20 +7,29 @@ namespace Tests\Feature\Billing;
 use App\Domain\Access\SystemRole;
 use App\Domain\Billing\Models\Subscription;
 use App\Domain\Billing\SubscriptionService;
+use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\Entitlements\ReplySeats;
+use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
+use App\Notifications\BillingReminderNotification;
 use App\Notifications\PaymentFailedNotification;
 use App\Notifications\PaymentReceiptNotification;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
-/** In-app Stripe billing against a small stateful fake of the Stripe API. */
+/**
+ * Batch 6: billing through Stripe-hosted pages, against a small stateful fake of the Stripe API.
+ * Every money action opens Checkout or the Customer Portal; only Stripe's webhooks change the plan.
+ * The numbered comments refer to the brief's tests 25–37.
+ */
 final class StripeBillingTest extends TestCase
 {
     private const SECRET = 'whsec_test';
@@ -29,10 +38,8 @@ final class StripeBillingTest extends TestCase
 
     private TenantMembership $owner;
 
-    /** @var array<string, array<string, mixed>> saved cards on cus_1 */
-    private array $cards = [];
-
-    private ?string $defaultCard = null;
+    /** @var array<string, array<string, mixed>> checkout sessions by id */
+    private array $sessions = [];
 
     /** @var array<string, mixed> */
     private array $remoteSubscription = [];
@@ -40,25 +47,27 @@ final class StripeBillingTest extends TestCase
     /** @var array<string, mixed> */
     private array $remoteInvoice = [];
 
-    private string $intentStatus = 'requires_confirmation';
+    /** @var array<string, mixed> */
+    private array $remoteCustomer = ['id' => 'cus_1', 'name' => null, 'email' => null, 'address' => null, 'invoice_settings' => ['default_payment_method' => null], 'tax_ids' => ['data' => []]];
 
-    private bool $changeNeedsAction = false;
+    /** @var ?array<string, mixed> the subscription schedule the portal made for a downgrade */
+    private ?array $schedule = null;
 
-    private bool $changeDeclined = false;
+    private bool $invoicePayFails = false;
 
-    /** Stripe keeps credit as a negative customer balance. */
-    private int $customerBalance = 0;
+    /** @var array{0: int, 1: int} month, year of the card renewals are charged to */
+    private array $cardExpiry = [12, 2030];
 
-    /** @var array<string, mixed> the last upcoming-invoice query the app sent */
-    private array $previewQuery = [];
+    /** @var list<array<string, mixed>> portal configurations created or updated */
+    private array $portalConfigurations = [];
 
     protected function setUp(): void
     {
         parent::setUp();
-        config(['engage.stripe.key' => 'pk_test_x', 'engage.stripe.secret' => 'sk_test_x', 'engage.stripe.webhook_secret' => self::SECRET]);
+        config(['engage.stripe.key' => 'pk_test_x', 'engage.stripe.secret' => 'sk_test_x', 'engage.stripe.webhook_secret' => self::SECRET, 'engage.frontend_url' => 'https://app.engage.test']);
         Cache::flush();
         $this->tenant = $this->createTenant();
-        app(SubscriptionService::class)->startTrial($this->tenant); // like a freshly registered workspace: 14 days of Pro
+        app(SubscriptionService::class)->startNewWorkspace($this->tenant);
         $this->owner = $this->addMember($this->tenant);
         $this->actingAsMember($this->owner);
 
@@ -73,167 +82,90 @@ final class StripeBillingTest extends TestCase
         $method = $r->method();
 
         return match (true) {
-            $path === 'customers' => [['id' => 'cus_1']],
-            $path === 'customers/cus_1' && $method === 'POST' => [$this->updateCustomer($r)],
-            $path === 'customers/cus_1' => [['id' => 'cus_1', 'balance' => $this->customerBalance, 'currency' => 'usd', 'invoice_settings' => ['default_payment_method' => $this->defaultCard]]],
-            $path === 'customers/cus_1/balance_transactions' => [['data' => $this->customerBalance === 0 ? [] : [
-                ['id' => 'cbtxn_2', 'amount' => 2900, 'ending_balance' => $this->customerBalance, 'currency' => 'usd', 'created' => now()->timestamp],
-                ['id' => 'cbtxn_1', 'amount' => $this->customerBalance - 2900, 'ending_balance' => $this->customerBalance - 2900, 'currency' => 'usd', 'created' => now()->timestamp],
-            ]]],
+            $path === 'checkout/sessions' && $method === 'POST' => [$this->createSession($r)],
+            (bool) preg_match('#^checkout/sessions/(cs_\w+)$#', $path, $m) => isset($this->sessions[$m[1]]) ? [$this->sessions[$m[1]]] : [['error' => ['code' => 'resource_missing', 'message' => 'No such checkout.session']], 404],
+            $path === 'billing_portal/sessions' => [['id' => 'bps_1', 'url' => 'https://billing.stripe.com/p/session/test_1']],
+            $path === 'billing_portal/configurations' && $method === 'GET' => [['data' => []]],
+            $path === 'billing_portal/configurations' => [$this->portalConfiguration($r)],
+            $path === 'customers/cus_1' && $method === 'POST' => [$this->remoteCustomer],
+            $path === 'customers/cus_1' => [$this->customer($r)],
             $path === 'customers/cus_1/tax_ids' => [$method === 'GET' ? ['data' => []] : ['id' => 'txi_1']],
-            $path === 'customers/cus_1/payment_methods' => [['data' => array_values($this->cards)]],
-            $path === 'setup_intents' => [['id' => 'seti_1', 'client_secret' => 'seti_1_secret_abc']],
-            (bool) preg_match('#^payment_methods/(pm_\w+)/detach$#', $path, $m) => [$this->detach($m[1])],
-            (bool) preg_match('#^payment_methods/(pm_\w+)$#', $path, $m) => [['id' => $m[1], 'customer' => isset($this->cards[$m[1]]) ? 'cus_1' : 'cus_someone_else']],
+            $path === 'customers/cus_1/balance_transactions' => [['data' => []]],
             $path === 'prices' => [$method === 'GET' ? ['data' => []] : ['id' => 'price_'.($r['recurring']['interval'] ?? 'x').'_'.$r['unit_amount']]],
+            (bool) preg_match('#^prices/(price_\w+)$#', $path, $m) => [['id' => $m[1], 'product' => 'prod_'.$m[1]]],
             $path === 'tax_rates' => [$method === 'GET' ? ['data' => []] : ['id' => 'txr_uae']],
-            $path === 'subscriptions' && $method === 'POST' => [$this->createSubscription($r)],
-            $path === 'subscriptions' => [['data' => $this->remoteSubscription === [] ? [] : [$this->remoteSubscription]]],
             $path === 'subscriptions/sub_1' => [$this->subscription($r)],
             $path === 'subscriptions/sub_other_mode' => [['error' => ['code' => 'resource_missing', 'message' => "No such subscription: 'sub_other_mode'"]], 404],
-            $path === 'invoices/upcoming' => [$this->upcoming($r)],
-            $path === 'invoices/in_2/void' => [$this->voidPending()],
-            $path === 'charges' => [['data' => [
-                ['id' => 'ch_1', 'amount' => 8295, 'amount_refunded' => 0, 'refunded' => false, 'currency' => 'usd', 'status' => 'succeeded', 'created' => now()->timestamp,
-                    'payment_method_details' => ['card' => ['brand' => 'visa', 'last4' => '4242']], 'receipt_url' => 'https://pay.stripe.com/receipts/1'],
-            ]]],
-            $path === 'invoices/in_1/pay' => [$this->remoteInvoice = array_merge($this->remoteInvoice, ['status' => 'paid', 'amount_paid' => $this->remoteInvoice['total']])],
+            $path === 'subscription_schedules/sub_sched_1' => [(array) $this->schedule],
+            $path === 'invoices' => [['data' => ($this->remoteInvoice['status'] ?? null) === 'open' ? [$this->remoteInvoice] : []]],
+            $path === 'invoices/upcoming' => [['currency' => 'usd', 'total' => 7900, 'amount_due' => 7900, 'next_payment_attempt' => now()->addMonth()->timestamp]],
+            $path === 'invoices/in_1/pay' => $this->invoicePayFails
+                ? [['error' => ['code' => 'card_declined', 'message' => 'Your card was declined.']], 402]
+                : [$this->remoteInvoice = array_merge($this->remoteInvoice, ['status' => 'paid', 'amount_paid' => $this->remoteInvoice['total']])],
             $path === 'invoices/in_1' => [$this->remoteInvoice],
+            $path === 'charges' => [['data' => []]],
             $path === 'charges/ch_1' => [['id' => 'ch_1', 'invoice' => 'in_1']],
-            $path === 'refunds' => [$this->refund($r)],
             default => [['error' => ['message' => "Unexpected Stripe call: {$method} {$path}"]], 400],
         };
     }
 
     /** @return array<string, mixed> */
-    private function updateCustomer(Request $r): array
+    private function createSession(Request $r): array
     {
-        $this->defaultCard = $r['invoice_settings']['default_payment_method'] ?? $this->defaultCard;
+        $id = 'cs_test_'.(count($this->sessions) + 1);
 
-        return ['id' => 'cus_1'];
-    }
-
-    /** @return array<string, mixed> */
-    private function detach(string $id): array
-    {
-        unset($this->cards[$id]);
-        $this->defaultCard = $this->defaultCard === $id ? null : $this->defaultCard;
-
-        return ['id' => $id];
-    }
-
-    /** @return array<string, mixed> */
-    private function createSubscription(Request $r): array
-    {
-        $this->remoteSubscription = [
-            'id' => 'sub_1', 'status' => 'incomplete', 'customer' => 'cus_1', 'cancel_at_period_end' => false, 'cancel_at' => null,
-            'collection_method' => 'charge_automatically', 'default_tax_rates' => $r['default_tax_rates'] ?? [],
-            'current_period_start' => now()->timestamp, 'current_period_end' => now()->addMonth()->timestamp,
-            'metadata' => $r['metadata'], 'items' => ['data' => [['id' => 'si_1', 'price' => ['id' => $r['items'][0]['price']]]]],
+        return $this->sessions[$id] = [
+            'id' => $id, 'object' => 'checkout.session', 'mode' => $r['mode'], 'status' => 'open', 'payment_status' => 'unpaid',
+            'client_reference_id' => $r['client_reference_id'], 'customer' => null, 'subscription' => null,
+            'url' => "https://checkout.stripe.com/c/pay/{$id}", '__request' => $r->data(),
         ];
-
-        return $this->remoteSubscription + ['latest_invoice' => ['id' => 'in_1', 'payment_intent' => ['id' => 'pi_1', 'status' => $this->intentStatus, 'client_secret' => 'pi_1_secret_xyz']]];
     }
 
-    /** What Stripe would invoice: a new subscription, or a prorated change starting a new period today. */
-    private function upcoming(Request $r): array
+    /** The client pays on the Checkout page: Stripe creates the customer and the subscription. */
+    private function payCheckout(string $sessionId, string $status = 'active'): void
     {
-        parse_str((string) parse_url($r->url(), PHP_URL_QUERY), $q);
-        $price = (string) ($q['subscription_items'][0]['price'] ?? '');
-        $amount = (int) substr($price, (int) strrpos($price, '_') + 1);
-        $this->previewQuery = $q;
-
-        if (! isset($q['subscription'])) {
-            $tax = isset($q['subscription_default_tax_rates']) ? (int) round($amount * 0.05) : 0;
-
-            return ['currency' => 'usd', 'subtotal' => $amount, 'tax' => $tax, 'total' => $amount + $tax, 'amount_due' => $amount + $tax, 'starting_balance' => 0, 'ending_balance' => 0,
-                'lines' => ['data' => [['description' => '1 × plan', 'amount' => $amount, 'proration' => false]]]];
-        }
-        if (! isset($q['subscription_items'])) {
-            $renewal = $this->customerBalance === 0 ? 8295 : $this->currentPrice(); // plain renewal, less whatever credit the customer holds
-            $applied = min($renewal, -$this->customerBalance);
-
-            return ['currency' => 'usd', 'total' => $renewal, 'amount_due' => $renewal - $applied, 'next_payment_attempt' => now()->addMonth()->timestamp];
-        }
-
-        // Half the current period is unused → half its price comes back as credit.
-        $credit = (int) round($this->currentPrice() / 2);
-        $subtotal = $amount - $credit;
-        $tax = $subtotal > 0 && ! empty($this->remoteSubscription['default_tax_rates']) ? (int) round($subtotal * 0.05) : 0;
-
-        $total = $subtotal + $tax;
-        $ending = $total < 0 ? $this->customerBalance + $total : min(0, $this->customerBalance + $total); // credit grows, or is used up
-
-        return ['currency' => 'usd', 'subtotal' => $subtotal, 'tax' => $tax, 'total' => $total, 'amount_due' => max(0, $total + $this->customerBalance),
-            'starting_balance' => $this->customerBalance, 'ending_balance' => $ending,
-            'lines' => ['data' => [
-                ['description' => 'Unused time on current plan', 'amount' => -$credit, 'proration' => true],
-                ['description' => '1 × new plan', 'amount' => $amount, 'proration' => false],
-            ]]];
-    }
-
-    private function currentPrice(): int
-    {
-        $price = (string) ($this->remoteSubscription['items']['data'][0]['price']['id'] ?? '_0');
-
-        return (int) substr($price, (int) strrpos($price, '_') + 1);
+        $request = $this->sessions[$sessionId]['__request'];
+        $price = (string) $request['line_items'][0]['price'];
+        $this->remoteSubscription = [
+            'id' => 'sub_1', 'status' => $status, 'customer' => 'cus_1', 'cancel_at_period_end' => false, 'cancel_at' => null, 'schedule' => null,
+            'collection_method' => 'charge_automatically', 'current_period_start' => now()->timestamp,
+            'current_period_end' => (str_contains($price, 'year') ? now()->addYear() : now()->addMonth())->timestamp,
+            'metadata' => $request['subscription_data']['metadata'], 'items' => ['data' => [['id' => 'si_1', 'price' => ['id' => $price]]]],
+        ];
+        $this->remoteCustomer = array_merge($this->remoteCustomer, ['name' => 'Nova Fitness LLC', 'email' => 'billing@nova.test',
+            'address' => ['country' => 'AE', 'city' => 'Dubai', 'line1' => 'Office 12'], 'tax_ids' => ['data' => [['type' => 'ae_trn', 'value' => '100200300400003']]]]);
+        $this->sessions[$sessionId] = array_merge($this->sessions[$sessionId], [
+            'status' => 'complete', 'payment_status' => $status === 'active' ? 'paid' : 'unpaid', 'customer' => 'cus_1', 'subscription' => 'sub_1',
+        ]);
     }
 
     /** @return array<string, mixed> */
-    private function voidPending(): array
+    private function customer(Request $r): array
     {
-        unset($this->remoteSubscription['pending_update']);
-        $this->remoteSubscription['latest_invoice'] = 'in_2';
+        $customer = $this->remoteCustomer;
+        if (str_contains(urldecode($r->url()), 'invoice_settings.default_payment_method') && $customer['invoice_settings']['default_payment_method'] !== null) {
+            $customer['invoice_settings']['default_payment_method'] = ['id' => 'pm_new', 'card' => ['brand' => 'visa', 'last4' => '4242', 'exp_month' => $this->cardExpiry[0], 'exp_year' => $this->cardExpiry[1]]];
+        }
 
-        return ['id' => 'in_2', 'status' => 'void'];
+        return $customer;
     }
 
     /** @return array<string, mixed> */
     private function subscription(Request $r): array
     {
-        if ($r->method() === 'DELETE') {
-            return $this->remoteSubscription = array_merge($this->remoteSubscription, ['status' => 'canceled']);
-        }
         if ($r->method() === 'POST') {
-            $this->remoteSubscription = array_merge($this->remoteSubscription, array_filter([
-                'cancel_at_period_end' => isset($r['cancel_at_period_end']) ? $r['cancel_at_period_end'] === 'true' : null,
-                'collection_method' => $r['collection_method'] ?? null,
-            ], fn ($v) => $v !== null));
-            if (isset($r['items'][0]['price'])) {
-                // pending_if_incomplete: when the bank wants a verification step, the change waits for the payment.
-                if ($this->changeNeedsAction || $this->changeDeclined) {
-                    $this->remoteSubscription['pending_update'] = ['subscription_items' => [['price' => $r['items'][0]['price']]]];
-                    $this->remoteSubscription['latest_invoice'] = 'in_2';
-
-                    return array_merge($this->remoteSubscription, ['latest_invoice' => ['id' => 'in_2', 'payment_intent' => ['id' => 'pi_2', 'client_secret' => 'pi_2_secret',
-                        'status' => $this->changeDeclined ? 'requires_payment_method' : 'requires_action', 'last_payment_error' => ['message' => 'Your card has insufficient funds.']]]]);
-                }
-                // Proration: what is unused of the old plan pays for the new one; anything left over stays as credit.
-                $newPrice = (int) substr($r['items'][0]['price'], (int) strrpos($r['items'][0]['price'], '_') + 1);
-                $this->customerBalance += min(0, $newPrice - (int) round($this->currentPrice() / 2));
-                $this->remoteSubscription['items']['data'][0]['price']['id'] = $r['items'][0]['price'];
-                $this->remoteSubscription['current_period_start'] = now()->timestamp;
-                $this->remoteSubscription['current_period_end'] = (str_contains($r['items'][0]['price'], 'year') ? now()->addYear() : now()->addMonth())->timestamp;
-
-                return array_merge($this->remoteSubscription, ['latest_invoice' => ['id' => 'in_2', 'payment_intent' => ['id' => 'pi_2', 'status' => 'succeeded', 'client_secret' => 'pi_2_secret']]]);
-            }
+            $this->remoteSubscription['default_payment_method'] = $r['default_payment_method'] ?? ($this->remoteSubscription['default_payment_method'] ?? null);
         }
 
         return $this->remoteSubscription;
     }
 
     /** @return array<string, mixed> */
-    private function refund(Request $r): array
+    private function portalConfiguration(Request $r): array
     {
-        $this->remoteInvoice['charge'] = 'ch_1';
-        $this->remoteInvoice['__refunded'] = ($this->remoteInvoice['__refunded'] ?? 0) + (int) ($r['amount'] ?? $this->remoteInvoice['amount_paid']);
+        $this->portalConfigurations[] = $r->data();
 
-        return ['id' => 're_1'];
-    }
-
-    private function card(string $id = 'pm_visa', string $last4 = '4242'): void
-    {
-        $this->cards[$id] = ['id' => $id, 'card' => ['brand' => 'visa', 'last4' => $last4, 'exp_month' => 12, 'exp_year' => 2030]];
+        return ['id' => 'bpc_1'];
     }
 
     /** @param array<string, mixed> $object */
@@ -248,315 +180,371 @@ final class StripeBillingTest extends TestCase
         ], $payload);
     }
 
-    private function billingCountry(string $country, ?string $trn = null, ?string $company = null): void
+    /** Upgrade through Checkout and let the webhook activate it, as a paying client would. */
+    private function upgrade(string $plan = 'growth', string $interval = 'monthly'): void
     {
-        $this->putJson('/api/v1/billing/details', ['country' => $country, 'tax_trn' => $trn, 'legal_name' => $company])->assertOk();
+        $this->postJson('/api/v1/billing/checkout', ['plan' => $plan, 'interval' => $interval])->assertOk();
+        $session = (string) array_key_last($this->sessions);
+        $this->payCheckout($session);
+        $this->stripeEvent('checkout.session.completed', ['id' => $session])->assertOk();
     }
 
-    /** Add a card and subscribe; the "browser" confirms the payment, then asks the server to refresh. */
-    private function subscribeAndPay(string $plan = 'growth', string $interval = 'monthly'): void
+    private function openInvoice(): void
     {
-        $this->postJson('/api/v1/billing/payment-methods/setup-intent')->assertOk();
-        $this->card();
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => $plan, 'interval' => $interval])->assertOk()->assertJsonPath('data.status', 'requires_confirmation');
-        $this->remoteSubscription['status'] = 'active'; // stripe.confirmCardPayment succeeded in the browser
-        $this->postJson('/api/v1/billing/refresh')->assertOk()->assertJsonPath('data.status', 'active');
-    }
-
-    public function test_cards_are_added_in_app_and_managed_without_leaving_the_platform(): void
-    {
-        $this->getJson('/api/v1/billing')->assertOk()->assertJsonPath('data.stripe_configured', true)->assertJsonPath('data.stripe_publishable_key', 'pk_test_x');
-        $this->getJson('/api/v1/billing/payment-methods')->assertOk()->assertJsonCount(0, 'data');
-
-        // The browser gets a SetupIntent secret and completes the card with Stripe's fields.
-        $this->postJson('/api/v1/billing/payment-methods/setup-intent')->assertOk()->assertJsonPath('data.client_secret', 'seti_1_secret_abc');
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/setup_intents') && $r['customer'] === 'cus_1' && $r['usage'] === 'off_session');
-
-        $this->card('pm_visa', '4242');
-        $this->getJson('/api/v1/billing/payment-methods')->assertJsonCount(1, 'data')
-            ->assertJsonPath('data.0.last4', '4242')->assertJsonPath('data.0.brand', 'visa')->assertJsonPath('data.0.is_default', true); // first card becomes the default
-
-        $this->card('pm_mc', '4444');
-        $this->putJson('/api/v1/billing/payment-methods/pm_mc/default')->assertOk();
-        $this->assertSame('pm_mc', $this->defaultCard);
-
-        $this->deleteJson('/api/v1/billing/payment-methods/pm_mc')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', 'pm_visa');
-        $this->assertSame('pm_visa', $this->defaultCard); // the remaining card was promoted
-
-        // Somebody else's card id is refused.
-        $this->putJson('/api/v1/billing/payment-methods/pm_stolen/default')->assertStatus(422);
-        $this->deleteJson('/api/v1/billing/payment-methods/pm_stolen')->assertStatus(422);
-    }
-
-    public function test_a_uae_customer_subscribes_in_page_with_vat_and_their_trn(): void
-    {
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth', 'interval' => 'monthly'])->assertStatus(422); // country first
-        $this->putJson('/api/v1/billing/details', ['country' => 'AE', 'tax_trn' => '12345'])->assertStatus(422);         // a UAE TRN has 15 digits
-        $this->billingCountry('ae', '100-2003-0040-0003', 'Nova Fitness LLC');
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth', 'interval' => 'monthly'])
-            ->assertStatus(422)->assertJsonPath('error.details.fields.payment_method.0', 'Add a card first, then choose your plan.');
-
-        $this->card();
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()
-            ->assertJsonPath('data.status', 'requires_confirmation')->assertJsonPath('data.client_secret', 'pi_1_secret_xyz')->assertJsonPath('data.payment_method', 'pm_visa');
-
-        Http::assertSent(fn (Request $r) => $r->url() === 'https://api.stripe.com/v1/customers' && $r['name'] === 'Nova Fitness LLC' && $r['address']['country'] === 'AE');
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/customers/cus_1/tax_ids') && $r->method() === 'POST' && $r['type'] === 'ae_trn' && $r['value'] === '100200300400003');
-        Http::assertSent(fn (Request $r) => $r->url() === 'https://api.stripe.com/v1/prices' && $r->method() === 'POST' && $r['currency'] === 'usd' && (int) $r['unit_amount'] === 7900 && $r['tax_behavior'] === 'exclusive');
-        Http::assertSent(fn (Request $r) => $r->url() === 'https://api.stripe.com/v1/subscriptions' && $r->method() === 'POST'
-            && $r['customer'] === 'cus_1' && $r['default_payment_method'] === 'pm_visa' && $r['payment_behavior'] === 'default_incomplete'
-            && $r['default_tax_rates'] === ['txr_uae'] && $r['items'][0]['price'] === 'price_month_7900' && $r['metadata']['tenant_id'] === $this->tenant->id);
-        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), 'checkout/sessions') || str_contains($r->url(), 'billing_portal'));
-
-        // Nothing changes until the payment has really succeeded.
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'pro')->assertJsonPath('data.subscription.status', 'trialing');
-        $this->postJson('/api/v1/billing/refresh')->assertOk()->assertJsonPath('data.status', 'pending');
-
-        $this->remoteSubscription['status'] = 'active';
-        $this->postJson('/api/v1/billing/refresh')->assertOk()->assertJsonPath('data.status', 'active');
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'growth')->assertJsonPath('data.subscription.provider', 'stripe')
-            ->assertJsonPath('data.vat.applies', true);
-    }
-
-    public function test_a_declined_card_leaves_the_plan_unchanged_and_no_vat_outside_the_uae(): void
-    {
-        $this->billingCountry('PK');
-        $this->card();
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'starter', 'interval' => 'yearly'])->assertOk()->assertJsonPath('data.status', 'requires_confirmation');
-
-        Http::assertSent(fn (Request $r) => $r->url() === 'https://api.stripe.com/v1/subscriptions' && $r->method() === 'POST' && ! isset($r['default_tax_rates']) && str_starts_with($r['items'][0]['price'], 'price_year_'));
-        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/tax_rates'));
-
-        // The browser reports the card was declined → the unpaid attempt is cancelled on Stripe.
-        $this->postJson('/api/v1/billing/refresh', ['abandon' => true])->assertOk()->assertJsonPath('data.status', 'failed');
-        Http::assertSent(fn (Request $r) => $r->method() === 'DELETE' && str_ends_with($r->url(), '/subscriptions/sub_1'));
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'pro')->assertJsonPath('data.subscription.status', 'trialing');
-    }
-
-    public function test_the_subscription_follows_stripe_through_its_whole_life(): void
-    {
-        $this->billingCountry('AE');
-        $this->subscribeAndPay();
-        $this->getJson('/api/v1/tenant/entitlements')->assertJsonPath('data.plan.key', 'growth');
-
-        // Renewal payment fails → past due, plan kept while Stripe retries.
-        $this->remoteSubscription['status'] = 'past_due';
-        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.subscription.status', 'past_due')->assertJsonPath('data.plan.key', 'growth');
-        $this->remoteSubscription['status'] = 'active';
-        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
-
-        // The only card of an active subscription cannot be removed.
-        $this->deleteJson('/api/v1/billing/payment-methods/pm_visa')->assertStatus(422);
-
-        // Cancel at period end, then a change of mind.
-        $this->postJson('/api/v1/billing/cancel')->assertOk()->assertJsonPath('data.subscription.cancel_at', fn (?string $at) => $at !== null);
-        $this->postJson('/api/v1/billing/resume')->assertOk()->assertJsonPath('data.subscription.cancel_at', null);
-
-        // Ended on Stripe → Free, with exactly one live subscription.
-        $this->remoteSubscription['status'] = 'canceled';
-        $this->stripeEvent('customer.subscription.deleted', ['id' => 'sub_1'])->assertOk();
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'free')->assertJsonPath('data.subscription.provider', 'manual');
-        $this->assertSame(1, $this->tenantContext()->run($this->tenant, fn () => Subscription::query()->live()->count()));
-    }
-
-    public function test_invoices_are_mirrored_paid_in_app_and_show_refunds(): void
-    {
-        $this->billingCountry('AE');
-        $this->subscribeAndPay();
-
         $this->remoteInvoice = [
-            'id' => 'in_1', 'number' => 'ENG-0001', 'status' => 'open', 'currency' => 'usd', 'customer' => 'cus_1',
-            'subtotal' => 7900, 'tax' => 395, 'total' => 8295, 'amount_paid' => 0, 'created' => now()->timestamp,
-            'hosted_invoice_url' => 'https://invoice.stripe.com/i/1', 'invoice_pdf' => 'https://pay.stripe.com/invoice/1/pdf',
+            'id' => 'in_1', 'number' => 'ENG-0001', 'status' => 'open', 'currency' => 'usd', 'customer' => 'cus_1', 'subscription' => 'sub_1',
+            'subtotal' => 7900, 'tax' => 395, 'total' => 8295, 'amount_paid' => 0, 'created' => now()->timestamp, 'attempt_count' => 1,
+            'hosted_invoice_url' => 'https://invoice.stripe.com/i/1', 'invoice_pdf' => 'https://pay.stripe.com/invoice/1/pdf?s=old',
             'status_transitions' => ['finalized_at' => now()->timestamp, 'paid_at' => null],
-            'lines' => ['data' => [['description' => '1 × 10X Engage Growth (at $79.00 / month)', 'period' => ['start' => now()->timestamp, 'end' => now()->addMonth()->timestamp]]]],
+            'lines' => ['data' => [['description' => '1 × 10X Engage Growth', 'period' => ['start' => now()->timestamp, 'end' => now()->addMonth()->timestamp]]]],
             'charge' => ['id' => 'ch_1', 'amount_refunded' => 0],
         ];
-        $this->stripeEvent('invoice.finalized', ['id' => 'in_1'], 'evt_fin')->assertOk();
-        $this->stripeEvent('invoice.finalized', ['id' => 'in_1'], 'evt_fin')->assertOk()->assertJsonPath('duplicate', true); // Stripe retried
-
-        $invoice = $this->getJson('/api/v1/billing/invoices')->assertOk()->assertJsonCount(1, 'data')
-            ->assertJsonPath('data.0.status', 'open')->assertJsonPath('data.0.tax_minor', 395)->assertJsonPath('data.0.total_minor', 8295)->json('data.0.id');
-
-        // "Pay now" with the saved card, without leaving the platform.
-        $this->postJson("/api/v1/billing/invoices/{$invoice}/pay")->assertOk()->assertJsonPath('data.status', 'paid');
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/invoices/in_1/pay') && $r['payment_method'] === 'pm_visa');
-        $this->getJson('/api/v1/billing/invoices')->assertJsonPath('data.0.status', 'paid');
-        $this->postJson("/api/v1/billing/invoices/{$invoice}/pay")->assertStatus(422); // already paid
-
-        // A refund (issued by the platform team or in Stripe) is reflected on the invoice.
-        $this->remoteInvoice['charge']['amount_refunded'] = 8295;
-        $this->stripeEvent('charge.refunded', ['id' => 'ch_1'])->assertOk();
-        $this->getJson('/api/v1/billing/invoices')->assertJsonPath('data.0.status', 'refunded')->assertJsonPath('data.0.amount_refunded_minor', 8295);
     }
 
-    public function test_the_billing_summary_comes_from_stripe_before_anything_is_charged(): void
+    private function planKey(): string
     {
-        $this->postJson('/api/v1/billing/preview', ['plan' => 'growth', 'interval' => 'monthly'])->assertStatus(422); // country first
-        $this->billingCountry('AE');
-
-        // New subscription: plan price + 5% VAT, nothing created on Stripe except the preview.
-        $this->postJson('/api/v1/billing/preview', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()
-            ->assertJsonPath('data.change', false)->assertJsonPath('data.subtotal_minor', 7900)->assertJsonPath('data.tax_minor', 395)
-            ->assertJsonPath('data.amount_due_minor', 8295)->assertJsonPath('data.has_payment_method', false)->assertJsonPath('data.plan.name', 'Growth');
-        Http::assertNotSent(fn (Request $r) => str_ends_with($r->url(), '/subscriptions') && $r->method() === 'POST');
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'pro')->assertJsonPath('data.subscription.status', 'trialing');
+        return (string) $this->getJson('/api/v1/billing/summary')->assertOk()->json('data.plan.key');
     }
 
-    public function test_a_plan_change_is_prorated_charged_immediately_and_starts_a_new_period(): void
+    public function test_new_workspaces_can_start_on_free_without_a_card_or_a_stripe_customer(): void
     {
-        $this->billingCountry('PK'); // no VAT, to keep the arithmetic plain
-        $this->subscribeAndPay('starter'); // $29 / month
+        config(['engage.plans.trial_days' => 0]);
+        $tenant = $this->createTenant();
+        app(SubscriptionService::class)->startNewWorkspace($tenant);
+        $this->actingAsMember($this->addMember($tenant));
 
-        // Upgrade to Growth ($79): half of Starter is unused → $14.50 credit → $64.50 due today.
-        $this->postJson('/api/v1/billing/preview', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()
-            ->assertJsonPath('data.change', true)->assertJsonPath('data.from.plan', 'Starter')
-            ->assertJsonPath('data.unused_credit_minor', 1450)->assertJsonPath('data.price_minor', 7900)
-            ->assertJsonPath('data.amount_due_minor', 6450)->assertJsonPath('data.lines.0.proration', true);
-        $this->assertSame('always_invoice', $this->previewQuery['subscription_proration_behavior'] ?? null);
-        $this->assertSame('now', $this->previewQuery['subscription_billing_cycle_anchor'] ?? null);
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'starter'); // a preview changes nothing
-
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()
-            ->assertJsonPath('data.status', 'active')->assertJsonPath('data.updated', true);
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/subscriptions/sub_1') && ($r['items'][0]['price'] ?? null) === 'price_month_7900'
-            && $r['proration_behavior'] === 'always_invoice' && $r['billing_cycle_anchor'] === 'now' && $r['payment_behavior'] === 'pending_if_incomplete');
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'growth')->assertJsonPath('data.subscription.interval', 'monthly');
-
-        // Monthly → yearly on the same plan: yearly price selected, charged now, interval and period updated.
-        $this->postJson('/api/v1/billing/preview', ['plan' => 'growth', 'interval' => 'yearly'])->assertOk()
-            ->assertJsonPath('data.interval', 'yearly')->assertJsonPath('data.price_minor', 79000)->assertJsonPath('data.amount_due_minor', 79000 - 3950);
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth', 'interval' => 'yearly'])->assertOk()->assertJsonPath('data.status', 'active');
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/subscriptions/sub_1') && ($r['items'][0]['price'] ?? null) === 'price_year_79000');
-        $billing = $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'growth')->assertJsonPath('data.subscription.interval', 'yearly');
-        $this->assertGreaterThan(now()->addMonths(11)->timestamp, strtotime((string) $billing->json('data.subscription.current_period_end')));
-
-        // Yearly → cheaper monthly plan: the unused credit is larger than the new price → nothing to pay, the rest stays as credit.
-        $this->postJson('/api/v1/billing/preview', ['plan' => 'starter', 'interval' => 'monthly'])->assertOk()
-            ->assertJsonPath('data.amount_due_minor', 0)->assertJsonPath('data.credit_kept_minor', 39500 - 2900);
+        $this->getJson('/api/v1/billing')->assertOk()->assertJsonPath('data.plan.key', 'free')->assertJsonPath('data.subscription.status', 'active')
+            ->assertJsonPath('data.has_payment_history', false)->assertJsonPath('data.stripe_configured', true);
+        $this->assertNull($this->tenantContext()->bypass(fn () => $tenant->fresh())?->stripe_customer_id);
+        Http::assertNothingSent();
     }
 
-    public function test_a_subscription_made_with_other_stripe_keys_does_not_block_choosing_a_plan(): void
+    public function test_upgrading_opens_stripe_checkout_and_only_the_webhook_activates_the_plan(): void
     {
-        $this->billingCountry('PK');
-        $this->subscribeAndPay('starter');
-        // The keys changed (test → live, or another account): Stripe no longer knows the stored subscription.
-        $bypass = fn (callable $q) => app(TenantContext::class)->bypass($q);
-        $bypass(fn () => Subscription::query()->where('provider_subscription_id', 'sub_1')->update(['provider_subscription_id' => 'sub_other_mode']));
-        $this->remoteSubscription = [];
+        // Upgrade: a Checkout Session, nothing created by engageX itself (no customer, no subscription).
+        $url = $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()->json('data.url');
+        $this->assertSame('https://checkout.stripe.com/c/pay/cs_test_1', $url);
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/checkout/sessions') && $r['mode'] === 'subscription'
+            && $r['client_reference_id'] === $this->tenant->id && $r['line_items'][0]['price'] === 'price_month_7900'
+            && $r['tax_id_collection']['enabled'] === 'true' && $r['billing_address_collection'] === 'required'
+            && $r['success_url'] === 'https://app.engage.test/billing/return?session_id={CHECKOUT_SESSION_ID}'
+            && $r['cancel_url'] === 'https://app.engage.test/billing?canceled=1'
+            && $r['subscription_data']['metadata']['tenant_id'] === $this->tenant->id && $r->hasHeader('Idempotency-Key'));
+        Http::assertNotSent(fn (Request $r) => preg_match('#/v1/(customers|subscriptions)$#', explode('?', $r->url())[0]) === 1);
+        $this->assertSame('pro', $this->planKey()); // still the trial
 
-        // The summary is that of a new subscription, and nothing was cancelled by looking at it.
-        $this->postJson('/api/v1/billing/preview', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()
-            ->assertJsonPath('data.change', false)->assertJsonPath('data.amount_due_minor', 7900);
-        $this->getJson('/api/v1/billing')->assertOk()->assertJsonPath('data.plan.key', 'starter');
+        // 25: paid, browser closed before the redirect → the webhook alone activates the plan.
+        $this->payCheckout('cs_test_1');
+        $this->stripeEvent('checkout.session.completed', ['id' => 'cs_test_1'])->assertOk();
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.plan.key', 'growth')->assertJsonPath('data.subscription.status', 'active')
+            ->assertJsonPath('data.subscription.interval', 'monthly')->assertJsonPath('data.subscription.self_serve', true)
+            // Billing details collected by Checkout are copied onto the workspace (TRN included).
+            ->assertJsonPath('data.details.legal_name', 'Nova Fitness LLC')->assertJsonPath('data.details.country', 'AE')->assertJsonPath('data.details.tax_trn', '100200300400003');
+        $this->assertSame('cus_1', $this->tenantContext()->bypass(fn () => $this->tenant->fresh())?->stripe_customer_id);
 
-        // Subscribing starts a fresh Stripe subscription, which replaces the stale one.
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()->assertJsonPath('data.status', 'requires_confirmation');
+        // A second Checkout while a paid plan runs is refused: changes go through the portal.
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'pro', 'interval' => 'monthly'])->assertStatus(422);
+    }
+
+    public function test_the_return_from_checkout_is_checked_with_stripe_and_grants_nothing(): void
+    {
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'starter', 'interval' => 'yearly'])->assertOk();
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/checkout/sessions') && $r['line_items'][0]['price'] === 'price_year_29000');
+
+        // Not paid yet (closed the tab, or still on Stripe).
+        $this->postJson('/api/v1/billing/return', ['session_id' => 'cs_test_1'])->assertOk()->assertJsonPath('data.status', 'incomplete');
+
+        // Paid: the return says so, but the plan only changes when the webhook arrives.
+        $this->payCheckout('cs_test_1');
+        $this->postJson('/api/v1/billing/return', ['session_id' => 'cs_test_1'])->assertOk()->assertJsonPath('data.status', 'paid');
+        $this->assertSame('pro', $this->planKey());
+        $this->stripeEvent('checkout.session.completed', ['id' => 'cs_test_1'])->assertOk();
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.plan.key', 'starter')->assertJsonPath('data.subscription.interval', 'yearly');
+
+        // 26: a session from another workspace is rejected and changes nothing.
+        $other = $this->createTenant();
+        $this->actingAsMember($this->addMember($other));
+        $this->postJson('/api/v1/billing/return', ['session_id' => 'cs_test_1'])->assertOk()->assertJsonPath('data.status', 'rejected');
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.plan.key', 'free');
+        $this->postJson('/api/v1/billing/return', ['session_id' => 'not-a-session'])->assertStatus(422);
+        $this->postJson('/api/v1/billing/return', ['session_id' => 'cs_test_missing'])->assertOk()->assertJsonPath('data.status', 'rejected');
+    }
+
+    public function test_a_declined_or_unconfirmed_first_payment_leaves_the_workspace_where_it_was(): void
+    {
+        // 27 / 28: Stripe shows the decline or the 3-D Secure step on its own page. Until the bank
+        // confirms, the subscription is incomplete and nothing changes here.
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk();
+        $this->payCheckout('cs_test_1', 'incomplete');
+        $this->stripeEvent('checkout.session.completed', ['id' => 'cs_test_1'])->assertOk();
+        $this->postJson('/api/v1/billing/return', ['session_id' => 'cs_test_1'])->assertOk()->assertJsonPath('data.status', 'processing');
+        $this->assertSame('pro', $this->planKey());
+
+        // The bank confirms: the plan activates.
         $this->remoteSubscription['status'] = 'active';
-        $this->postJson('/api/v1/billing/refresh')->assertOk()->assertJsonPath('data.status', 'active');
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'growth');
-        $this->assertSame(1, $bypass(fn () => Subscription::query()->where('tenant_id', $this->tenant->id)->live()->count()));
-        $this->assertSame('sub_1', $bypass(fn () => Subscription::query()->where('tenant_id', $this->tenant->id)->live()->value('provider_subscription_id')));
+        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
+        $this->assertSame('growth', $this->planKey());
     }
 
-    public function test_a_downgrade_refunds_nothing_and_keeps_the_unused_amount_in_the_wallet_for_later_payments(): void
+    public function test_plan_changes_open_the_portal_confirm_screen_with_the_chosen_price(): void
     {
-        $this->billingCountry('PK');
-        $this->subscribeAndPay('pro'); // $139 / month
-        $this->getJson('/api/v1/billing/payments')->assertOk()->assertJsonPath('data.wallet.balance_minor', 0)->assertJsonPath('data.wallet.entries', []);
+        $this->upgrade('growth');
 
-        // Half of Pro is unused ($69.50). Starter costs $29: paid from that, and $40.50 stays in the wallet.
-        $this->postJson('/api/v1/billing/preview', ['plan' => 'starter', 'interval' => 'monthly'])->assertOk()
-            ->assertJsonPath('data.unused_credit_minor', 6950)->assertJsonPath('data.amount_due_minor', 0)
-            ->assertJsonPath('data.credit_kept_minor', 4050)->assertJsonPath('data.wallet_after_minor', 4050);
+        // 29 / 30: Growth Monthly → Pro Monthly, and Growth Monthly → Growth Annual.
+        $url = $this->postJson('/api/v1/billing/portal', ['flow' => 'update', 'plan' => 'pro', 'interval' => 'monthly'])->assertOk()->json('data.url');
+        $this->assertSame('https://billing.stripe.com/p/session/test_1', $url);
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/billing_portal/sessions') && $r['customer'] === 'cus_1' && $r['configuration'] === 'bpc_1'
+            && $r['flow_data']['type'] === 'subscription_update_confirm' && $r['flow_data']['subscription_update_confirm']['subscription'] === 'sub_1'
+            && $r['flow_data']['subscription_update_confirm']['items'][0] === ['id' => 'si_1', 'price' => 'price_month_13900', 'quantity' => 1]
+            && $r['flow_data']['after_completion']['redirect']['return_url'] === 'https://app.engage.test/billing/return?flow=update');
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'update', 'plan' => 'growth', 'interval' => 'yearly'])->assertOk();
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/billing_portal/sessions')
+            && ($r['flow_data']['subscription_update_confirm']['items'][0]['price'] ?? null) === 'price_year_79000');
 
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'starter', 'interval' => 'monthly'])->assertOk()->assertJsonPath('data.status', 'active');
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'starter');
-        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), '/refunds')); // nothing goes back to the card
+        // The portal configuration: upgrades prorated and charged now; downgrades and Annual → Monthly at period end.
+        $config = $this->portalConfigurations[0];
+        $this->assertSame('always_invoice', $config['features']['subscription_update']['proration_behavior']);
+        $this->assertSame([['type' => 'decreasing_item_amount'], ['type' => 'shortening_interval']], $config['features']['subscription_update']['schedule_at_period_end']['conditions']);
+        $this->assertSame('at_period_end', $config['features']['subscription_cancel']['mode']);
+        $this->assertCount(6, array_merge(...array_column($config['features']['subscription_update']['products'], 'prices'))); // 3 plans × monthly + annual
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'manage'])->assertOk();
+        $this->assertCount(1, $this->portalConfigurations); // created once, then reused
 
-        // The wallet shows the credit, and the next renewal ($29) is paid from it: nothing to charge.
-        $this->getJson('/api/v1/billing/payments')->assertOk()
-            ->assertJsonPath('data.wallet.balance_minor', 4050)->assertJsonPath('data.wallet.currency', 'USD')
-            ->assertJsonPath('data.wallet.entries.0.kind', 'used')->assertJsonPath('data.wallet.entries.0.amount_minor', -2900)
-            ->assertJsonPath('data.wallet.entries.1.kind', 'added')->assertJsonPath('data.wallet.entries.1.amount_minor', 6950)
-            ->assertJsonPath('data.upcoming.total_minor', 2900)->assertJsonPath('data.upcoming.credit_applied_minor', 2900)->assertJsonPath('data.upcoming.amount_due_minor', 0);
+        // The plan it is already on is refused before Stripe opens.
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'update', 'plan' => 'growth', 'interval' => 'monthly'])->assertStatus(422);
 
-        // Upgrading again uses the wallet too: Growth costs $64.50 after proration, $40.50 comes from the wallet, $24 from the card.
-        $this->postJson('/api/v1/billing/preview', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk()
-            ->assertJsonPath('data.balance_applied_minor', 4050)->assertJsonPath('data.amount_due_minor', 2400)->assertJsonPath('data.wallet_after_minor', 0);
+        // Back from the portal: Stripe's subscription is read again (the webhook follows).
+        $this->remoteSubscription['items']['data'][0]['price']['id'] = 'price_month_13900';
+        $this->postJson('/api/v1/billing/return', ['flow' => 'update'])->assertOk()->assertJsonPath('data.status', 'synced');
+        $this->assertSame('pro', $this->planKey());
     }
 
-    public function test_the_plan_only_changes_after_the_payment_has_succeeded(): void
+    public function test_a_downgrade_is_scheduled_for_the_end_of_the_period_and_shown(): void
     {
-        $this->billingCountry('PK');
-        $this->subscribeAndPay('starter');
+        $this->upgrade('pro', 'yearly');
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'manage'])->assertOk(); // the portal knows every plan's prices
 
-        // The bank asks for verification: the change waits, the customer stays on Starter.
-        $this->changeNeedsAction = true;
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'pro', 'interval' => 'monthly'])->assertOk()
-            ->assertJsonPath('data.status', 'requires_confirmation')->assertJsonPath('data.client_secret', 'pi_2_secret');
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'starter');
-        $this->postJson('/api/v1/billing/refresh')->assertOk()->assertJsonPath('data.status', 'pending');
+        // 31: Pro Annual → Starter Monthly: $0 today; the portal schedules it for the period end.
+        $at = now()->addMonths(11)->startOfDay();
+        $this->remoteSubscription['schedule'] = 'sub_sched_1';
+        $this->schedule = ['id' => 'sub_sched_1', 'status' => 'active', 'subscription' => 'sub_1', 'phases' => [
+            ['start_date' => now()->subMonth()->timestamp, 'items' => [['price' => 'price_year_139000']]],
+            ['start_date' => $at->timestamp, 'items' => [['price' => 'price_month_2900']]],
+        ]];
+        $this->stripeEvent('subscription_schedule.updated', ['id' => 'sub_sched_1', 'subscription' => 'sub_1'])->assertOk();
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.plan.key', 'pro')
+            ->assertJsonPath('data.subscription.scheduled_change.plan.key', 'starter')->assertJsonPath('data.subscription.scheduled_change.interval', 'monthly')
+            ->assertJsonPath('data.subscription.scheduled_change.at', $at->toIso8601String());
 
-        // The customer gives up → the unpaid invoice is withdrawn and nothing changed.
-        $this->postJson('/api/v1/billing/refresh', ['abandon' => true])->assertOk()->assertJsonPath('data.status', 'failed');
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/invoices/in_2/void'));
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'starter');
-
-        // A declined card is reported with the bank's reason, and again nothing changed.
-        $this->changeNeedsAction = false;
-        $this->changeDeclined = true;
-        $response = $this->postJson('/api/v1/billing/subscribe', ['plan' => 'pro', 'interval' => 'monthly'])->assertStatus(422);
-        $this->assertStringContainsString('insufficient funds', (string) $response->json('error.details.fields.payment_method.0'));
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'starter');
+        // Undo in the portal releases the schedule: the pending change disappears.
+        $this->schedule['status'] = 'released';
+        $this->remoteSubscription['schedule'] = null;
+        $this->stripeEvent('subscription_schedule.released', ['id' => 'sub_sched_1', 'subscription' => 'sub_1'])->assertOk();
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.subscription.scheduled_change', null);
     }
 
-    public function test_payments_are_listed_and_an_ended_subscription_falls_back_to_free_without_a_webhook(): void
+    public function test_a_downgrade_with_more_members_than_the_new_plan_allows_is_blocked_before_stripe(): void
     {
-        $this->billingCountry('AE');
-        $this->subscribeAndPay();
+        $this->upgrade('growth'); // 5 seats
+        $this->addMember($this->tenant, SystemRole::Agent);
+        $this->addMember($this->tenant, SystemRole::Agent);
 
-        $this->getJson('/api/v1/billing/payments')->assertOk()->assertJsonCount(1, 'data.payments')
-            ->assertJsonPath('data.payments.0.status', 'succeeded')->assertJsonPath('data.payments.0.card_last4', '4242')->assertJsonPath('data.payments.0.amount_minor', 8295)
-            ->assertJsonPath('data.upcoming.amount_due_minor', 8295);
+        // 32: Starter has 2 seats; 3 are used.
+        $response = $this->postJson('/api/v1/billing/portal', ['flow' => 'update', 'plan' => 'starter', 'interval' => 'monthly'])->assertStatus(422);
+        $this->assertStringContainsString('includes 2 team seats', (string) $response->json('error.details.fields.plan.0'));
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), 'billing_portal/sessions'));
+    }
 
-        // The paid period ended on Stripe but the webhook never arrived: the hourly check moves the workspace to Free.
+    public function test_a_failed_renewal_pauses_paid_features_at_once_and_a_new_card_pays_and_restores_them(): void
+    {
+        $this->upgrade('growth');
+        Notification::fake();
+        $entitlements = app(EntitlementService::class);
+        $this->assertTrue($entitlements->allows($this->tenant, FeatureKey::Chatbots));
+
+        // 33: renewal fails → past_due → paid features off at once; messaging is not a paid feature.
+        $this->openInvoice();
+        $this->remoteSubscription['status'] = 'past_due';
+        $this->stripeEvent('invoice.payment_failed', ['id' => 'in_1', 'subscription' => 'sub_1', 'attempt_count' => 1, 'next_payment_attempt' => now()->addDays(3)->timestamp])->assertOk();
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.subscription.status', 'past_due')->assertJsonPath('data.subscription.paused', true)->assertJsonPath('data.plan.key', 'growth');
+        $this->assertFalse($entitlements->allows($this->tenant, FeatureKey::Chatbots));
+        $this->assertFalse($entitlements->allows($this->tenant, FeatureKey::Broadcasts));
+        $this->assertFalse($entitlements->allows($this->tenant, FeatureKey::Automations));
+        $this->assertTrue($entitlements->allows($this->tenant, FeatureKey::WhatsappNumbers));
+        Notification::assertSentOnDemandTimes(PaymentFailedNotification::class, 2); // the owner and the billing email from Checkout
+
+        // 34: "Pay now" → the portal's card screen; back here the open invoice is paid with the new card.
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'card'])->assertOk();
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/billing_portal/sessions') && $r['flow_data']['type'] === 'payment_method_update'
+            && $r['flow_data']['after_completion']['redirect']['return_url'] === 'https://app.engage.test/billing/return?flow=card');
+        $this->remoteCustomer['invoice_settings']['default_payment_method'] = 'pm_new';
+        $this->remoteSubscription['status'] = 'active';
+        $this->postJson('/api/v1/billing/return', ['flow' => 'card'])->assertOk()->assertJsonPath('data.status', 'paid');
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/subscriptions/sub_1') && $r->method() === 'POST' && $r['default_payment_method'] === 'pm_new');
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/invoices/in_1/pay'));
+        $this->getJson('/api/v1/billing/invoices')->assertJsonPath('data.0.status', 'paid');
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.subscription.paused', false);
+        $this->assertTrue($entitlements->allows($this->tenant, FeatureKey::Chatbots));
+
+        // The card shown on the page comes from Stripe, not from engageX.
+        $this->getJson('/api/v1/billing/payment-method')->assertOk()->assertJsonPath('data.last4', '4242');
+    }
+
+    public function test_a_card_that_fails_again_keeps_the_features_paused(): void
+    {
+        $this->upgrade('growth');
+        $this->openInvoice();
+        $this->remoteSubscription['status'] = 'past_due';
+        $this->stripeEvent('invoice.payment_failed', ['id' => 'in_1', 'subscription' => 'sub_1'])->assertOk();
+
+        $this->invoicePayFails = true;
+        $this->postJson('/api/v1/billing/return', ['flow' => 'card'])->assertOk()->assertJsonPath('data.status', 'failed')->assertJsonPath('data.message', 'Your card was declined.');
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.subscription.paused', true);
+    }
+
+    public function test_members_beyond_the_plans_seats_stay_but_cannot_reply(): void
+    {
+        $this->upgrade('starter'); // 2 seats
+        $first = $this->addMember($this->tenant, SystemRole::Agent);
+        $this->travel(1)->seconds();
+        $second = $this->addMember($this->tenant, SystemRole::Agent);
+        $seats = app(ReplySeats::class);
+
+        $this->assertTrue($seats->canReply($this->tenant, $this->owner));
+        $this->assertTrue($seats->canReply($this->tenant, $first));
+        $this->assertFalse($seats->canReply($this->tenant, $second)); // 3rd member, 2 seats
+
+        // Unpaid renewal: Free features, 1 seat: only the owner replies. Paid again: back to 2.
+        $this->remoteSubscription['status'] = 'past_due';
+        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
+        $this->assertTrue($seats->canReply($this->tenant, $this->owner));
+        $this->assertFalse($seats->canReply($this->tenant, $first));
+        $this->remoteSubscription['status'] = 'active';
+        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
+        $this->assertTrue($seats->canReply($this->tenant, $first));
+    }
+
+    public function test_cancelling_goes_through_the_portal_and_ends_on_free_with_the_data_kept(): void
+    {
+        $this->upgrade('growth');
+        $this->postJson('/api/v1/billing/switch-to-free')->assertStatus(422); // a paid plan is cancelled on Stripe's screen
+
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'cancel'])->assertOk();
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/billing_portal/sessions') && $r['flow_data']['type'] === 'subscription_cancel'
+            && $r['flow_data']['subscription_cancel']['subscription'] === 'sub_1');
+
+        $this->remoteSubscription['cancel_at_period_end'] = true;
+        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.plan.key', 'growth')->assertJsonPath('data.subscription.cancel_at', now()->addMonth()->startOfSecond()->toIso8601String());
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'cancel'])->assertStatus(422); // already ending
+
+        $this->remoteSubscription['status'] = 'canceled';
+        $this->stripeEvent('customer.subscription.deleted', ['id' => 'sub_1'])->assertOk();
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.plan.key', 'free')->assertJsonPath('data.subscription.provider', 'manual');
+        $this->assertSame(1, $this->tenantContext()->run($this->tenant, fn () => Subscription::query()->live()->count()));
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'manage'])->assertStatus(422); // nothing paid to manage
+    }
+
+    public function test_a_trial_moves_to_free_straight_away(): void
+    {
+        $this->getJson('/api/v1/billing')->assertJsonPath('data.can_switch_to_free', true);
+        $this->postJson('/api/v1/billing/switch-to-free')->assertOk()->assertJsonPath('data.plan.key', 'free');
+    }
+
+    public function test_invoices_are_mirrored_and_their_pdf_is_fetched_fresh_from_stripe(): void
+    {
+        $this->upgrade('growth');
+        $this->openInvoice();
+        $this->stripeEvent('invoice.finalized', ['id' => 'in_1'])->assertOk();
+        $id = $this->getJson('/api/v1/billing/invoices')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.status', 'open')
+            ->assertJsonPath('data.0.has_pdf', true)->assertJsonMissingPath('data.0.invoice_pdf')->json('data.0.id');
+
+        // 36: the PDF link comes from Stripe each time (Stripe rotates them).
+        $this->remoteInvoice['invoice_pdf'] = 'https://pay.stripe.com/invoice/1/pdf?s=fresh';
+        $this->getJson("/api/v1/billing/invoices/{$id}/pdf")->assertOk()->assertJsonPath('data.url', 'https://pay.stripe.com/invoice/1/pdf?s=fresh');
+
+        // Refunds (issued by the platform team or in Stripe) are reflected.
+        $this->remoteInvoice = array_merge($this->remoteInvoice, ['status' => 'paid', 'amount_paid' => 8295, 'charge' => ['id' => 'ch_1', 'amount_refunded' => 8295]]);
+        $this->stripeEvent('charge.refunded', ['id' => 'ch_1'])->assertOk();
+        $this->getJson('/api/v1/billing/invoices')->assertJsonPath('data.0.status', 'refunded');
+
+        // Another workspace cannot read it.
+        $this->actingAsMember($this->addMember($this->createTenant()));
+        $this->getJson("/api/v1/billing/invoices/{$id}/pdf")->assertNotFound();
+    }
+
+    public function test_the_same_webhook_is_processed_once_and_receipts_are_sent_once(): void
+    {
+        $this->upgrade('growth');
+        Notification::fake();
+        $this->openInvoice();
+        $this->remoteInvoice = array_merge($this->remoteInvoice, ['status' => 'paid', 'amount_paid' => 8295, 'status_transitions' => ['finalized_at' => now()->timestamp, 'paid_at' => now()->timestamp]]);
+
+        // 37: delivered twice.
+        $this->stripeEvent('invoice.paid', ['id' => 'in_1', 'subscription' => 'sub_1'], 'evt_paid')->assertOk();
+        $this->stripeEvent('invoice.paid', ['id' => 'in_1', 'subscription' => 'sub_1'], 'evt_paid')->assertOk()->assertJsonPath('duplicate', true);
+        Notification::assertSentOnDemandTimes(PaymentReceiptNotification::class, 2); // once each: the owner and the billing email
+        $this->assertSame(1, DB::table('stripe_events')->where('id', 'evt_paid')->count());
+
+        // A failure releases the event so Stripe's retry processes it.
+        $this->remoteInvoice = [];
+        $this->stripeEvent('invoice.paid', ['id' => 'in_missing'], 'evt_broken')->assertStatus(500);
+        $this->assertSame(0, DB::table('stripe_events')->where('id', 'evt_broken')->count());
+    }
+
+    public function test_billing_details_changed_in_stripe_are_copied_onto_the_workspace(): void
+    {
+        $this->upgrade('growth');
+        $this->remoteCustomer = array_merge($this->remoteCustomer, ['name' => 'Nova Fitness FZ-LLC', 'email' => 'accounts@nova.test',
+            'tax_ids' => ['data' => [['type' => 'ae_trn', 'value' => '100999888777666']]]]);
+        $this->stripeEvent('customer.tax_id.created', ['id' => 'txi_2', 'customer' => 'cus_1'])->assertOk();
+        $this->getJson('/api/v1/billing')->assertJsonPath('data.details.legal_name', 'Nova Fitness FZ-LLC')
+            ->assertJsonPath('data.details.billing_email', 'accounts@nova.test')->assertJsonPath('data.details.tax_trn', '100999888777666');
+    }
+
+    public function test_reminders_go_out_before_the_card_expires_and_before_an_annual_renewal(): void
+    {
+        $this->travelTo(now()->setDate(2027, 3, 6)->setTime(5, 17));
+        $this->upgrade('growth', 'yearly');
+        $this->remoteCustomer['invoice_settings']['default_payment_method'] = 'pm_new';
+        $this->cardExpiry = [3, 2027]; // ends 31 March: 25 days away → the 30-day reminder
+        $this->tenantContext()->run($this->tenant, fn () => Subscription::query()->live()->update(['current_period_end' => now()->addDays(7)->setTime(12, 0)]));
+        Notification::fake();
+
+        Artisan::call('engage:billing:reminders');
+        Artisan::call('engage:billing:reminders'); // a second run sends nothing twice
+        // Two reminders, each to the owner and the billing email.
+        Notification::assertSentOnDemandTimes(BillingReminderNotification::class, 4);
+        Notification::assertSentOnDemand(BillingReminderNotification::class, fn (BillingReminderNotification $n) => $n->kind === BillingReminderNotification::CARD_EXPIRING && $n->card === 'Visa ending 4242');
+        Notification::assertSentOnDemand(BillingReminderNotification::class, fn (BillingReminderNotification $n) => $n->kind === BillingReminderNotification::ANNUAL_RENEWAL);
+    }
+
+    public function test_an_ended_subscription_falls_back_to_free_without_a_webhook(): void
+    {
+        $this->upgrade('growth');
         $this->remoteSubscription['status'] = 'canceled';
         $this->tenantContext()->run($this->tenant, fn () => Subscription::query()->live()->update(['current_period_end' => now()->subHours(3)]));
         Artisan::call('engage:billing:reconcile');
         $this->actingAsMember($this->owner);
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'free')->assertJsonPath('data.subscription.provider', 'manual');
+        $this->assertSame('free', $this->planKey());
     }
 
-    public function test_receipt_and_first_failed_payment_emails_are_sent_once(): void
+    public function test_a_subscription_made_with_other_stripe_keys_does_not_block_upgrading(): void
     {
-        $this->billingCountry('AE', '100200300400003', 'Nova Fitness LLC');
-        $this->subscribeAndPay();
-        Notification::fake();
+        $this->upgrade('starter');
+        $bypass = fn (callable $q) => app(TenantContext::class)->bypass($q);
+        $bypass(fn () => Subscription::query()->where('provider_subscription_id', 'sub_1')->update(['provider_subscription_id' => 'sub_other_mode']));
 
-        $this->remoteInvoice = [
-            'id' => 'in_1', 'number' => 'ENG-0001', 'status' => 'paid', 'currency' => 'usd', 'customer' => 'cus_1',
-            'subtotal' => 7900, 'tax' => 395, 'total' => 8295, 'amount_paid' => 8295, 'created' => now()->timestamp,
-            'invoice_pdf' => 'https://pay.stripe.com/invoice/1/pdf', 'status_transitions' => ['finalized_at' => now()->timestamp, 'paid_at' => now()->timestamp],
-            'lines' => ['data' => [['description' => '1 × 10X Engage Growth']]], 'charge' => ['id' => 'ch_1', 'amount_refunded' => 0],
-        ];
-        $this->stripeEvent('invoice.paid', ['id' => 'in_1'], 'evt_paid')->assertOk();
-        $this->stripeEvent('invoice.paid', ['id' => 'in_1'], 'evt_paid')->assertOk(); // Stripe retry: no second email
-
-        Notification::assertSentOnDemandTimes(PaymentReceiptNotification::class, 1);
-        Notification::assertSentOnDemand(PaymentReceiptNotification::class,
-            fn (PaymentReceiptNotification $n) => $n->workspace === 'Nova Fitness LLC' && $n->number === 'ENG-0001' && $n->subtotal === 'USD 79.00'
-                && $n->tax === 'USD 3.95' && $n->total === 'USD 82.95' && $n->trn === '100200300400003' && $n->pdfUrl === 'https://pay.stripe.com/invoice/1/pdf');
-
-        // A renewal fails: one notice on the first attempt, nothing more on Stripe's later retries.
-        $this->remoteInvoice = array_merge($this->remoteInvoice, ['status' => 'open', 'amount_paid' => 0]);
-        $this->stripeEvent('invoice.payment_failed', ['id' => 'in_1', 'attempt_count' => 1, 'next_payment_attempt' => now()->addDays(3)->timestamp])->assertOk();
-        $this->stripeEvent('invoice.payment_failed', ['id' => 'in_1', 'attempt_count' => 2])->assertOk();
-        Notification::assertSentOnDemandTimes(PaymentFailedNotification::class, 1);
+        // Stripe no longer knows it: Checkout is offered again, and the new subscription replaces it.
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk();
+        $session = (string) array_key_last($this->sessions);
+        $this->payCheckout($session);
+        $this->stripeEvent('checkout.session.completed', ['id' => $session])->assertOk();
+        $this->assertSame('growth', $this->planKey());
+        $this->assertSame(1, $bypass(fn () => Subscription::query()->where('tenant_id', $this->tenant->id)->live()->count()));
     }
 
-    public function test_webhooks_must_be_signed_and_billing_is_owner_only(): void
+    public function test_webhooks_must_be_signed_and_billing_actions_are_owner_only(): void
     {
         $this->stripeEvent('invoice.paid', ['id' => 'in_1'], null, 'whsec_wrong')->assertStatus(400);
         $this->postJson('/api/webhooks/stripe', ['id' => 'evt_x', 'type' => 'invoice.paid'])->assertStatus(400);
@@ -564,28 +552,22 @@ final class StripeBillingTest extends TestCase
         // An event for a customer that is not ours is acknowledged and ignored.
         $this->remoteSubscription = ['id' => 'sub_1', 'status' => 'active', 'customer' => 'cus_other', 'metadata' => [], 'items' => ['data' => [['id' => 'si', 'price' => ['id' => 'price_unknown']]]]];
         $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
-        $this->getJson('/api/v1/billing')->assertJsonPath('data.plan.key', 'pro')->assertJsonPath('data.subscription.status', 'trialing');
+        $this->assertSame('pro', $this->planKey());
 
         $this->actingAsMember($this->addMember($this->tenant, SystemRole::Admin));
         $this->getJson('/api/v1/billing')->assertOk();
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth', 'interval' => 'monthly'])->assertForbidden();
-        $this->postJson('/api/v1/billing/payment-methods/setup-intent')->assertForbidden();
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth', 'interval' => 'monthly'])->assertForbidden();
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'card'])->assertForbidden();
+        $this->postJson('/api/v1/billing/return', ['flow' => 'card'])->assertForbidden();
         $this->actingAsMember($this->addMember($this->tenant, SystemRole::Agent));
         $this->getJson('/api/v1/billing')->assertForbidden();
-
-        // Another workspace sees neither the cards nor the invoices.
-        $other = $this->createTenant();
-        $this->actingAsMember($this->addMember($other));
-        $this->getJson('/api/v1/billing/payment-methods')->assertOk()->assertJsonCount(0, 'data');
-        $this->getJson('/api/v1/billing/invoices')->assertOk()->assertJsonCount(0, 'data');
     }
 
     public function test_without_stripe_keys_the_page_still_loads_and_buying_explains_why_not(): void
     {
         config(['engage.stripe.secret' => null]);
-        $this->billingCountry('AE');
 
         $this->getJson('/api/v1/billing')->assertOk()->assertJsonPath('data.stripe_configured', false);
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth', 'interval' => 'monthly'])->assertStatus(503)->assertJsonPath('error.code', 'billing_error');
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth', 'interval' => 'monthly'])->assertStatus(503)->assertJsonPath('error.code', 'billing_error');
     }
 }

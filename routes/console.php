@@ -15,6 +15,8 @@ Schedule::command('engage:coexistence:import')->everyMinute()->onOneServer()->wi
 Schedule::command('engage:whatsapp:verify-access')->everyFifteenMinutes()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:coexistence:watch')->everyTenMinutes()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:billing:reconcile')->hourly()->onOneServer()->withoutOverlapping();
+// Batch 6: card expiring in 30 / 7 days and annual renewals in 7 days (Dubai morning).
+Schedule::command('engage:billing:reminders')->dailyAt('05:17')->onOneServer()->withoutOverlapping();
 Schedule::command('engage:retention:apply')->dailyAt('02:30')->onOneServer()->withoutOverlapping();
 Schedule::command('engage:workspace-deletions')->hourly()->onOneServer()->withoutOverlapping();
 Schedule::command('engage:inbox:wake-snoozed')->everyMinute()->onOneServer()->withoutOverlapping();

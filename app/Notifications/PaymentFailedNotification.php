@@ -40,8 +40,9 @@ final class PaymentFailedNotification extends Notification implements HasEmailCa
             ->subject('Payment failed for your 10X Engage subscription')
             ->greeting('We could not charge your card')
             ->line("The payment of {$this->total} for {$this->workspace}".($this->number !== null ? " (invoice {$this->number})" : '').' did not go through.')
-            ->line($this->retryOn !== null ? "We will try again on {$this->retryOn}. To avoid any interruption, update your card or pay the invoice now." : 'Please update your card or pay the invoice now to keep your plan.')
-            ->action('Update payment method', config('engage.frontend_url').'/billing')
-            ->line('If the invoice stays unpaid, the workspace moves to the Free plan and paid features are switched off. Your data is kept.');
+            ->line('Paid features (chatbots, automations, reply alerts, campaigns and extra team seats) are paused until it is paid. Sending and receiving messages keep working.')
+            ->line($this->retryOn !== null ? "Stripe will try your card again on {$this->retryOn}. To restore everything now, update your card: the invoice is paid with it straight away." : 'Update your card to pay the invoice: everything comes back within seconds.')
+            ->action('Update card and pay', config('engage.frontend_url').'/billing')
+            ->line('Your chats, contacts and settings are kept.');
     }
 }

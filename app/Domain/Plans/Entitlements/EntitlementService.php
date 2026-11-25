@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Plans\Entitlements;
 
+use App\Domain\Billing\Enums\SubscriptionStatus;
 use App\Domain\Billing\Models\Subscription;
 use App\Domain\Plans\Exceptions\FeatureNotAvailable;
 use App\Domain\Plans\Exceptions\PlanLimitReached;
@@ -124,7 +125,11 @@ final class EntitlementService
             ->latest('created_at')
             ->first();
 
-        $version = $subscription->planVersion ?? $this->fallbackVersion();
+        // No grace period (Batch 6): while a renewal is unpaid the workspace runs on Free features.
+        // Messaging, the inbox, contacts and billing keep working; paid features come back with invoice.paid.
+        $version = $subscription !== null && $subscription->status !== SubscriptionStatus::PastDue
+            ? ($subscription->planVersion ?? $this->fallbackVersion())
+            : $this->fallbackVersion();
 
         $planFeatures = PlanVersionFeature::query()
             ->where('plan_version_id', $version->getKey())

@@ -21,12 +21,17 @@ return [
     | STRIPE_UAE_TAX_RATE_ID to use one you created yourself).
     */
     'stripe' => [
-        'key' => env('STRIPE_KEY'),                 // publishable key (pk_…): used by the card form in the browser
+        'key' => env('STRIPE_KEY'),                 // publishable key (pk_…): not needed by the hosted flows; kept for "configured" checks
         'secret' => env('STRIPE_SECRET'),
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
         'api_version' => '2024-06-20',
         'uae_vat_percent' => (float) env('STRIPE_UAE_VAT_PERCENT', 5),
         'uae_tax_rate_id' => env('STRIPE_UAE_TAX_RATE_ID'),
+        // Stripe Tax works out VAT in Checkout and on renewals. Turn on only after Stripe Tax is
+        // activated (Dashboard → Tax) with the UAE registration; otherwise the UAE rate above is used.
+        'automatic_tax' => (bool) env('STRIPE_AUTOMATIC_TAX', false),
+        // Customer Portal configuration (bpc_…). Empty: created and kept up to date by the app.
+        'portal_configuration' => env('STRIPE_PORTAL_CONFIGURATION'),
     ],
 
     /*
@@ -57,9 +62,11 @@ return [
     'plans' => [
         // Tenants without a live subscription resolve entitlements from this plan.
         'fallback' => 'free',
-        // New workspaces start a trial on this plan (blueprint: 14 days, full Pro).
-        'trial_plan' => 'pro',
-        'trial_days' => 14,
+        // New workspaces start a trial on this plan. Batch 6 ("every new workspace starts on Free"):
+        // set ENGAGE_TRIAL_DAYS=0 and new workspaces start on Free instead (the marketing site's
+        // "N days free" copy must change with it).
+        'trial_plan' => env('ENGAGE_TRIAL_PLAN', 'pro'),
+        'trial_days' => (int) env('ENGAGE_TRIAL_DAYS', 14),
     ],
 
     'entitlements' => [

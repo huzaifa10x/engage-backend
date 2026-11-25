@@ -123,7 +123,8 @@ final class PlanManagementTest extends TestCase
         $plans = collect($this->getJson('/api/v1/billing')->assertOk()->json('data.plans'))->keyBy('key');
         $this->assertArrayNotHasKey('growth_plus', $plans->all());
         $this->putJson('/api/v1/billing/details', ['country' => 'PK'])->assertOk();
-        $this->postJson('/api/v1/billing/subscribe', ['plan' => 'growth_plus', 'interval' => 'monthly'])->assertStatus(422);
+        config(['engage.stripe.secret' => 'sk_test_x']);
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth_plus', 'interval' => 'monthly'])->assertStatus(422); // not for sale: refused before Stripe
     }
 
     public function test_only_billing_managers_can_change_plans_or_refund(): void

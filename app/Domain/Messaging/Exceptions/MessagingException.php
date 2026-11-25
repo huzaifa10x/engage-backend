@@ -17,6 +17,14 @@ final class MessagingException extends DomainException
         parent::__construct($message);
     }
 
+    /** Batch 6: a member beyond the plan's seats can read but not reply until the seats are paid. */
+    public static function seatNotPaid(?int $seats): self
+    {
+        $plan = $seats === 1 ? 'Your plan includes 1 team seat' : "Your plan includes {$seats} team seats";
+
+        return new self("{$plan}, so only the workspace owner".($seats === 1 ? '' : ' and the first members').' can reply. Ask the owner to upgrade (or pay the open invoice) to reply.', ErrorCode::PlanLimitReached, 402);
+    }
+
     public static function windowClosed(): self
     {
         return new self('The 24-hour customer service window has closed. Send an approved template to restart the conversation.', ErrorCode::WindowClosed, 422);

@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Billing;
 
 use App\Application\Billing\StripeBilling;
 use App\Domain\Audit\AuditLogger;
+use App\Domain\Billing\Enums\BillingProvider;
 use App\Domain\Billing\Enums\SubscriptionStatus;
 use App\Domain\Billing\Models\Invoice;
 use App\Domain\Billing\Models\Subscription;
@@ -14,12 +15,17 @@ use App\Domain\Plans\Models\Plan;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
 use App\Infrastructure\Stripe\StripeClient;
+use App\Infrastructure\Stripe\StripeException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
-/** Plan, billing details (company name, country, VAT TRN), invoices and Stripe-hosted flows. */
+/**
+ * Billing page (Batch 6): plan, billing details, invoices, and the Stripe-hosted flows. Every money
+ * action opens a Stripe page (Checkout or the Customer Portal); the plan changes when Stripe's
+ * webhook confirms it. No card is entered on, or stored by, engageX.
+ */
 final class BillingController extends Controller
 {
     public function __construct(
@@ -28,10 +34,12 @@ final class BillingController extends Controller
         private readonly StripeClient $stripe,
     ) {}
 
+    /** Also served as GET billing/summary, which the return page polls while Stripe confirms. */
     public function show(): JsonResponse
     {
         $tenant = $this->context->tenant();
-        $subscription = Subscription::query()->live()->with('planVersion.plan')->first();
+        $subscription = Subscription::query()->live()->with(['planVersion.plan', 'scheduledPlanVersion.plan'])->first();
+        $scheduled = $subscription?->scheduled_change_at !== null && $subscription->scheduled_change_at->isFuture() ? $subscription->scheduledPlanVersion : null;
         $currentKey = $subscription->planVersion->plan->key ?? (string) config('engage.plans.fallback');
         $vat = StripeBilling::vatApplies($tenant);
         $percent = (float) config('engage.stripe.uae_vat_percent', 5);
@@ -56,15 +64,15 @@ final class BillingController extends Controller
                     'current' => $plan->key === $currentKey,
                     // Free has no price to pay; custom-priced plans (null) go through sales.
                     'purchasable' => $plan->is_active && ($version->price_monthly_minor ?? 0) > 0,
-                    // The plan a workspace falls back to; "Switch to Free" moves there (billing/switch-to-free).
-                    'free' => $plan->key === (string) config('engage.plans.fallback'),
+                    // The plan a workspace falls back to.
+                    'free' => $plan->key === $fallback,
                 ];
             })->filter()->values();
 
+        $selfServe = $subscription !== null && $subscription->provider === BillingProvider::Stripe && $subscription->provider_subscription_id !== null;
+
         return response()->json(['data' => [
-            'stripe_configured' => $this->stripe->configured() && (string) config('engage.stripe.key') !== '',
-            // Publishable key: safe to expose; the card form in the browser needs it.
-            'stripe_publishable_key' => config('engage.stripe.key'),
+            'stripe_configured' => $this->stripe->configured(),
             'plan' => ['key' => $currentKey, 'name' => $subscription->planVersion->plan->name ?? 'Free'],
             'subscription' => $subscription === null ? null : [
                 'status' => $subscription->status->value,
@@ -73,6 +81,15 @@ final class BillingController extends Controller
                 'trial_ends_at' => $subscription->trial_ends_at?->toIso8601String(),
                 'current_period_end' => $subscription->current_period_end?->toIso8601String(),
                 'cancel_at' => $subscription->cancel_at?->toIso8601String(),
+                // Paid by card through Stripe: changed in the Customer Portal. Otherwise set up by 10X Digital.
+                'self_serve' => $selfServe,
+                // No grace period: while past due the paid features are paused (messaging keeps working).
+                'paused' => $subscription->status === SubscriptionStatus::PastDue,
+                'scheduled_change' => $scheduled === null ? null : [
+                    'plan' => ['key' => $scheduled->plan->key, 'name' => $scheduled->plan->name],
+                    'interval' => $subscription->scheduled_interval,
+                    'at' => $subscription->scheduled_change_at->toIso8601String(),
+                ],
             ],
             'details' => [
                 'legal_name' => $tenant->legal_name,
@@ -82,15 +99,13 @@ final class BillingController extends Controller
             ],
             'vat' => ['applies' => $vat, 'percent' => $percent, 'country' => StripeBilling::VAT_COUNTRY],
             'has_payment_history' => $tenant->stripe_customer_id !== null,
-            // "Switch to Free" is offered for a trial or a paid Stripe plan; plans the platform team set
-            // up (In-House, manual Enterprise) are changed by them.
-            'can_switch_to_free' => $subscription !== null && $currentKey !== $fallback
-                && ($subscription->status === SubscriptionStatus::Trialing || $this->billing->liveStripeSubscription($tenant) !== null),
+            // A trial can move to Free at once; a paid plan is cancelled in the portal (flow "cancel").
+            'can_switch_to_free' => $subscription !== null && $currentKey !== $fallback && $subscription->status === SubscriptionStatus::Trialing,
             'plans' => $plans,
         ]]);
     }
 
-    /** Company name, country and VAT TRN as they should appear on invoices. */
+    /** Company name, country, VAT TRN and billing email as they should appear on invoices. */
     public function updateDetails(Request $request, AuditLogger $audit): JsonResponse
     {
         $data = $request->validate([
@@ -120,20 +135,6 @@ final class BillingController extends Controller
         return $this->show();
     }
 
-    /** The billing summary for a plan the customer is about to choose (shown before they confirm). */
-    public function preview(Request $request): JsonResponse
-    {
-        $data = $request->validate([
-            'plan' => ['required', 'string', 'max:32'],
-            'interval' => ['required', Rule::in(['monthly', 'yearly'])],
-        ]);
-        if ($this->context->tenant()->country === null) {
-            throw ValidationException::withMessages(['country' => 'Choose your billing country first, so the correct tax is applied.']);
-        }
-
-        return response()->json(['data' => $this->billing->preview($this->context->tenant(), $data['plan'], $data['interval'], $this->context->membership())]);
-    }
-
     /** Card payments (succeeded, failed, refunded), the next renewal charge, and the wallet (credit kept from downgrades). */
     public function payments(): JsonResponse
     {
@@ -146,83 +147,68 @@ final class BillingController extends Controller
         ]]);
     }
 
-    /**
-     * Buy or switch plan with a saved card. Returns `requires_confirmation` + a client secret when
-     * the browser must confirm the payment with Stripe (card check / 3-D Secure) inside the page.
-     */
-    public function subscribe(Request $request): JsonResponse
+    /** The card renewals are charged to, read from Stripe (brand, last 4, expiry). Never stored. */
+    public function paymentMethod(): JsonResponse
+    {
+        return response()->json(['data' => $this->stripe->configured() ? $this->billing->paymentMethod($this->context->tenant()) : null]);
+    }
+
+    /** Upgrade from Free (or a trial): a Stripe Checkout page. The browser goes to the returned URL. */
+    public function checkout(Request $request): JsonResponse
     {
         $data = $request->validate([
             'plan' => ['required', 'string', 'max:32'],
             'interval' => ['required', Rule::in(['monthly', 'yearly'])],
-            'payment_method' => ['nullable', 'string', 'max:64', 'starts_with:pm_'],
         ]);
+        $this->ensureConfigured();
 
-        return response()->json(['data' => $this->billing->subscribe($this->context->tenant(), $data['plan'], $data['interval'], $this->context->membership(), $data['payment_method'] ?? null)]);
-    }
-
-    /** Called after the in-page payment step: read the result from Stripe now (no waiting for webhooks). */
-    public function refresh(Request $request): JsonResponse
-    {
-        $data = $request->validate(['abandon' => ['nullable', 'boolean']]);
-        $status = $this->billing->refresh($this->context->tenant(), (bool) ($data['abandon'] ?? false));
-
-        return response()->json(['data' => ['status' => $status]]);
-    }
-
-    public function paymentMethods(): JsonResponse
-    {
-        return response()->json(['data' => $this->stripe->configured() ? $this->billing->paymentMethods($this->context->tenant()) : []]);
-    }
-
-    /** Start adding a card: the browser completes it with Stripe using this client secret. */
-    public function setupIntent(): JsonResponse
-    {
-        $email = $this->context->membership()?->user()->value('email');
-
-        return response()->json(['data' => ['client_secret' => $this->billing->setupIntent($this->context->tenant(), is_string($email) ? $email : null)]]);
-    }
-
-    public function setDefaultPaymentMethod(string $paymentMethod): JsonResponse
-    {
-        $this->billing->setDefaultPaymentMethod($this->context->tenant(), $paymentMethod);
-
-        return $this->paymentMethods();
-    }
-
-    public function removePaymentMethod(string $paymentMethod): JsonResponse
-    {
-        $this->billing->removePaymentMethod($this->context->tenant(), $paymentMethod);
-
-        return $this->paymentMethods();
-    }
-
-    public function payInvoice(Request $request, Invoice $invoice): JsonResponse
-    {
-        $data = $request->validate(['payment_method' => ['nullable', 'string', 'max:64', 'starts_with:pm_']]);
-
-        return response()->json(['data' => $this->billing->payInvoice($this->context->tenant(), $invoice, $data['payment_method'] ?? null)]);
-    }
-
-    /** After an in-page invoice payment was confirmed by the browser: mirror the invoice now. */
-    public function refreshInvoice(Invoice $invoice): JsonResponse
-    {
-        $this->billing->syncInvoice($invoice->stripe_invoice_id);
-
-        return $this->invoices();
-    }
-
-    public function cancel(): JsonResponse
-    {
-        $this->billing->setCancelAtPeriodEnd($this->context->tenant(), true);
-
-        return $this->show();
+        return response()->json(['data' => ['url' => $this->billing->checkout($this->context->tenant(), $data['plan'], $data['interval'], $this->context->membership())]]);
     }
 
     /**
-     * "Switch to Free": a paid Stripe plan ends at the end of the period already paid for (no refund,
-     * nothing more is charged), then the workspace moves to Free; a trial moves to
-     * Free straight away. Plans set up by 10X Digital (manual billing) are changed by them.
+     * A Stripe Customer Portal page for one task: change plan (update), card / pay now (card),
+     * cancel at period end (cancel), or the portal home to undo a scheduled change (manage).
+     */
+    public function portal(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'flow' => ['required', Rule::in(['update', 'card', 'cancel', 'manage'])],
+            'plan' => ['required_if:flow,update', 'nullable', 'string', 'max:32'],
+            'interval' => ['required_if:flow,update', 'nullable', Rule::in(['monthly', 'yearly'])],
+        ]);
+        $this->ensureConfigured();
+
+        return response()->json(['data' => ['url' => $this->billing->portal($this->context->tenant(), $data['flow'], $data['plan'] ?? null, $data['interval'] ?? null)]]);
+    }
+
+    /**
+     * The client is back from Stripe. A Checkout return is checked against Stripe (this workspace,
+     * complete, paid) but grants nothing: the page then polls the summary until the webhook has
+     * changed the plan. Back from the card screen, any open invoice is retried with the new card.
+     */
+    public function confirmReturn(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'session_id' => ['nullable', 'string', 'max:255', 'regex:/^cs_(test|live)_[A-Za-z0-9]+$/'],
+            'flow' => ['nullable', Rule::in(['update', 'card', 'cancel', 'manage'])],
+        ]);
+        $this->ensureConfigured();
+        $tenant = $this->context->tenant();
+
+        if (isset($data['session_id'])) {
+            return response()->json(['data' => ['status' => $this->billing->confirmCheckout($tenant, $data['session_id']), 'message' => null]]);
+        }
+        if (($data['flow'] ?? null) === 'card') {
+            return response()->json(['data' => $this->billing->afterCardUpdate($tenant)]);
+        }
+        $this->billing->resync($tenant);
+
+        return response()->json(['data' => ['status' => 'synced', 'message' => null]]);
+    }
+
+    /**
+     * "Switch to Free" for a trial: straight away. A paid Stripe plan is cancelled in the Customer
+     * Portal instead (it ends with the paid period). Plans set up by 10X Digital are changed by them.
      */
     public function switchToFree(SubscriptionService $subscriptions): JsonResponse
     {
@@ -234,22 +220,13 @@ final class BillingController extends Controller
             return $this->show();
         }
         if ($this->billing->liveStripeSubscription($tenant) !== null) {
-            $this->billing->setCancelAtPeriodEnd($tenant, true);
-
-            return $this->show();
+            throw ValidationException::withMessages(['billing' => 'Cancel your paid plan with "Cancel plan": Stripe confirms it, and the workspace moves to Free at the end of the paid period.']);
         }
         if ($live->status !== SubscriptionStatus::Trialing) {
             throw ValidationException::withMessages(['billing' => 'Your plan is managed by 10X Digital. Contact us to change it.']);
         }
 
         $subscriptions->assign($tenant, Plan::byKey($fallback)->activeVersionOrFail(), SubscriptionStatus::Active, null, 'switched_to_free');
-
-        return $this->show();
-    }
-
-    public function resume(): JsonResponse
-    {
-        $this->billing->setCancelAtPeriodEnd($this->context->tenant(), false);
 
         return $this->show();
     }
@@ -269,7 +246,27 @@ final class BillingController extends Controller
             'issued_at' => $i->issued_at?->toIso8601String(),
             'paid_at' => $i->paid_at?->toIso8601String(),
             'hosted_invoice_url' => $i->hosted_invoice_url,
-            'invoice_pdf' => $i->invoice_pdf,
+            // Download through billing/invoices/{id}/pdf: Stripe's PDF links are fetched fresh each time.
+            'has_pdf' => $i->invoice_pdf !== null,
         ])]);
+    }
+
+    /** Stripe's PDF of an invoice: a fresh link from Stripe each time (never kept long-term). */
+    public function invoicePdf(Invoice $invoice): JsonResponse
+    {
+        $this->ensureConfigured();
+        $url = $this->billing->invoicePdf($invoice);
+        if ($url === null) {
+            throw ValidationException::withMessages(['invoice' => 'Stripe has no PDF for this invoice yet.']);
+        }
+
+        return response()->json(['data' => ['url' => $url]]);
+    }
+
+    private function ensureConfigured(): void
+    {
+        if (! $this->stripe->configured()) {
+            throw StripeException::notConfigured();
+        }
     }
 }

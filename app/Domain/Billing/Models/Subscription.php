@@ -30,6 +30,10 @@ use Illuminate\Support\Carbon;
  * @property bool $auto_pay
  * @property ?Carbon $current_period_end
  * @property ?PlanVersion $planVersion
+ * @property ?string $scheduled_plan_version_id
+ * @property ?string $scheduled_interval
+ * @property ?Carbon $scheduled_change_at
+ * @property ?PlanVersion $scheduledPlanVersion
  */
 class Subscription extends Model
 {
@@ -39,6 +43,7 @@ class Subscription extends Model
         'tenant_id', 'plan_version_id', 'status', 'provider', 'provider_customer_id', 'provider_subscription_id',
         'billing_interval', 'trial_ends_at', 'current_period_start', 'current_period_end',
         'cancel_at', 'canceled_at', 'ended_at', 'auto_pay',
+        'scheduled_plan_version_id', 'scheduled_interval', 'scheduled_change_at',
     ];
 
     protected function casts(): array
@@ -53,6 +58,7 @@ class Subscription extends Model
             'auto_pay' => 'boolean',
             'canceled_at' => 'datetime',
             'ended_at' => 'datetime',
+            'scheduled_change_at' => 'datetime',
         ];
     }
 
@@ -60,6 +66,16 @@ class Subscription extends Model
     public function planVersion(): BelongsTo
     {
         return $this->belongsTo(PlanVersion::class);
+    }
+
+    /**
+     * The plan a downgrade or Annual → Monthly switch moves to at scheduled_change_at.
+     *
+     * @return BelongsTo<PlanVersion, $this>
+     */
+    public function scheduledPlanVersion(): BelongsTo
+    {
+        return $this->belongsTo(PlanVersion::class, 'scheduled_plan_version_id');
     }
 
     /** @return HasMany<SubscriptionEvent, $this> */
