@@ -14,10 +14,10 @@ use App\Domain\Plans\Models\Plan;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
-use App\Notifications\BillingReminderNotification;
-use App\Notifications\PaymentFailedNotification;
 use App\Notifications\PaymentReceiptNotification;
+use App\Notifications\SubscriptionChangedNotification;
 use Illuminate\Http\Client\Request;
+use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
@@ -434,7 +434,9 @@ final class StripeBillingTest extends TestCase
         $this->assertFalse($entitlements->allows($this->tenant, FeatureKey::Broadcasts));
         $this->assertFalse($entitlements->allows($this->tenant, FeatureKey::Automations));
         $this->assertTrue($entitlements->allows($this->tenant, FeatureKey::WhatsappNumbers));
-        Notification::assertSentOnDemandTimes(PaymentFailedNotification::class, 2); // the owner and the billing email from Checkout
+        // Stripe emails the failed payment itself; engageX says what it means here: paid features paused.
+        $sent = fn (string $kind) => Notification::sent(new AnonymousNotifiable, SubscriptionChangedNotification::class, fn ($n) => $n->kind === $kind)->count();
+        $this->assertSame(2, $sent('paused')); // the owner and the billing email from Checkout
 
         // 34: "Pay now" → the portal's card screen; back here the open invoice is paid with the new card.
         $this->postJson('/api/v1/billing/portal', ['flow' => 'card'])->assertOk();
@@ -443,6 +445,7 @@ final class StripeBillingTest extends TestCase
         $this->remoteCustomer['invoice_settings']['default_payment_method'] = 'pm_new';
         $this->remoteSubscription['status'] = 'active';
         $this->postJson('/api/v1/billing/return', ['flow' => 'card'])->assertOk()->assertJsonPath('data.status', 'paid');
+        $this->assertSame(2, $sent('restored'));
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/subscriptions/sub_1') && $r->method() === 'POST' && ($r['default_payment_method'] ?? null) === 'pm_new');
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/invoices/in_1/pay'));
         $this->getJson('/api/v1/billing/invoices')->assertJsonPath('data.0.status', 'paid');
@@ -565,21 +568,58 @@ final class StripeBillingTest extends TestCase
             ->assertJsonPath('data.details.billing_email', 'accounts@nova.test')->assertJsonPath('data.details.tax_trn', '100999888777666');
     }
 
-    public function test_reminders_go_out_before_the_card_expires_and_before_an_annual_renewal(): void
+    public function test_plan_emails_go_out_once_for_each_change_and_every_renewal_gets_a_receipt(): void
     {
-        $this->travelTo(now()->setDate(2027, 3, 6)->setTime(5, 17));
-        $this->upgrade('growth', 'yearly');
-        $this->remoteCustomer['invoice_settings']['default_payment_method'] = 'pm_new';
-        $this->cardExpiry = [3, 2027]; // ends 31 March: 25 days away → the 30-day reminder
-        $this->tenantContext()->run($this->tenant, fn () => Subscription::query()->live()->update(['current_period_end' => now()->addDays(7)->setTime(12, 0)]));
         Notification::fake();
+        $sent = fn (string $kind) => Notification::sent(new AnonymousNotifiable, SubscriptionChangedNotification::class, fn ($n) => $n->kind === $kind);
 
-        Artisan::call('engage:billing:reminders');
-        Artisan::call('engage:billing:reminders'); // a second run sends nothing twice
-        // Two reminders, each to the owner and the billing email.
-        Notification::assertSentOnDemandTimes(BillingReminderNotification::class, 4);
-        Notification::assertSentOnDemand(BillingReminderNotification::class, fn (BillingReminderNotification $n) => $n->kind === BillingReminderNotification::CARD_EXPIRING && $n->card === 'Visa ending 4242');
-        Notification::assertSentOnDemand(BillingReminderNotification::class, fn (BillingReminderNotification $n) => $n->kind === BillingReminderNotification::ANNUAL_RENEWAL);
+        // Upgrade from the trial: "Welcome to Growth".
+        $this->upgrade('growth');
+        $this->assertCount(2, $sent('started')); // the owner and the billing email from Checkout
+        $this->assertSame('Growth (Monthly)', $sent('started')->first()->plan);
+
+        // Upgrade to Pro in the portal; the webhook and the return page both sync it: one email.
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'update', 'plan' => 'pro', 'interval' => 'monthly'])->assertOk();
+        $this->remoteSubscription['items']['data'][0]['price']['id'] = 'price_month_13900';
+        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
+        $this->postJson('/api/v1/billing/return', ['flow' => 'update'])->assertOk();
+        $this->assertCount(2, $sent('changed'));
+        $this->assertSame('Growth (Monthly)', $sent('changed')->first()->from);
+        $this->assertSame('Pro (Monthly)', $sent('changed')->first()->plan);
+
+        // A downgrade waits for the end of the period.
+        $at = now()->addMonth()->startOfDay();
+        $this->remoteSubscription['schedule'] = 'sub_sched_1';
+        $this->schedule = ['id' => 'sub_sched_1', 'status' => 'active', 'subscription' => 'sub_1', 'phases' => [
+            ['start_date' => now()->subDay()->timestamp, 'items' => [['price' => 'price_month_13900']]],
+            ['start_date' => $at->timestamp, 'items' => [['price' => 'price_month_2900']]],
+        ]];
+        $this->stripeEvent('subscription_schedule.created', ['id' => 'sub_sched_1', 'subscription' => 'sub_1'])->assertOk();
+        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
+        $this->assertCount(2, $sent('scheduled'));
+        $this->assertSame('Starter (Monthly)', $sent('scheduled')->first()->plan);
+        $this->assertSame($at->format('j F Y'), $sent('scheduled')->first()->date);
+
+        // Cancelled: runs to the end of the period, only the renewal stops.
+        $this->remoteSubscription['schedule'] = null;
+        $this->remoteSubscription['cancel_at_period_end'] = true;
+        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
+        $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
+        $this->assertCount(2, $sent('cancelled'));
+        $this->assertSame(Carbon::createFromTimestamp($this->remoteSubscription['current_period_end'])->format('j F Y'), $sent('cancelled')->first()->date);
+
+        // Every paid invoice gets the receipt with the VAT invoice: here, the renewal.
+        $this->openInvoice();
+        $this->remoteInvoice = array_merge($this->remoteInvoice, ['status' => 'paid', 'amount_paid' => 8295, 'billing_reason' => 'subscription_cycle']);
+        $this->stripeEvent('invoice.paid', ['id' => 'in_1', 'subscription' => 'sub_1'])->assertOk();
+        Notification::assertSentOnDemandTimes(PaymentReceiptNotification::class, 2);
+
+        // The period ends: on Free.
+        $this->remoteSubscription['status'] = 'canceled';
+        $this->stripeEvent('customer.subscription.deleted', ['id' => 'sub_1'])->assertOk();
+        $this->stripeEvent('customer.subscription.deleted', ['id' => 'sub_1'])->assertOk();
+        $this->assertCount(2, $sent('ended'));
+        $this->assertSame('Pro', $sent('ended')->first()->plan);
     }
 
     public function test_an_ended_subscription_falls_back_to_free_without_a_webhook(): void

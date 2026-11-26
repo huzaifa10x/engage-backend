@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api;
 
-use App\Notifications\PaymentFailedNotification;
 use App\Notifications\ResetPasswordNotification;
+use App\Notifications\SubscriptionChangedNotification;
 use App\Notifications\VerifyEmailNotification;
 use Illuminate\Notifications\AnonymousNotifiable;
 use Tests\TestCase;
@@ -25,7 +25,7 @@ final class EmailBrandingTest extends TestCase
         $this->assertStringContainsString('10X Digital', $html);                  // branded footer
 
         // Buttons are lime with dark text (readable), not white-on-lime.
-        $button = (string) (new PaymentFailedNotification('Acme', 'ENG-1', 'USD 82.95', null))->toMail($to)->render();
+        $button = (string) (new SubscriptionChangedNotification('paused', 'Acme', 'Growth (Monthly)'))->toMail($to)->render();
         $this->assertMatchesRegularExpression('/class="button button-error"[^>]*background-color: #dc2626/', $button);
         $verify = (string) (new ResetPasswordNotification('https://app.test/reset', 60))->toMail($to)->render();
         $this->assertMatchesRegularExpression('/class="button button-primary"[^>]*background-color: #a9e324[^>]*color: #101a02/', $verify);

@@ -21,8 +21,8 @@ use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Infrastructure\Stripe\StripeClient;
 use App\Infrastructure\Stripe\StripeException;
-use App\Notifications\PaymentFailedNotification;
 use App\Notifications\PaymentReceiptNotification;
+use App\Notifications\SubscriptionChangedNotification;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -535,7 +535,7 @@ final class StripeBilling
     /**
      * The next renewal charge of the running subscription, as Stripe will invoice it.
      *
-     * @return ?array{amount_due_minor: int, total_minor: int, credit_applied_minor: int, currency: string, date: ?string}
+     * @return ?array{amount_due_minor: int, total_minor: int, currency: string, date: ?string}
      */
     public function upcoming(Tenant $tenant): ?array
     {
@@ -553,48 +553,9 @@ final class StripeBilling
 
         return [
             'amount_due_minor' => (int) ($invoice['amount_due'] ?? 0),
-            // The renewal price, and how much of it the wallet credit pays.
             'total_minor' => $total,
-            'credit_applied_minor' => max(0, $total - (int) ($invoice['amount_due'] ?? 0)),
             'currency' => strtoupper((string) ($invoice['currency'] ?? 'usd')),
             'date' => is_numeric($at) ? Carbon::createFromTimestamp((int) $at)->toIso8601String() : null,
-        ];
-    }
-
-    /**
-     * The workspace's wallet: credit on its Stripe customer balance. It comes from the unused part
-     * of a plan after a downgrade (never paid back to the card) and Stripe takes it off the next
-     * invoices by itself: renewals, upgrades and interval changes alike.
-     *
-     * @return array{balance_minor: int, currency: string, entries: list<array<string, mixed>>}
-     */
-    public function wallet(Tenant $tenant): array
-    {
-        $empty = ['balance_minor' => 0, 'currency' => 'USD', 'entries' => []];
-        if ($tenant->stripe_customer_id === null) {
-            return $empty;
-        }
-        try {
-            $customer = $this->stripe->get("customers/{$tenant->stripe_customer_id}");
-            $history = (array) ($this->stripe->get("customers/{$tenant->stripe_customer_id}/balance_transactions", ['limit' => 20])['data'] ?? []);
-        } catch (StripeException) {
-            return $empty;
-        }
-        $currency = strtoupper((string) ($customer['currency'] ?? 'usd'));
-
-        return [
-            // Stripe keeps credit as a negative balance.
-            'balance_minor' => max(0, -(int) ($customer['balance'] ?? 0)),
-            'currency' => $currency,
-            'entries' => array_map(fn (array $t) => [
-                'id' => (string) ($t['id'] ?? ''),
-                // Positive = credit added to the wallet, negative = credit used on an invoice.
-                'amount_minor' => -(int) ($t['amount'] ?? 0),
-                'balance_after_minor' => max(0, -(int) ($t['ending_balance'] ?? 0)),
-                'kind' => -(int) ($t['amount'] ?? 0) >= 0 ? 'added' : 'used',
-                'currency' => strtoupper((string) ($t['currency'] ?? $currency)),
-                'created_at' => isset($t['created']) ? Carbon::createFromTimestamp((int) $t['created'])->toIso8601String() : null,
-            ], array_values($history)),
         ];
     }
 
@@ -730,8 +691,9 @@ final class StripeBilling
             $this->context->bypass(fn () => $tenant->forceFill(['stripe_customer_id' => $remote['customer']])->save());
         }
 
-        $this->context->run($tenant, function () use ($tenant, $remote, $version, $status, $priceId, $time, $cancelAt, $scheduled): void {
+        $emails = $this->context->run($tenant, function () use ($tenant, $remote, $version, $status, $priceId, $time, $cancelAt, $scheduled): array {
             $live = Subscription::query()->live()->first();
+            $before = $live !== null && $live->provider_subscription_id === $remote['id'] ? clone $live : null;
 
             if ($live === null || $live->provider_subscription_id !== $remote['id']) {
                 // A new Stripe subscription replaces whatever the workspace was on (trial, Free).
@@ -760,28 +722,83 @@ final class StripeBilling
                 'scheduled_interval' => $scheduled['interval'] ?? null,
                 'scheduled_change_at' => $scheduled['at'] ?? null,
             ])->save();
+
+            return $this->subscriptionEmails($before, $live, $version);
         });
 
         $this->entitlements->forget($tenant);
+        $this->sendSubscriptionEmails($tenant, (string) $remote['id'], $emails);
+    }
+
+    /**
+     * The plan emails a sync calls for, by comparing the subscription before and after it. Stripe's
+     * webhooks and the return page can sync the same change twice; sendSubscriptionEmails() sends
+     * each email once.
+     *
+     * @return list<array{kind: string, plan: string, from?: ?string, date?: ?string, key: string}>
+     */
+    private function subscriptionEmails(?Subscription $before, Subscription $after, PlanVersion $version): array
+    {
+        $label = fn (?PlanVersion $v, ?string $interval): string => ($v?->plan()->value('name') ?? 'your plan').' ('.($interval === 'yearly' ? 'Annual' : 'Monthly').')';
+        $day = fn (?Carbon $at): ?string => $at?->format('j F Y');
+        $plan = $label($version, $after->billing_interval);
+        $renews = $day($after->current_period_end);
+        $paying = in_array($after->status, [SubscriptionStatus::Active, SubscriptionStatus::Trialing], true);
+
+        if ($before === null) {
+            return $paying ? [['kind' => 'started', 'plan' => $plan, 'date' => $renews, 'key' => $plan]] : [];
+        }
+
+        $emails = [];
+        if ($before->plan_version_id !== $after->plan_version_id || $before->billing_interval !== $after->billing_interval) {
+            $emails[] = ['kind' => 'changed', 'plan' => $plan, 'from' => $label($before->planVersion, $before->billing_interval), 'date' => $renews, 'key' => $plan.'|'.$renews];
+        }
+        if ($after->scheduled_change_at !== null && ($before->scheduled_change_at?->getTimestamp() !== $after->scheduled_change_at->getTimestamp() || $before->scheduled_plan_version_id !== $after->scheduled_plan_version_id)) {
+            $to = $label($after->scheduledPlanVersion()->first(), $after->scheduled_interval);
+            $emails[] = ['kind' => 'scheduled', 'plan' => $to, 'from' => $plan, 'date' => $day($after->scheduled_change_at), 'key' => $to.'|'.$after->scheduled_change_at->getTimestamp()];
+        }
+        if ($before->cancel_at === null && $after->cancel_at !== null) {
+            $emails[] = ['kind' => 'cancelled', 'plan' => $plan, 'date' => $day($after->cancel_at), 'key' => (string) $after->cancel_at->getTimestamp()];
+        } elseif ($before->cancel_at !== null && $after->cancel_at === null) {
+            $emails[] = ['kind' => 'resumed', 'plan' => $plan, 'date' => $renews, 'key' => (string) $before->cancel_at->getTimestamp()];
+        }
+        if ($before->status !== SubscriptionStatus::PastDue && $after->status === SubscriptionStatus::PastDue) {
+            $emails[] = ['kind' => 'paused', 'plan' => $plan, 'key' => (string) $after->current_period_end?->getTimestamp()];
+        } elseif ($before->status === SubscriptionStatus::PastDue && $paying) {
+            $emails[] = ['kind' => 'restored', 'plan' => $plan, 'key' => (string) $after->current_period_end?->getTimestamp()];
+        }
+
+        return $emails;
+    }
+
+    /** @param list<array{kind: string, plan: string, from?: ?string, date?: ?string, key: string}> $emails */
+    private function sendSubscriptionEmails(Tenant $tenant, string $subscriptionId, array $emails): void
+    {
+        foreach ($emails as $email) {
+            if (Cache::add('billing-email:'.$subscriptionId.':'.$email['kind'].':'.sha1($email['key']), true, now()->addDays(60))) {
+                $this->mailer->toBilling($tenant, new SubscriptionChangedNotification($email['kind'], $tenant->legal_name ?: $tenant->name, $email['plan'], $email['from'] ?? null, $email['date'] ?? null));
+            }
+        }
     }
 
     /** The Stripe subscription ended (cancelled, or unpaid for too long): move to the Free plan. */
     public function endSubscription(Tenant $tenant, string $stripeSubscriptionId): void
     {
-        $ended = $this->context->run($tenant, function () use ($stripeSubscriptionId): bool {
-            $live = Subscription::query()->live()->where('provider_subscription_id', $stripeSubscriptionId)->first();
+        $ended = $this->context->run($tenant, function () use ($stripeSubscriptionId): ?string {
+            $live = Subscription::query()->live()->where('provider_subscription_id', $stripeSubscriptionId)->with('planVersion.plan')->first();
             if ($live === null) {
-                return false;
+                return null;
             }
             $this->subscriptions->transition($live, SubscriptionStatus::Canceled, 'stripe_subscription_ended');
             $live->forceFill(['canceled_at' => now(), 'ended_at' => now()])->save();
 
-            return true;
+            return $live->planVersion->plan->name ?? 'Your paid plan';
         });
 
-        if ($ended) {
+        if ($ended !== null) {
             $free = Plan::byKey((string) config('engage.plans.fallback'))->activeVersionOrFail();
             $this->subscriptions->assign($tenant, $free, SubscriptionStatus::Active, null, 'downgraded_to_fallback');
+            $this->sendSubscriptionEmails($tenant, $stripeSubscriptionId, [['kind' => 'ended', 'plan' => $ended, 'key' => $stripeSubscriptionId]]);
         }
     }
 
@@ -841,9 +858,9 @@ final class StripeBilling
     }
 
     /**
-     * Mirrors the invoice, then sends the customer email that belongs to the event: a receipt
-     * (VAT invoice) when it was paid, a notice the first time a payment fails. Each Stripe event
-     * is processed once, so each email is sent once.
+     * Mirrors the invoice. A paid invoice (the first payment, an upgrade, every renewal) gets our
+     * receipt with the VAT invoice. A failed card or bank-debit payment is emailed by Stripe; here it
+     * only pauses the paid features (the "paused" plan email). Each Stripe event is processed once.
      *
      * @param  array<string, mixed>  $object
      */
@@ -858,9 +875,6 @@ final class StripeBilling
         if (is_string($object['subscription'] ?? null) && $object['subscription'] !== '') {
             $this->syncSubscription($this->stripe->get('subscriptions/'.$object['subscription']));
         }
-        if ($type === 'invoice.payment_action_required') {
-            $type = 'invoice.payment_failed'; // the same notice: the bank wants the owner to approve it
-        }
 
         $invoice = $this->context->bypass(fn () => Invoice::query()->where('stripe_invoice_id', $invoiceId)->first());
         $tenant = $invoice !== null ? $this->context->bypass(fn () => Tenant::query()->find($invoice->tenant_id)) : null;
@@ -872,12 +886,6 @@ final class StripeBilling
         if ($type === 'invoice.paid' && $invoice->amount_paid_minor > 0) {
             $this->mailer->toBilling($tenant, new PaymentReceiptNotification($tenant->legal_name ?: $tenant->name, $invoice->number, $money($invoice->subtotal_minor),
                 $invoice->tax_minor > 0 ? $money($invoice->tax_minor) : null, $money($invoice->amount_paid_minor), $invoice->invoice_pdf, $tenant->tax_trn));
-        }
-        // First dunning notice only: Stripe retries several times, the customer gets one clear email.
-        if ($type === 'invoice.payment_failed' && (int) ($object['attempt_count'] ?? 1) <= 1) {
-            $retry = $object['next_payment_attempt'] ?? null;
-            $this->mailer->toBilling($tenant, new PaymentFailedNotification($tenant->legal_name ?: $tenant->name, $invoice->number, $money($invoice->total_minor),
-                is_numeric($retry) ? Carbon::createFromTimestamp((int) $retry)->format('j F Y') : null));
         }
     }
 
