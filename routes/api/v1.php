@@ -48,6 +48,7 @@ use App\Http\Controllers\Api\V1\Messaging\ReplyPromiseController;
 use App\Http\Controllers\Api\V1\Messaging\ResolutionController;
 use App\Http\Controllers\Api\V1\Messaging\StartConversationController;
 use App\Http\Controllers\Api\V1\PublicSiteController;
+use App\Http\Controllers\Api\V1\PushController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\TeamMemberController;
 use App\Http\Controllers\Api\V1\Templates\TemplateController;
@@ -134,6 +135,13 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, 'tenant:optional', '
 // Public API alone (PlanRateLimit in routes/api/public.php), so a busy integration never slows agents.
 Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified::class, 'tenant', RequireOwnerTwoFactor::class, 'throttle:api'])->group(function () {
     Route::get('tenant', [TenantController::class, 'show'])->name('tenant.show');
+    // Phone notifications for the signed-in person (mobile brief).
+    Route::get('push', [PushController::class, 'show'])->name('push.show');
+    Route::post('push/subscriptions', [PushController::class, 'subscribe'])->middleware('throttle:20,1')->name('push.subscribe');
+    Route::delete('push/subscriptions', [PushController::class, 'unsubscribe'])->name('push.unsubscribe');
+    Route::post('push/test', [PushController::class, 'test'])->middleware('throttle:6,1')->name('push.test');
+    Route::post('push/test/tapped', [PushController::class, 'tapped'])->name('push.test.tapped');
+    Route::put('push/preferences', [PushController::class, 'preferences'])->name('push.preferences');
     // Settings › Data (batch 6, item 14): the Owner's exports and workspace deletion (checked in the controller).
     Route::get('data/exports', [DataController::class, 'exports'])->name('data.exports');
     Route::post('data/exports', [DataController::class, 'startExport'])->middleware('throttle:10,1')->name('data.exports.start');

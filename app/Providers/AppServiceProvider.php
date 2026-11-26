@@ -26,6 +26,7 @@ use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\InboxTeam;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Notifications\Services\PushNewMessage;
 use App\Domain\Plans\Models\Plan;
 use App\Domain\Plans\Models\PlanVersion;
 use App\Domain\Platform\Models\ImpersonationSession;
@@ -73,6 +74,8 @@ class AppServiceProvider extends ServiceProvider
 
         // Customer webhooks: message.* events follow the same event that updates the inbox.
         Event::listen(MessageStored::class, EmitMessageWebhooks::class);
+        // A customer wrote: a phone notification to whoever should answer.
+        Event::listen(MessageStored::class, PushNewMessage::class);
         // Settings › Email notifications: a switched-off category is not emailed to that person.
         Event::listen(NotificationSending::class, [EmailPreferences::class, 'handle']);
 

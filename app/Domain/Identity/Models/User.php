@@ -52,6 +52,7 @@ class User extends Authenticatable
             'terms_accepted_at' => 'datetime',
             'login_trust_reset_at' => 'datetime',
             'app_device_at' => 'datetime',
+            'push_preferences' => 'array',
             'email_preferences' => 'array',
             'password' => 'hashed',
         ];

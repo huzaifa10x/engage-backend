@@ -237,7 +237,9 @@ final class InboxToolsController extends Controller
     {
         $membership = $this->context->membership()?->loadMissing('role') ?? abort(403);
         $me = $membership->id;
-        $items = MemberNotification::query()->where('membership_id', $me)->orderByDesc('created_at')->orderByDesc('id')->limit(30)->get();
+        // The last 30 days (the phone's Notifications screen); the header bell shows the newest of them.
+        $items = MemberNotification::query()->where('membership_id', $me)->where('created_at', '>=', now()->subDays(30))
+            ->orderByDesc('created_at')->orderByDesc('id')->limit(100)->get();
 
         // Unread conversations that are theirs to answer: assigned to them, or (Owner/Admin) not assigned
         // to anyone. Agents never see other people's chats here either.

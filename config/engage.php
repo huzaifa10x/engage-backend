@@ -58,6 +58,16 @@ return [
         'app_days' => (int) env('LOGIN_APP_DAYS', 90),
     ],
 
+    /*
+    | Phone notifications (Web Push). Generate the key pair once with `php artisan engage:push:keys`
+    | and keep it: changing it signs every phone out of notifications until they turn them on again.
+    */
+    'push' => [
+        'vapid_public_key' => env('VAPID_PUBLIC_KEY'),
+        'vapid_private_key' => env('VAPID_PRIVATE_KEY'),
+        'subject' => env('VAPID_SUBJECT', 'mailto:support@10xdigital.ae'),
+    ],
+
     // Demo and contact requests from the public website are emailed here.
     'sales_email' => env('ENGAGE_SALES_EMAIL') ?: 'info@10xdigital.ae', // an empty value in .env falls back too
 

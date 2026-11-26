@@ -11,6 +11,7 @@ use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Events\ConversationAssigned;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\MemberNotification;
+use App\Domain\Notifications\Services\PushNotifier;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\Models\Tenant;
@@ -181,6 +182,8 @@ final class InboxTools
                 'membership_id' => $member->id, 'type' => $type, 'title' => mb_substr($title, 0, 190),
                 'body' => $body !== null ? mb_substr($body, 0, 300) : null, 'url' => $url,
             ]);
+            // The same notice on their phones (if they turned notifications on and want this kind).
+            app(PushNotifier::class)->toMember($member, $type, $title, $body, $url);
             $user = $email ? $member->user()->first() : null;
             if ($user !== null) {
                 $user->notify(new InboxAlertNotification($title, $body !== null ? mb_substr($body, 0, 300) : null, config('engage.frontend_url').$url, EmailPreferences::forInboxType($type)));
