@@ -362,7 +362,7 @@ final class StripeBilling
 
         $remote = $this->stripe->get('subscriptions/'.$live->provider_subscription_id);
         $item = $remote['items']['data'][0] ?? null;
-        $price = $this->withCatalog($version, fn (): string => $this->priceId($version, $interval));
+        [$price] = $this->livePrice($version, $interval); // a price from other Stripe keys is replaced first
         if (! is_array($item)) {
             throw ValidationException::withMessages(['billing' => 'Stripe returned this subscription without a plan. Contact support.']);
         }
@@ -413,16 +413,16 @@ final class StripeBilling
             $version = $plan->activeVersion();
             foreach (['monthly' => $version?->price_monthly_minor, 'yearly' => $version?->price_yearly_minor] as $interval => $amount) {
                 if ($version !== null && $amount !== null && $amount > 0) {
-                    $prices[] = $this->withCatalog($version, fn (): string => $this->priceId($version, $interval));
+                    [$price, $product] = $this->livePrice($version, $interval);
+                    $prices[$price] = $product;
                 }
             }
         }
-        $hash = substr(sha1(implode(',', $prices)), 0, 16);
+        $hash = substr(sha1(implode(',', array_keys($prices))), 0, 16);
 
         return (string) Cache::rememberForever("stripe:portal_configuration:{$hash}", function () use ($prices, $hash): string {
             $products = [];
-            foreach ($prices as $price) {
-                $product = (string) $this->stripe->get("prices/{$price}")['product'];
+            foreach ($prices as $price => $product) {
                 $products[$product][] = $price;
             }
             $params = [
@@ -951,6 +951,36 @@ final class StripeBilling
     }
 
     // ── Stripe catalog (created on first use) ──────────────────────────────────────────────
+
+    /**
+     * A plan's price that exists in the Stripe account in use, with its product. A stored price from
+     * other keys (test ↔ live, another account) is forgotten and replaced. The check is remembered per
+     * price, so it costs one call per price, once.
+     *
+     * @return array{0: string, 1: string} price id, product id
+     */
+    private function livePrice(PlanVersion $version, string $interval): array
+    {
+        $price = $this->priceId($version, $interval);
+        $account = substr(sha1((string) config('engage.stripe.secret')), 0, 12); // other keys, other answer
+        $product = Cache::get("stripe:price_product:{$account}:{$price}");
+        if (is_string($product)) {
+            return [$price, $product];
+        }
+        try {
+            $product = (string) $this->stripe->get("prices/{$price}")['product'];
+        } catch (StripeException $e) {
+            if ($e->stripeCode !== 'resource_missing') {
+                throw $e;
+            }
+            $version->forceFill([$interval === 'yearly' ? 'stripe_price_yearly_id' : 'stripe_price_monthly_id' => null])->save();
+            $price = $this->priceId($version, $interval); // finds this account's price by lookup key, or creates it
+            $product = (string) $this->stripe->get("prices/{$price}")['product'];
+        }
+        Cache::forever("stripe:price_product:{$account}:{$price}", $product);
+
+        return [$price, $product];
+    }
 
     private function priceId(PlanVersion $version, string $interval): string
     {

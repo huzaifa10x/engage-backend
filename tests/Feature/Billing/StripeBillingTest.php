@@ -10,6 +10,7 @@ use App\Domain\Billing\SubscriptionService;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\Entitlements\ReplySeats;
 use App\Domain\Plans\FeatureKey;
+use App\Domain\Plans\Models\Plan;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
@@ -93,6 +94,7 @@ final class StripeBillingTest extends TestCase
             $path === 'customers/cus_1/tax_ids' => [$method === 'GET' ? ['data' => []] : ['id' => 'txi_1']],
             $path === 'customers/cus_1/balance_transactions' => [['data' => []]],
             $path === 'prices' => [$method === 'GET' ? ['data' => []] : ['id' => 'price_'.($r['recurring']['interval'] ?? 'x').'_'.$r['unit_amount']]],
+            (bool) preg_match('#^prices/(price_old_\w+)$#', $path, $m) => [['error' => ['code' => 'resource_missing', 'message' => "No such price: '{$m[1]}'"]], 404],
             (bool) preg_match('#^prices/(price_\w+)$#', $path, $m) => [['id' => $m[1], 'product' => 'prod_'.$m[1]]],
             $path === 'tax_rates' => [$method === 'GET' ? ['data' => []] : ['id' => 'txr_uae']],
             $path === 'subscriptions/sub_1' => [$this->subscription($r)],
@@ -351,6 +353,33 @@ final class StripeBillingTest extends TestCase
         $this->remoteSubscription['items']['data'][0]['price']['id'] = 'price_month_13900';
         $this->postJson('/api/v1/billing/return', ['flow' => 'update'])->assertOk()->assertJsonPath('data.status', 'synced');
         $this->assertSame('pro', $this->planKey());
+    }
+
+    public function test_prices_left_over_from_other_stripe_keys_are_replaced_when_the_portal_opens(): void
+    {
+        $this->upgrade('growth');
+        // Prices stored while other Stripe keys were in use: this account does not know them.
+        foreach (['starter', 'pro'] as $key) {
+            Plan::byKey($key)->activeVersionOrFail()->forceFill(['stripe_price_monthly_id' => "price_old_{$key}_m", 'stripe_price_yearly_id' => "price_old_{$key}_y"])->save();
+        }
+
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'manage'])->assertOk();
+        $this->assertSame('price_month_13900', Plan::byKey('pro')->activeVersionOrFail()->stripe_price_monthly_id);
+        $this->assertSame('price_year_29000', Plan::byKey('starter')->activeVersionOrFail()->stripe_price_yearly_id);
+        $prices = array_merge(...array_column($this->portalConfigurations[0]['features']['subscription_update']['products'], 'prices'));
+        $this->assertCount(6, $prices);
+        $this->assertSame([], array_filter($prices, fn (string $p) => str_starts_with($p, 'price_old_')));
+
+        // Switching plan uses this account's price too.
+        Plan::byKey('starter')->activeVersionOrFail()->forceFill(['stripe_price_monthly_id' => 'price_old_starter_m'])->save();
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'update', 'plan' => 'starter', 'interval' => 'monthly'])->assertOk();
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/billing_portal/sessions')
+            && ($r['flow_data']['subscription_update_confirm']['items'][0]['price'] ?? null) === 'price_month_2900');
+
+        // Checked once: opening the portal again asks Stripe about no price.
+        $before = count(Http::recorded(fn (Request $r) => str_contains($r->url(), '/v1/prices/')));
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'card'])->assertOk();
+        $this->assertSame($before, count(Http::recorded(fn (Request $r) => str_contains($r->url(), '/v1/prices/'))));
     }
 
     public function test_a_downgrade_is_scheduled_for_the_end_of_the_period_and_shown(): void
