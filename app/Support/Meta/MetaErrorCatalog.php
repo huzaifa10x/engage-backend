@@ -96,6 +96,11 @@ final class MetaErrorCatalog
 
     public static function temporary(int|string|null $code): bool
     {
+        // Our own: sending broke on our side (send_failed) or never finished (send_stuck). Worth another go.
+        if (in_array((string) $code, ['send_failed', 'send_stuck'], true)) {
+            return true;
+        }
+
         return is_numeric($code) && in_array((int) $code, self::TEMPORARY, true);
     }
 
@@ -130,6 +135,7 @@ final class MetaErrorCatalog
         return match ((string) $code) {
             'number_unavailable' => 'Reconnect the number from Channels.',
             'send_failed' => 'The message could not be sent. Try again; if it keeps failing, contact support.',
+            'send_stuck' => 'Sending did not finish in time. Try again.',
             default => null,
         };
     }

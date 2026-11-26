@@ -305,6 +305,9 @@ final class ConversationController extends Controller
             // Undo straight after resolving: the closure is removed and the chat is as it was.
             'undo' => ['sometimes', 'boolean'],
             'assigned_membership_id' => ['sometimes', 'nullable', 'uuid'],
+            // Shared inbox: who the person saw as the assignee. If a teammate changed it meanwhile, the
+            // change is refused (409) instead of silently taking the chat from them.
+            'expected_assigned_membership_id' => ['sometimes', 'nullable', 'uuid'],
             'assigned_team_id' => ['sometimes', 'nullable', 'uuid'],
             // false = no automatic replies in this conversation (a person is handling it).
             'auto_reply_enabled' => ['sometimes', 'boolean'],
@@ -357,6 +360,26 @@ final class ConversationController extends Controller
             }
         }
         if (array_key_exists('assigned_membership_id', $data)) {
+            if (array_key_exists('expected_assigned_membership_id', $data)) {
+                // One conditional update: of two people taking the same chat at once, only the first wins.
+                $expected = $data['expected_assigned_membership_id'];
+                $target = $data['assigned_membership_id'];
+                $claimed = Conversation::query()->whereKey($conversation->id)
+                    ->where(fn ($q) => $q->where(fn ($w) => $expected === null ? $w->whereNull('assigned_membership_id') : $w->where('assigned_membership_id', $expected))
+                        ->orWhere(fn ($w) => $target === null ? $w->whereNull('assigned_membership_id') : $w->where('assigned_membership_id', $target)))
+                    ->update(['assigned_membership_id' => $target]);
+                if ($claimed === 0) {
+                    $current = Conversation::query()->whereKey($conversation->id)->value('assigned_membership_id');
+                    $holder = $current !== null ? (TenantMembership::query()->with('user')->find($current)?->user->name ?? 'A teammate') : null;
+                    abort(response()->json([
+                        'message' => $holder !== null
+                            ? "{$holder} has just been given this chat. Open it to reassign if you need to."
+                            : 'This chat was just moved to Unassigned. Refresh and try again.',
+                        'code' => 'assignment_changed',
+                        'assigned_membership_id' => $current,
+                    ], 409));
+                }
+            }
             $conversation->assigned_membership_id = $data['assigned_membership_id'];
         }
         if (array_key_exists('assigned_team_id', $data)) {

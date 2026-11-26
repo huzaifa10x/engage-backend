@@ -26,6 +26,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -95,6 +96,25 @@ final class SendWhatsappMessage implements ShouldQueue
     }
 
     public function handle(GraphClient $graph, WhatsappCredentials $credentials, PayloadBuilder $builder, MediaStorage $storage, SendThroughput $throughput): void
+    {
+        // One job at a time per message: a copy queued again by the stuck-message watchdog waits for
+        // the first instead of sending the same message twice.
+        $lock = Cache::lock("send-message:{$this->messageId}", 120);
+        if (! $lock->get()) {
+            if ($this->job !== null && config('queue.default') !== 'sync') {
+                $this->release(30);
+            }
+
+            return;
+        }
+        try {
+            $this->send($graph, $credentials, $builder, $storage, $throughput);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function send(GraphClient $graph, WhatsappCredentials $credentials, PayloadBuilder $builder, MediaStorage $storage, SendThroughput $throughput): void
     {
         $message = Message::query()->with(['contact', 'phoneNumber.wabaAccount', 'media'])->find($this->messageId);
         if ($message === null || $message->status !== MessageStatus::Queued) {
@@ -234,6 +254,17 @@ final class SendWhatsappMessage implements ShouldQueue
 
     /** @param array<string, mixed> $details */
     private function fail(Message $message, string $code, string $title, array $details = []): void
+    {
+        self::markFailed($message, $code, $title, $details);
+    }
+
+    /**
+     * The message is not going out: failed with a reason, its limit slot given back, and the chat
+     * back in Needs reply when it was a person's reply.
+     *
+     * @param  array<string, mixed>  $details
+     */
+    public static function markFailed(Message $message, string $code, string $title, array $details = []): void
     {
         $message->forceFill([
             'status' => MessageStatus::Failed,
