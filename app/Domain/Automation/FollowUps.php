@@ -130,7 +130,7 @@ final class FollowUps
         if ($can['escalation'] && $s['escalation']['enabled'] && ! $decided('reply_escalation')) {
             $scheduler->schedule('reply_escalation', $after($s['escalation']['minutes']), $prefix('reply_escalation').':'.$s['escalation']['minutes'], $conversation, payload: ['episode' => $episode, 'minutes' => $s['escalation']['minutes']], priority: 50);
         }
-        // The reply promise ladder (3.3, A3): 30 min the agent, 45 the Managers, 60 the Owner. Part of
+        // The reply-alert ladder: Fast 5 / 15 / 30 min by default (agent, Managers, Owner). Part of
         // the pilot kit, so not tied to a plan; switched off with the promise.
         $promise = ReplyPromise::settings($tenant);
         if ($promise['enabled']) {

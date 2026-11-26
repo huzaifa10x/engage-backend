@@ -54,6 +54,7 @@ final class ReplyPromiseTest extends TestCase
         $this->travelTo(Carbon::parse('2026-11-23 09:00', 'Asia/Dubai'));
         $this->tenant = $this->createTenant(['timezone' => 'Asia/Dubai']);
         $this->subscribe($this->tenant, 'pro');
+        $this->legacyPromise($this->tenant); // written for the 30 / 45 / 60 ladder and replies without the name intro
         $this->owner = $this->addMember($this->tenant);
         $this->number = $this->connectNumber($this->tenant);
         Http::fake([self::SEND => function ($r) {

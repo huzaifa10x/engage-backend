@@ -44,6 +44,7 @@ final class ChatbotsTest extends TestCase
         $this->configureMeta();
         $this->tenant = $this->createTenant();
         $this->subscribe($this->tenant, 'pro');
+        $this->legacyPromise($this->tenant); // written for the 30 / 45 / 60 ladder and replies without the name intro
         $this->owner = $this->addMember($this->tenant);
         $this->number = $this->connectNumber($this->tenant);
         // API-call blocks call a made-up public host.

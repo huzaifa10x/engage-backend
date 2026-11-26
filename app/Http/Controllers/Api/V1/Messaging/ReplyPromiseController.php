@@ -37,6 +37,11 @@ final class ReplyPromiseController extends Controller
     {
         $data = $request->validate([
             'enabled' => ['sometimes', 'boolean'],
+            'preset' => ['sometimes', Rule::in([...array_keys(ReplyPromise::PRESETS), 'custom'])],
+            'hold' => ['sometimes', 'boolean'],
+            'hold_message' => ['sometimes', 'nullable', 'string', 'max:300'],
+            'reassign' => ['sometimes', 'boolean'],
+            'intro' => ['sometimes', 'boolean'],
             'limit_minutes' => ['sometimes', 'integer', 'min:5', 'max:1440'],
             'ladder' => ['sometimes', 'array', 'max:5'],
             'ladder.*.minutes' => ['required', 'integer', 'min:1', 'max:1440'],
@@ -58,6 +63,10 @@ final class ReplyPromiseController extends Controller
         // The promise counts business minutes, so it needs business hours (pilot kit).
         if (($data['enabled'] ?? false) === true && ! BusinessHours::enabled($tenant)) {
             throw ValidationException::withMessages(['enabled' => 'Set your business hours first: the reply promise counts only time when you are open.']);
+        }
+        // Times entered by hand are a custom ladder; picking a preset replaces them.
+        if (! isset($data['preset']) && (isset($data['ladder']) || isset($data['limit_minutes']))) {
+            $data['preset'] = 'custom';
         }
         $settings = (array) ($tenant->settings ?? []);
         $before = ReplyPromise::settings($tenant);

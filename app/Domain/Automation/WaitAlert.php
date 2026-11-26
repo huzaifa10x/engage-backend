@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace App\Domain\Automation;
 
+use App\Application\Messaging\SendMessage;
 use App\Application\WhatsApp\WhatsappCredentials;
+use App\Domain\Access\Permission;
 use App\Domain\Access\SystemRole;
+use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Services\ReplyPromise;
+use App\Domain\Plans\Entitlements\EntitlementService;
+use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
@@ -33,6 +38,8 @@ final class WaitAlert extends TeamAlert
         if (! $this->stillWaiting($conversation, $payload)) {
             return 'cancelled:answered';
         }
+        // The second step (15 min on Fast): move the chat to a free agent, then tell the customer who replies.
+        $extra = (int) ($payload['level'] ?? 0) === 2 ? $this->secondStep($conversation, $contact) : [];
         $role = in_array($payload['to'] ?? null, ReplyPromise::ROLES, true) ? (string) $payload['to'] : 'agent';
         $minutes = (int) ($payload['minutes'] ?? 0);
         $to = $this->recipients($conversation, $role);
@@ -62,7 +69,57 @@ final class WaitAlert extends TeamAlert
             'created_at' => now(),
         ]);
 
-        return $to->isEmpty() && ! in_array('whatsapp', $channels, true) ? 'skipped:nobody_to_tell' : "done:{$role}_".$to->count();
+        return $to->isEmpty() && ! in_array('whatsapp', $channels, true) && $extra === [] ? 'skipped:nobody_to_tell' : "done:{$role}_".$to->count().($extra !== [] ? ':'.implode(',', $extra) : '');
+    }
+
+    /**
+     * The second alert step (brief: reply alerts, Fast 5 / 15 / 30). Both are part of Automations (paid):
+     *  - reassign: teams of 3 or more people who reply, the chat moves to the least busy one who can use
+     *    the number (the wait clock is not reset);
+     *  - hold: a holding message to the customer naming the agent, once per wait (this step runs once per
+     *    wait); an automation message, so it never counts as a reply and the wait goes on.
+     *
+     * @return list<string> what was done, for the action's outcome
+     */
+    private function secondStep(Conversation $conversation, ?Contact $contact): array
+    {
+        $tenant = app(TenantContext::class)->tenant();
+        $s = ReplyPromise::settings($tenant);
+        if (! app(EntitlementService::class)->allows($tenant, FeatureKey::Automations)) {
+            return [];
+        }
+        $done = [];
+
+        if ($s['reassign']) {
+            $repliers = TenantMembership::query()->active()->with('role')->get()->filter(fn (TenantMembership $m) => $m->role?->grants(Permission::InboxReply) ?? false);
+            $pick = $repliers->count() >= ReplyPromise::REASSIGN_MIN_TEAM ? $this->tools->pickAgent($conversation) : null;
+            if ($pick !== null && $pick->id !== $conversation->assigned_membership_id) {
+                $from = $conversation->assigned_membership_id;
+                $conversation->forceFill(['assigned_membership_id' => $pick->id])->save(); // broadcasts conversation.assigned
+                $this->tools->notify($pick, 'assigned', "{$this->name($contact)} was moved to you: no reply for {$this->waited($conversation)}", null, "/inbox?c={$conversation->id}", email: true);
+                if ($from !== null && ($old = TenantMembership::query()->find($from)) !== null) {
+                    $this->tools->notify($old, 'reassigned', "{$this->name($contact)} was moved to {$pick->loadMissing('user')->user?->name} (no reply for {$this->waited($conversation)})", null, "/inbox?c={$conversation->id}");
+                }
+                $done[] = 'reassigned';
+            }
+        }
+
+        if ($s['hold'] && $conversation->isWindowOpen()) {
+            $agent = $conversation->assigned_membership_id !== null
+                ? (string) Str::of((string) TenantMembership::query()->with('user')->find($conversation->assigned_membership_id)?->user?->name)->before(' ')
+                : '';
+            $customer = (string) Str::of((string) ($contact?->name ?: $contact?->profile_name))->before(' ');
+            $body = trim(strtr($s['hold_message'], ['{name}' => $customer !== '' ? $customer : 'for your message', '{agent}' => $agent !== '' ? $agent : 'our team']));
+            $body = (string) preg_replace('/^Thanks for your message,/', 'Thanks for your message.', $body);
+            try {
+                app(SendMessage::class)->toConversation($conversation, ['type' => 'text', 'body' => $body], MessageOrigin::Automation);
+                $done[] = 'held';
+            } catch (Throwable $e) {
+                Log::info('Holding message not sent', ['conversation' => $conversation->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return $done;
     }
 
     /** @return Collection<int, TenantMembership> */

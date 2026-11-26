@@ -16,6 +16,7 @@ use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\ConversationTracker;
 use App\Domain\Messaging\Services\MessagingLimits;
+use App\Domain\Messaging\Services\ReplyPromise;
 use App\Domain\Plans\Entitlements\ReplySeats;
 use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Templates\Services\TemplateMessage;
@@ -24,6 +25,7 @@ use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Enums\PhoneNumberStatus;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Every outbound message goes through here (inbox reply, API, campaigns, chatbots, automations):
@@ -61,6 +63,16 @@ final class SendMessage
             $tenant = app(TenantContext::class)->tenant();
             if (! $seats->canReply($tenant, $sender)) {
                 throw MessagingException::seatNotPaid($seats->limit($tenant));
+            }
+        }
+        // The agent's name in the first reply of each conversation (reply alerts: "Sara here from Desert Drive 👋").
+        if ($origin === MessageOrigin::Agent && $sender !== null && $data['type'] === 'text' && trim((string) ($data['body'] ?? '')) !== ''
+            && ReplyPromise::settings(app(TenantContext::class)->tenant())['intro']
+            && ! Message::query()->where('conversation_id', $conversation->id)->where('origin', MessageOrigin::Agent->value)->exists()) {
+            $first = (string) Str::of((string) $sender->user()->value('name'))->trim()->before(' ');
+            $business = $number->verified_name ?: app(TenantContext::class)->tenant()->name;
+            if ($first !== '' && ! Str::startsWith(Str::lower((string) $data['body']), Str::lower($first))) {
+                $data['body'] = "{$first} here from {$business} 👋\n".$data['body'];
             }
         }
         $freeForm = in_array($data['type'], self::FREE_FORM, true);

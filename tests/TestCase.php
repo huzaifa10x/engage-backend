@@ -101,6 +101,31 @@ abstract class TestCase extends BaseTestCase
         return $membership->setRelation('user', $user)->setRelation('tenant', $tenant);
     }
 
+    /**
+     * Reply-alert settings for a test (tenants.settings.promise). `legacyPromise()` keeps tests written for
+     * the earlier defaults (30 / 45 / 60 ladder, 60-minute limit, no name intro) about what they test.
+     *
+     * @param  array<string, mixed>  $promise
+     */
+    protected function promiseSettings(Tenant $tenant, array $promise): void
+    {
+        $this->tenantContext()->bypass(function () use ($tenant, $promise) {
+            $fresh = Tenant::query()->findOrFail($tenant->getKey());
+            $settings = (array) ($fresh->settings ?? []);
+            $settings['promise'] = array_replace((array) ($settings['promise'] ?? []), $promise);
+            $fresh->forceFill(['settings' => $settings])->save();
+            $tenant->setRawAttributes($fresh->getAttributes(), true);
+        });
+    }
+
+    protected function legacyPromise(Tenant $tenant): void
+    {
+        $this->promiseSettings($tenant, [
+            'preset' => 'custom', 'limit_minutes' => 60, 'intro' => false, 'hold' => false, 'reassign' => false,
+            'ladder' => [['minutes' => 30, 'to' => 'agent'], ['minutes' => 45, 'to' => 'manager'], ['minutes' => 60, 'to' => 'owner']],
+        ]);
+    }
+
     protected function subscribe(Tenant $tenant, string $planKey): void
     {
         $this->app->make(SubscriptionService::class)->assign($tenant, Plan::byKey($planKey)->activeVersionOrFail());
