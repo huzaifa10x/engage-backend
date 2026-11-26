@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Messaging;
 use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Automation\Scheduler;
+use App\Domain\Crm\Models\CrmStage;
 use App\Domain\Messaging\Enums\ConversationStatus;
 use App\Domain\Messaging\Models\CannedResponse;
 use App\Domain\Messaging\Models\Conversation;
@@ -20,6 +21,7 @@ use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
+use App\Domain\Timeline\Enquiry;
 use App\Domain\Timeline\Timeline;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Http\Controllers\Controller;
@@ -27,6 +29,7 @@ use App\Http\Resources\Api\V1\ConversationResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -314,7 +317,50 @@ final class InboxToolsController extends Controller
             'messages_received_today' => $messages()->where('direction', Message::INBOUND)->where('created_at', '>=', $today)->count(),
             'campaign_messages_today' => $messages()->whereNotNull('campaign_id')->where('created_at', '>=', $today)->count(),
             'campaign_messages_this_month' => $messages()->whereNotNull('campaign_id')->where('created_at', '>=', $month)->count(),
+            // The phone's Home (mobile brief): the last 7 days, oldest first, today last.
+            'week' => $this->week($membership, $number),
         ]]);
+    }
+
+    /**
+     * New enquiries and the median first reply per day for the last 7 days, the share answered within
+     * the reply target, and deals marked won this week. Limited to what this member can see.
+     *
+     * @return array<string, mixed>
+     */
+    private function week(TenantMembership $membership, ?string $number): array
+    {
+        $tenant = $this->context->tenant();
+        $tz = $tenant->timezone ?: 'UTC';
+        $days = collect(range(6, 0))->map(fn (int $i) => now($tz)->startOfDay()->subDays($i)->format('Y-m-d'));
+        $from = now($tz)->startOfDay()->subDays(6)->utc();
+        $target = InboxTools::settings($tenant)['reply_target_minutes'] * 60;
+
+        $numbers = $this->access->scope(PhoneNumber::query(), $membership)->when($number, fn ($q, string $id) => $q->whereKey($id))->pluck('id');
+        $everything = $number === null && $this->access->seesAllChats($membership) && $this->access->grantedIds($membership) === null;
+        $enquiries = fn () => Enquiry::query()->when(! $everything, fn ($q) => $q->whereIn('conversation_id',
+            $this->access->scopeChats(Conversation::query(), $membership)->when($number, fn ($c, string $id) => $c->where('phone_number_id', $id))->select('id')));
+
+        $new = $enquiries()->where('started_at', '>=', $from)
+            ->selectRaw("to_char(started_at AT TIME ZONE ?, 'YYYY-MM-DD') AS d, count(*) AS n", [$tz])->groupBy('d')->pluck('n', 'd');
+        $replies = DB::table('inbox_response_times')->where('tenant_id', $tenant->id)->where('kind', 'first_response')
+            ->where('ended_at', '>=', $from)->whereIn('phone_number_id', $numbers);
+        $median = (clone $replies)->selectRaw("to_char(ended_at AT TIME ZONE ?, 'YYYY-MM-DD') AS d, percentile_cont(0.5) WITHIN GROUP (ORDER BY business_seconds) AS m", [$tz])
+            ->groupBy('d')->pluck('m', 'd');
+        $all = (clone $replies)->selectRaw("count(*) AS total, count(*) FILTER (WHERE business_seconds <= {$target}) AS on_time,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY business_seconds) AS median")->first();
+        $won = CrmStage::query()->where('group', CrmStage::WON)->pluck('id');
+
+        return [
+            'days' => $days->values()->all(),
+            'new_enquiries' => $days->map(fn (string $d) => (int) ($new[$d] ?? 0))->values()->all(),
+            'first_reply_median_seconds' => $days->map(fn (string $d) => isset($median[$d]) ? (int) round((float) $median[$d]) : null)->values()->all(),
+            'replies' => (int) ($all->total ?? 0),
+            'median_seconds' => isset($all->median) ? (int) round((float) $all->median) : null,
+            'on_time_pct' => ($all->total ?? 0) > 0 ? (int) round(100 * (int) $all->on_time / (int) $all->total) : null,
+            'target_seconds' => $target,
+            'won' => $enquiries()->whereIn('stage_id', $won)->where('stage_changed_at', '>=', $from)->count(),
+        ];
     }
 
     private function authorizeThread(Conversation $conversation): void

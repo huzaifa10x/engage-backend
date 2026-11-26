@@ -49,6 +49,8 @@ final class ConversationController extends Controller
             'status' => ['nullable', Rule::enum(ConversationStatus::class)],
             'assigned' => ['nullable', Rule::in(['me', 'unassigned', 'others', 'any'])],
             'team' => ['nullable', 'uuid'],
+            // One teammate's chats (Agents › a person, on the phone).
+            'assignee' => ['nullable', 'uuid'],
             // Chatbot views: handled by the bot now, waiting on the customer, or how the bot ended.
             'view' => ['nullable', Rule::in(['bot', 'waiting', 'abandoned', 'completed', 'handed_off'])],
             'unread' => ['nullable', 'boolean'],
@@ -78,6 +80,7 @@ final class ConversationController extends Controller
             ->when($data['phone_number_id'] ?? null, fn ($q, $id) => $q->where('phone_number_id', $id))
             ->when(! $searching ? ($data['status'] ?? null) : null, fn ($q, $s) => $q->where('status', $s))
             ->when($data['team'] ?? null, fn ($q, $team) => $q->where('assigned_team_id', $team))
+            ->when(! $searching ? ($data['assignee'] ?? null) : null, fn ($q, $id) => $q->where('assigned_membership_id', $id))
             ->when(! $searching && ($data['assigned'] ?? null) === 'me', fn ($q) => $q->where('assigned_membership_id', $membership->id))
             ->when(! $searching && ($data['assigned'] ?? null) === 'unassigned', fn ($q) => $q->whereNull('assigned_membership_id'))
             ->when(! $searching && ($data['assigned'] ?? null) === 'others', fn ($q) => $q->whereNotNull('assigned_membership_id')->where('assigned_membership_id', '!=', $membership->id))

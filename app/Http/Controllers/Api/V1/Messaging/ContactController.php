@@ -31,14 +31,18 @@ final class ContactController extends Controller
     public function index(Request $request, SegmentQuery $segments): AnonymousResourceCollection
     {
         // Contacts & CRM 3.5 lists by last activity (a message either way, an edit, or creation), newest first.
-        if ($request->input('sort') === 'activity') {
+        // The phone's People list goes A to Z by name (sort=name), with the same pages.
+        $sort = $request->input('sort');
+        if ($sort === 'activity' || $sort === 'name') {
             $per = (int) ($request->integer('per_page') ?: 50);
             $page = max(1, (int) $request->input('cursor', 1));
             $rows = $this->filtered($request, $segments)
                 ->with(['syncedFrom', 'stage'])
                 ->select('contacts.*')
                 ->selectRaw(self::ACTIVITY_SQL.' AS last_activity_at')
-                ->orderByDesc('last_activity_at')
+                ->when($sort === 'name',
+                    fn ($q) => $q->orderByRaw("lower(coalesce(nullif(trim(contacts.name), ''), nullif(trim(contacts.profile_name), ''), contacts.username, contacts.wa_id, '')) ASC"),
+                    fn ($q) => $q->orderByDesc('last_activity_at'))
                 ->orderByDesc('id')
                 ->offset(($page - 1) * $per)
                 ->limit($per + 1)

@@ -17,6 +17,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
@@ -118,7 +119,8 @@ final class AnalyticsController extends Controller
     public function responseTimes(Request $request, NumberAccess $access, TenantContext $context): JsonResponse
     {
         $data = $request->validate([
-            'days' => ['nullable', Rule::in([7, 30, 90, '7', '30', '90'])],
+            // 1 = today (the phone's Agents screen: Today / 7 days / 30 days).
+            'days' => ['nullable', Rule::in([1, 7, 30, 90, '1', '7', '30', '90'])],
             'phone_number_id' => ['nullable', 'uuid'],
         ]);
         $days = (int) ($data['days'] ?? 30);
@@ -152,6 +154,15 @@ final class AnalyticsController extends Controller
         $byNumber = $rows('first_response')->selectRaw("phone_number_id, {$stats}")->groupBy('phone_number_id')->get()->keyBy('phone_number_id');
         $names = TenantMembership::query()->with('user')->whereIn('id', $byAgent->pluck('membership_id'))->get()->mapWithKeys(fn (TenantMembership $m) => [$m->id => $m->user->name ?? 'Teammate']);
 
+        // The reply log: the latest first replies, each on time (within the target), slow (up to twice
+        // it) or late.
+        $log = $rows('first_response')->orderByDesc('ended_at')->limit(20)
+            ->get(['conversation_id', 'membership_id', 'business_seconds', 'after_hours', 'ended_at']);
+        $who = TenantMembership::query()->with('user')->whereIn('id', $log->pluck('membership_id')->filter()->unique())->get()
+            ->mapWithKeys(fn (TenantMembership $m) => [$m->id => $m->user->name ?? 'Teammate']);
+        $contacts = Conversation::query()->with('contact')->whereIn('id', $log->pluck('conversation_id')->unique())->get()
+            ->mapWithKeys(fn (Conversation $c) => [$c->id => $c->contact?->displayName() ?? 'WhatsApp user']);
+
         $base = fn () => Conversation::query()->whereIn('phone_number_id', $ids)->where('status', 'open')->where('reply_state', 'needs_reply')
             ->where(fn ($w) => $w->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now()));
 
@@ -169,6 +180,15 @@ final class AnalyticsController extends Controller
             'agents' => $byAgent->map(fn (object $r) => ['membership_id' => $r->membership_id, 'name' => $names[$r->membership_id] ?? 'Teammate']
                 + $shape($r) + ['resolution_average_seconds' => isset($resolveByAgent[$r->membership_id]) ? (int) round((float) $resolveByAgent[$r->membership_id]->average) : null])
                 ->sortByDesc('total')->values(),
+            'log' => $log->map(fn (object $r) => [
+                'conversation_id' => $r->conversation_id,
+                'contact' => $contacts[$r->conversation_id] ?? 'WhatsApp user',
+                'by' => $r->membership_id !== null ? ($who[$r->membership_id] ?? 'Teammate') : null,
+                'seconds' => (int) $r->business_seconds,
+                'after_hours' => (bool) $r->after_hours,
+                'result' => $r->business_seconds <= $target ? 'on_time' : ($r->business_seconds <= 2 * $target ? 'slow' : 'late'),
+                'at' => Carbon::parse($r->ended_at)->toIso8601String(),
+            ])->values(),
             'numbers' => $numbers->whereIn('id', $ids)->values()->map(fn (PhoneNumber $n) => ['id' => $n->id, 'display' => $n->verified_name ?? $n->display_phone_number] + $shape($byNumber[$n->id] ?? null)),
         ]]);
     }
