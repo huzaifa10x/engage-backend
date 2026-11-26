@@ -321,6 +321,8 @@ final class InboxToolsController extends Controller
             'campaign_messages_this_month' => $messages()->whereNotNull('campaign_id')->where('created_at', '>=', $month)->count(),
             // The phone's Home (mobile brief): the last 7 days, oldest first, today last.
             'week' => $this->week($membership, $number),
+            // The phone's Action Centre (mobile brief v5): counts that each open a filtered list.
+            'action' => $this->actionCentre($membership, $number),
         ]]);
     }
 
@@ -362,6 +364,35 @@ final class InboxToolsController extends Controller
             'on_time_pct' => ($all->total ?? 0) > 0 ? (int) round(100 * (int) $all->on_time / (int) $all->total) : null,
             'target_seconds' => $target,
             'won' => $enquiries()->whereIn('stage_id', $won)->where('stage_changed_at', '>=', $from)->count(),
+        ];
+    }
+
+    /**
+     * Action Centre counts. Agents count their own chats and follow-ups; people who see every chat count
+     * the team's. Windows "closing" end within 2 hours and still need a reply.
+     *
+     * @return array<string, int>
+     */
+    private function actionCentre(TenantMembership $membership, ?string $number): array
+    {
+        $team = $this->access->seesAllChats($membership);
+        $closing = $this->access->scopeChats(Conversation::query(), $membership)
+            ->when($number, fn ($q, string $id) => $q->where('phone_number_id', $id))
+            ->where('status', ConversationStatus::Open->value)->where('reply_state', 'needs_reply')
+            ->where(fn ($q) => $q->whereNull('snoozed_until')->orWhere('snoozed_until', '<=', now()))
+            ->when(! $team, fn ($q) => $q->where('assigned_membership_id', $membership->id))
+            ->where('window_expires_at', '>', now())->where('window_expires_at', '<=', now()->addHours(2))->count();
+        $tz = $this->context->tenant()->timezone ?: 'UTC';
+        $steps = fn () => DB::table('next_steps')->where('tenant_id', $membership->tenant_id)->whereNull('done_at')->whereNull('cancelled_at')
+            ->when(! $team, fn ($q) => $q->where('assigned_membership_id', $membership->id));
+        $openStages = CrmStage::query()->where('group', CrmStage::OPEN)->pluck('id');
+
+        return [
+            'closing_soon' => $closing,
+            'followups_today' => $steps()->where('due_at', '>=', now())->where('due_at', '<=', now($tz)->endOfDay()->utc())->count(),
+            'followups_overdue' => $steps()->where('due_at', '<', now())->count(),
+            'mentions_unread' => MemberNotification::query()->where('membership_id', $membership->id)->where('type', 'mention')->whereNull('read_at')->count(),
+            'open_deals' => Enquiry::query()->where(fn ($q) => $q->whereIn('stage_id', $openStages)->orWhereNull('stage_id'))->count(),
         ];
     }
 

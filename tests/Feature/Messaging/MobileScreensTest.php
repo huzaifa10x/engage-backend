@@ -95,4 +95,22 @@ final class MobileScreensTest extends TestCase
         $names = array_column($this->getJson('/api/v1/contacts?sort=name')->assertOk()->json('data'), 'display_name');
         $this->assertSame(['adam', 'Mona', 'Zara'], $names);
     }
+
+    public function test_the_action_centre_counts_and_the_closing_filter(): void
+    {
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => 'Hi'], 'timestamp' => (string) now()->timestamp], bsuid: null)))->assertOk();
+        $this->actingAsMember($this->owner);
+        $conv = $this->tenantContext()->run($this->tenant, fn () => Conversation::query()->latest('created_at')->firstOrFail());
+        $this->getJson('/api/v1/dashboard/summary')->assertOk()->assertJsonPath('data.action.closing_soon', 0);
+
+        // 23 hours later the window closes within 2 hours: counted, and the filter lists it.
+        $this->travel(23)->hours();
+        $this->actingAsMember($this->owner);
+        $this->getJson('/api/v1/dashboard/summary')->assertOk()->assertJsonPath('data.action.closing_soon', 1)
+            ->assertJsonPath('data.action.followups_overdue', 0)->assertJsonPath('data.action.mentions_unread', 0);
+        $this->getJson('/api/v1/conversations?window=closing&state=needs_reply')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $conv->id);
+
+        $this->postJson("/api/v1/contacts/{$conv->contact_id}/next-steps", ['type' => 'call', 'title' => 'Call back', 'due_at' => now()->subHour()->toIso8601String()])->assertCreated();
+        $this->getJson('/api/v1/dashboard/summary')->assertJsonPath('data.action.followups_overdue', 1);
+    }
 }

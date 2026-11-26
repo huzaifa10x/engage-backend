@@ -51,11 +51,15 @@ final class InboxListTest extends TestCase
         $this->tenantContext()->run($this->tenant, fn () => $new->forceFill(['window_expires_at' => now()->subMinute()])->save());   // window closed
 
         $ids = array_column($this->getJson('/api/v1/conversations?sort=priority&status=open')->assertOk()->json('data'), 'id');
-        $this->assertSame([$old->id, $new->id], $ids);     // the older chat has less time left on the reply promise
-        // Needs reply is sorted by time left on the promise, not by the WhatsApp window (batch 7).
+        $this->assertSame([$old->id, $new->id], $ids);     // open window before closed window
+        // Mobile brief v5: Needs reply goes by the WhatsApp window (open, closing soonest; then closed,
+        // waiting longest), not by the reply promise.
         $this->tenantContext()->run($this->tenant, fn () => $new->forceFill(['reply_due_at' => now()->addMinutes(5)])->save());
         $this->tenantContext()->run($this->tenant, fn () => $old->forceFill(['reply_due_at' => now()->addMinutes(50)])->save());
-        $this->assertSame([$new->id, $old->id], array_column($this->getJson('/api/v1/conversations?sort=priority&status=open')->json('data'), 'id'));
+        $this->assertSame([$old->id, $new->id], array_column($this->getJson('/api/v1/conversations?sort=priority&status=open')->json('data'), 'id'));
+        // A third chat with its window open but closing later comes after the first, before the closed one.
+        $third = $this->customer('971501110003', 'Third, window open longest');
+        $this->assertSame([$old->id, $third->id, $new->id], array_column($this->getJson('/api/v1/conversations?sort=priority&status=open')->json('data'), 'id'));
         $this->tenantContext()->run($this->tenant, fn () => $old->forceFill(['reply_due_at' => now()->subMinute()])->save());
         $this->getJson('/api/v1/conversations?sort=priority&window=closed')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $new->id);
         $this->getJson('/api/v1/conversations?sort=newest&q=quote')->assertJsonCount(1, 'data');                 // message text
@@ -76,7 +80,7 @@ final class InboxListTest extends TestCase
         $this->assertContains('next_step.added', $types);
 
         $health = $this->getJson('/api/v1/inbox/health')->assertOk()->json('data');
-        $this->assertSame([0, 0, 2], [$health['expired'], $health['in_time'], $health['pending']]);
+        $this->assertSame([0, 0, 3], [$health['expired'], $health['in_time'], $health['pending']]);
         $this->postJson("/api/v1/conversations/{$old->id}/typing", ['typing' => true])->assertOk();
     }
 

@@ -61,7 +61,7 @@ final class ConversationController extends Controller
             'state' => ['nullable', Rule::in(['needs_reply', 'waiting'])],
             'after_hours' => ['nullable', 'boolean'],
             // Inbox 3.5 filters: the WhatsApp window, an open follow-up on the contact, a tag.
-            'window' => ['nullable', Rule::in(['open', 'closed'])],
+            'window' => ['nullable', Rule::in(['open', 'closed', 'closing'])],
             'followup' => ['nullable', 'boolean'],
             'tag' => ['nullable', 'string', 'max:40'],
             // Inbox 3.5 sort. Without it the list keeps its cursor pages, newest first.
@@ -92,6 +92,8 @@ final class ConversationController extends Controller
             ->when(! $searching && ($data['state'] ?? null) === 'waiting', fn ($q) => $q->where('status', ConversationStatus::Open->value)->where(fn ($w) => $w->whereNull('reply_state')->orWhere('reply_state', ReplyState::WAITING)))
             ->when($request->boolean('after_hours'), fn ($q) => $q->where('reply_state', ReplyState::NEEDS_REPLY)->where('after_hours', true))
             ->when(($data['window'] ?? null) === 'open', fn ($q) => $q->where('window_expires_at', '>', now()))
+            // Closing within 2 hours (Action Centre): still a free reply, but not for long.
+            ->when(($data['window'] ?? null) === 'closing', fn ($q) => $q->where('window_expires_at', '>', now())->where('window_expires_at', '<=', now()->addHours(2)))
             ->when(($data['window'] ?? null) === 'closed', fn ($q) => $q->where(fn ($w) => $w->whereNull('window_expires_at')->orWhere('window_expires_at', '<=', now())))
             ->when($request->boolean('followup'), fn ($q) => $q->whereExists(fn ($e) => $e->selectRaw('1')->from('next_steps')
                 ->whereColumn('next_steps.contact_id', 'conversations.contact_id')->whereNull('next_steps.done_at')->whereNull('next_steps.cancelled_at')))
@@ -148,21 +150,23 @@ final class ConversationController extends Controller
     }
 
     /**
-     * Priority (3.5): needs a reply with the window open (soonest to close first), needs a reply with the
-     * window closed (longest waiting first), waiting for the customer (latest activity), snoozed (soonest
-     * wake-up), resolved (latest).
+     * Priority (3.5, mobile brief v5): needs a reply with the window open (soonest to close first), needs a
+     * reply with the window closed (longest waiting first), waiting for the customer (latest activity),
+     * snoozed (soonest wake-up), resolved (latest).
      *
      * @param  Builder<Conversation>  $q
      */
     private static function priority($q): void
     {
         // The app's clock, not the database's, so every server and test agrees on "now".
-        // Needs reply first, by time left on the reply promise (batch 7, pilot kit); then waiting,
-        // snoozed and resolved chats.
+        // Needs reply first (mobile brief v5): chats whose 24-hour window is still open, the one
+        // closing soonest first (it can still get a free reply); then those whose window has closed,
+        // longest waiting first. Then waiting on the customer, snoozed and resolved chats.
         $now = now()->toIso8601String();
         $needs = "status = 'open' AND reply_state = '".ReplyState::NEEDS_REPLY."' AND (snoozed_until IS NULL OR snoozed_until <= ?::timestamptz)";
-        $q->orderByRaw("CASE WHEN {$needs} THEN 0 WHEN status = 'closed' THEN 3 WHEN snoozed_until > ?::timestamptz THEN 2 ELSE 1 END", [$now, $now])
-            ->orderByRaw("CASE WHEN {$needs} THEN reply_due_at END ASC NULLS LAST", [$now])
+        $open = 'window_expires_at > ?::timestamptz';
+        $q->orderByRaw("CASE WHEN {$needs} AND {$open} THEN 0 WHEN {$needs} THEN 1 WHEN status = 'closed' THEN 4 WHEN snoozed_until > ?::timestamptz THEN 3 ELSE 2 END", [$now, $now, $now, $now])
+            ->orderByRaw("CASE WHEN {$needs} AND {$open} THEN window_expires_at END ASC NULLS LAST", [$now, $now])
             ->orderByRaw("CASE WHEN {$needs} THEN needs_reply_since END ASC NULLS LAST", [$now])
             ->orderByRaw('CASE WHEN snoozed_until > ?::timestamptz THEN snoozed_until END ASC NULLS LAST', [$now])
             ->orderByDesc('last_message_at')->orderByDesc('id');
