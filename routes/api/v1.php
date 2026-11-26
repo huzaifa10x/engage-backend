@@ -569,6 +569,7 @@ Route::middleware(['auth:sanctum', EnsureFreshLogin::class, EnsureEmailVerified:
     Route::post('contacts/{contact}/current-enquiry', [EnquiryController::class, 'setCurrent'])->whereUuid('contact')->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.current-enquiry');
     Route::get('contacts/{contact}/next-steps', [EnquiryController::class, 'steps'])->whereUuid('contact')->middleware('can:'.Permission::ContactsView->value)->name('contacts.next-steps');
     Route::post('contacts/{contact}/next-steps', [EnquiryController::class, 'addStep'])->whereUuid('contact')->middleware('can:'.Permission::ContactsUpdate->value)->name('contacts.next-steps.store');
+    Route::get('next-steps', [EnquiryController::class, 'allSteps'])->middleware('can:'.Permission::ContactsView->value)->name('next-steps.index');
     Route::patch('next-steps/{step}', [EnquiryController::class, 'updateStep'])->whereUuid('step')->middleware('can:'.Permission::ContactsUpdate->value)->name('next-steps.update');
     Route::get('tenant/enquiry-settings', [TimelineController::class, 'settings'])->middleware('can:'.Permission::SettingsView->value)->name('tenant.enquiry-settings');
     Route::put('tenant/enquiry-settings', [TimelineController::class, 'updateSettings'])->middleware('can:'.Permission::SettingsManage->value)->name('tenant.enquiry-settings.update');

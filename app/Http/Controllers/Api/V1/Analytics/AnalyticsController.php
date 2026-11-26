@@ -122,6 +122,8 @@ final class AnalyticsController extends Controller
             // 1 = today (the phone's Agents screen: Today / 7 days / 30 days).
             'days' => ['nullable', Rule::in([1, 7, 30, 90, '1', '7', '30', '90'])],
             'phone_number_id' => ['nullable', 'uuid'],
+            // One teammate (Agents › a person): the reply log becomes their slowest replies.
+            'membership_id' => ['nullable', 'uuid'],
         ]);
         $days = (int) ($data['days'] ?? 30);
         $tenant = $context->tenant();
@@ -135,7 +137,9 @@ final class AnalyticsController extends Controller
 
         $stats = "count(*) AS total, percentile_cont(0.5) WITHIN GROUP (ORDER BY business_seconds) AS median,
             avg(business_seconds) AS average, count(*) FILTER (WHERE business_seconds <= {$target}) AS within_target,
-            count(*) FILTER (WHERE after_hours) AS after_hours";
+            count(*) FILTER (WHERE after_hours) AS after_hours,
+            count(*) FILTER (WHERE business_seconds > {$target} AND business_seconds <= 2 * {$target}) AS slow,
+            count(*) FILTER (WHERE business_seconds > 2 * {$target}) AS late";
         $rows = fn (string $kind) => DB::table('inbox_response_times')->where('tenant_id', $tenant->id)->where('kind', $kind)
             ->where('ended_at', '>=', $from)->whereIn('phone_number_id', $ids);
         $shape = fn (?object $r) => [
@@ -145,6 +149,9 @@ final class AnalyticsController extends Controller
             'within_target' => (int) ($r->within_target ?? 0),
             'within_target_pct' => ($r->total ?? 0) > 0 ? round(100 * (int) $r->within_target / (int) $r->total, 1) : null,
             'after_hours' => (int) ($r->after_hours ?? 0),
+            // Slow: up to twice the target; late: beyond that.
+            'slow' => (int) ($r->slow ?? 0),
+            'late' => (int) ($r->late ?? 0),
         ];
 
         $first = $rows('first_response')->selectRaw($stats)->first();
@@ -156,7 +163,9 @@ final class AnalyticsController extends Controller
 
         // The reply log: the latest first replies, each on time (within the target), slow (up to twice
         // it) or late.
-        $log = $rows('first_response')->orderByDesc('ended_at')->limit(20)
+        $log = $rows('first_response')
+            ->when($data['membership_id'] ?? null, fn ($q, string $m) => $q->where('membership_id', $m)->orderByDesc('business_seconds')->limit(5),
+                fn ($q) => $q->orderByDesc('ended_at')->limit(20))
             ->get(['conversation_id', 'membership_id', 'business_seconds', 'after_hours', 'ended_at']);
         $who = TenantMembership::query()->with('user')->whereIn('id', $log->pluck('membership_id')->filter()->unique())->get()
             ->mapWithKeys(fn (TenantMembership $m) => [$m->id => $m->user->name ?? 'Teammate']);

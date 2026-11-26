@@ -10,6 +10,7 @@ use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
 
@@ -73,7 +74,12 @@ final class MobileScreensTest extends TestCase
             ->assertJsonPath('data.range.days', 1)
             ->assertJsonPath('data.log.0.result', 'on_time')
             ->assertJsonPath('data.log.0.by', $this->owner->user?->name)
-            ->assertJsonCount(1, 'data.log');
+            ->assertJsonCount(1, 'data.log')
+            ->assertJsonPath('data.first_response.slow', 0)->assertJsonPath('data.first_response.late', 0);
+
+        // One teammate: their slowest replies.
+        $this->getJson("/api/v1/analytics/response-times?days=1&membership_id={$this->owner->id}")->assertOk()->assertJsonCount(1, 'data.log');
+        $this->getJson('/api/v1/analytics/response-times?days=1&membership_id='.Str::uuid())->assertOk()->assertJsonCount(0, 'data.log');
     }
 
     public function test_one_teammates_chats(): void
@@ -112,5 +118,34 @@ final class MobileScreensTest extends TestCase
 
         $this->postJson("/api/v1/contacts/{$conv->contact_id}/next-steps", ['type' => 'call', 'title' => 'Call back', 'due_at' => now()->subHour()->toIso8601String()])->assertCreated();
         $this->getJson('/api/v1/dashboard/summary')->assertJsonPath('data.action.followups_overdue', 1);
+    }
+
+    public function test_follow_ups_by_due_date_mine_and_everyone(): void
+    {
+        $this->postWebhook($this->webhookBody('messages', $this->inboundValue(['text' => ['body' => 'Hi'], 'timestamp' => (string) now()->timestamp], bsuid: null)))->assertOk();
+        $this->actingAsMember($this->owner);
+        $conv = $this->tenantContext()->run($this->tenant, fn () => Conversation::query()->latest('created_at')->firstOrFail());
+        $sara = $this->addMember($this->tenant, SystemRole::Agent);
+        $step = fn (string $title, string $due, ?string $to = null) => $this->postJson("/api/v1/contacts/{$conv->contact_id}/next-steps", ['type' => 'call', 'title' => $title, 'due_at' => $due] + ($to ? ['assigned_membership_id' => $to] : []))->assertCreated()->json('data.id');
+
+        $late = $step('Call back', now()->subHour()->toIso8601String());
+        $step('Send quote', now()->addHour()->toIso8601String());   // 10:00 + 1 h: today
+        $step('Check in', now()->addDays(3)->toIso8601String());
+        $step('Sara’s call', now()->addHour()->toIso8601String(), $sara->id);
+
+        $res = $this->getJson('/api/v1/next-steps?bucket=overdue')->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.title', 'Call back')->assertJsonPath('data.0.chat_id', $conv->id)->assertJsonPath('data.0.contact.id', $conv->contact_id);
+        $this->assertSame(['overdue' => 1, 'today' => 1, 'upcoming' => 1, 'done' => 0], $res->json('meta.counts'));
+        $this->assertSame(2, $this->getJson('/api/v1/next-steps?bucket=today&who=everyone')->json('meta.counts.today'));
+
+        // Complete with undo, reschedule.
+        $this->patchJson("/api/v1/next-steps/{$late}", ['status' => 'done'])->assertOk();
+        $this->assertSame(1, $this->getJson('/api/v1/next-steps?bucket=done')->json('meta.counts.done'));
+        $this->patchJson("/api/v1/next-steps/{$late}", ['status' => 'open', 'due_at' => now()->addDay()->toIso8601String()])->assertOk();
+        $this->assertSame(['overdue' => 0, 'today' => 1, 'upcoming' => 2, 'done' => 0], $this->getJson('/api/v1/next-steps')->json('meta.counts'));
+
+        // An agent sees only their own, even when asking for everyone.
+        $this->actingAsMember($sara);
+        $this->getJson('/api/v1/next-steps?bucket=today&who=everyone')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('meta.everyone', false);
     }
 }

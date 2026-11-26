@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Crm;
 
+use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Audit\AuditLogger;
 use App\Domain\Crm\Exceptions\StageConflict;
 use App\Domain\Crm\Models\CrmStage;
@@ -159,6 +160,45 @@ final class EnquiryController extends Controller
     }
 
     // ── Next steps ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Follow-ups across all customers (mobile brief v5): Overdue, Today, Upcoming or Done, with the
+     * count of each. People who see every chat choose Mine or Everyone; everyone else sees their own.
+     * Each row has the customer and their open chat, for "Open chat".
+     */
+    public function allSteps(Request $request, NumberAccess $access): JsonResponse
+    {
+        $data = $request->validate([
+            'bucket' => ['nullable', Rule::in(['overdue', 'today', 'upcoming', 'done'])],
+            'who' => ['nullable', Rule::in(['mine', 'everyone'])],
+        ]);
+        $member = $this->context->membership() ?? abort(403);
+        $everyone = ($data['who'] ?? 'mine') === 'everyone' && $access->seesAllChats($member->loadMissing('role'));
+        $tz = $this->context->tenant()->timezone ?: 'UTC';
+        $endOfDay = now($tz)->endOfDay()->utc();
+        $base = fn () => NextStep::query()->when(! $everyone, fn ($q) => $q->where('assigned_membership_id', $member->id));
+        $bucket = fn (string $b) => match ($b) {
+            'overdue' => $base()->open()->where('due_at', '<', now()),
+            'today' => $base()->open()->where('due_at', '>=', now())->where('due_at', '<=', $endOfDay),
+            'upcoming' => $base()->open()->where('due_at', '>', $endOfDay),
+            default => $base()->whereNotNull('done_at')->where('done_at', '>=', now()->subDays(30)),
+        };
+        $which = $data['bucket'] ?? 'today';
+        $rows = $bucket($which)->when($which === 'done', fn ($q) => $q->orderByDesc('done_at'), fn ($q) => $q->orderBy('due_at'))->limit(100)->get();
+        $names = $this->names();
+        $contacts = Contact::query()->withTrashed()->whereIn('id', $rows->pluck('contact_id')->unique())->get()->keyBy('id');
+        $chats = DB::table('conversations')->whereIn('contact_id', $rows->pluck('contact_id')->unique())->where('status', 'open')
+            ->orderByDesc('last_message_at')->get(['id', 'contact_id'])->unique('contact_id')->pluck('id', 'contact_id');
+
+        return response()->json(['data' => $rows->map(fn (NextStep $s) => $s->summary($names) + [
+            'contact' => ($c = $contacts[$s->contact_id] ?? null) ? ['id' => $c->id, 'name' => $c->displayName(), 'deleted' => $c->trashed()] : null,
+            'chat_id' => $chats[$s->contact_id] ?? null,
+        ])->values(), 'meta' => [
+            'counts' => collect(['overdue', 'today', 'upcoming', 'done'])->mapWithKeys(fn ($b) => [$b => $bucket($b)->count()]),
+            'everyone' => $everyone,
+            'can_see_everyone' => $access->seesAllChats($member),
+        ]]);
+    }
 
     public function steps(Request $request, Contact $contact): JsonResponse
     {
