@@ -17,6 +17,7 @@ use App\Notifications\BillingReminderNotification;
 use App\Notifications\PaymentFailedNotification;
 use App\Notifications\PaymentReceiptNotification;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -66,7 +67,7 @@ final class StripeBillingTest extends TestCase
         parent::setUp();
         config(['engage.stripe.key' => 'pk_test_x', 'engage.stripe.secret' => 'sk_test_x', 'engage.stripe.webhook_secret' => self::SECRET, 'engage.frontend_url' => 'https://app.engage.test']);
         Cache::flush();
-        $this->tenant = $this->createTenant();
+        $this->tenant = $this->createTenant(['country' => 'AE']);
         app(SubscriptionService::class)->startNewWorkspace($this->tenant);
         $this->owner = $this->addMember($this->tenant);
         $this->actingAsMember($this->owner);
@@ -246,6 +247,39 @@ final class StripeBillingTest extends TestCase
         $this->postJson('/api/v1/billing/checkout', ['plan' => 'pro', 'interval' => 'monthly'])->assertStatus(422);
     }
 
+    public function test_uae_vat_is_set_from_the_billing_country_and_follows_the_address_given_at_checkout(): void
+    {
+        // Without Stripe Tax the country decides the VAT, so it is asked for first.
+        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['country' => null])->save());
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth', 'interval' => 'monthly'])->assertStatus(422)->assertJsonPath('error.details.fields.country.0', fn ($m) => str_contains((string) $m, 'billing country'));
+        Http::assertNothingSent();
+
+        // UAE: the 5% VAT rate on the Checkout line (tax_rates; Stripe no longer accepts dynamic_tax_rates).
+        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['country' => 'AE'])->save());
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk();
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/checkout/sessions') && $r['line_items'][0]['tax_rates'] === ['txr_uae']
+            && ! isset($r['line_items'][0]['dynamic_tax_rates']) && ! isset($r['automatic_tax']));
+
+        // Elsewhere: no VAT.
+        $this->tenantContext()->bypass(fn () => $this->tenant->forceFill(['country' => 'PK'])->save());
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'starter', 'interval' => 'monthly'])->assertOk();
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/checkout/sessions') && $r['line_items'][0]['price'] === 'price_month_2900' && ! isset($r['line_items'][0]['tax_rates']));
+
+        // The address entered on Checkout is in the UAE: renewals carry the VAT from now on.
+        $this->payCheckout('cs_test_2');
+        $this->stripeEvent('checkout.session.completed', ['id' => 'cs_test_2'])->assertOk();
+        $this->getJson('/api/v1/billing')->assertJsonPath('data.details.country', 'AE')->assertJsonPath('data.vat.applies', true)->assertJsonPath('data.vat.automatic', false);
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/subscriptions/sub_1') && $r->method() === 'POST' && ($r['default_tax_rates'] ?? null) === ['txr_uae']);
+
+        // With Stripe Tax on, no country is needed first and Stripe works VAT out.
+        config(['engage.stripe.automatic_tax' => true]);
+        $other = $this->createTenant();
+        app(SubscriptionService::class)->startNewWorkspace($other);
+        $this->actingAsMember($this->addMember($other));
+        $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth', 'interval' => 'yearly'])->assertOk();
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/checkout/sessions') && ($r['automatic_tax']['enabled'] ?? null) === 'true' && ! isset($r['line_items'][0]['tax_rates']));
+    }
+
     public function test_the_return_from_checkout_is_checked_with_stripe_and_grants_nothing(): void
     {
         $this->postJson('/api/v1/billing/checkout', ['plan' => 'starter', 'interval' => 'yearly'])->assertOk();
@@ -380,7 +414,7 @@ final class StripeBillingTest extends TestCase
         $this->remoteCustomer['invoice_settings']['default_payment_method'] = 'pm_new';
         $this->remoteSubscription['status'] = 'active';
         $this->postJson('/api/v1/billing/return', ['flow' => 'card'])->assertOk()->assertJsonPath('data.status', 'paid');
-        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/subscriptions/sub_1') && $r->method() === 'POST' && $r['default_payment_method'] === 'pm_new');
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/subscriptions/sub_1') && $r->method() === 'POST' && ($r['default_payment_method'] ?? null) === 'pm_new');
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/invoices/in_1/pay'));
         $this->getJson('/api/v1/billing/invoices')->assertJsonPath('data.0.status', 'paid');
         $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.subscription.paused', false);
@@ -435,7 +469,7 @@ final class StripeBillingTest extends TestCase
 
         $this->remoteSubscription['cancel_at_period_end'] = true;
         $this->stripeEvent('customer.subscription.updated', ['id' => 'sub_1'])->assertOk();
-        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.plan.key', 'growth')->assertJsonPath('data.subscription.cancel_at', now()->addMonth()->startOfSecond()->toIso8601String());
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.plan.key', 'growth')->assertJsonPath('data.subscription.cancel_at', Carbon::createFromTimestamp($this->remoteSubscription['current_period_end'])->toIso8601String());
         $this->postJson('/api/v1/billing/portal', ['flow' => 'cancel'])->assertStatus(422); // already ending
 
         $this->remoteSubscription['status'] = 'canceled';

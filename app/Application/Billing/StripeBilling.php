@@ -138,9 +138,13 @@ final class StripeBilling
         }
         $this->assertSeatsFit($tenant, $version, $plan);
 
+        $automaticTax = (bool) config('engage.stripe.automatic_tax');
+        if (! $automaticTax && $tenant->country === null) {
+            // Without Stripe Tax the VAT rate is chosen from the billing country, so it must be known first.
+            throw ValidationException::withMessages(['country' => 'Choose your billing country first (Billing details), so the correct VAT is charged.']);
+        }
         $customer = $this->existingCustomer($tenant);
         $email = $tenant->billing_email ?: $actor?->user()->value('email');
-        $automaticTax = (bool) config('engage.stripe.automatic_tax');
         $base = (string) config('engage.frontend_url');
 
         $session = $this->withCatalog($version, fn (): array => $this->stripe->post('checkout/sessions', array_filter([
@@ -153,8 +157,9 @@ final class StripeBilling
             'line_items' => [array_filter([
                 'price' => $this->priceId($version, $interval),
                 'quantity' => 1,
-                // Without Stripe Tax: the 5% UAE VAT rate applies when the billing address is in the UAE.
-                'dynamic_tax_rates' => $automaticTax ? null : [$this->uaeTaxRateId()],
+                // Without Stripe Tax: the 5% UAE VAT rate for a UAE workspace (billing country), none otherwise.
+                // If Checkout's address says another country, checkoutCompleted() puts the subscription right.
+                'tax_rates' => ! $automaticTax && self::vatApplies($tenant) ? [$this->uaeTaxRateId()] : null,
             ])],
             'automatic_tax' => $automaticTax ? ['enabled' => 'true'] : null,
             'tax_id_collection' => ['enabled' => 'true'],
@@ -476,6 +481,7 @@ final class StripeBilling
         }
         $address = (array) ($customer['address'] ?? []);
         $country = isset($address['country']) && is_string($address['country']) ? strtoupper($address['country']) : null;
+        $countryChanged = $country !== null && $country !== $tenant->country;
 
         $this->context->bypass(fn () => $tenant->forceFill(array_filter([
             'legal_name' => $customer['name'] ?? null,
@@ -487,6 +493,9 @@ final class StripeBilling
             'region' => $address['state'] ?? null,
             'postal_code' => $address['postal_code'] ?? null,
         ], fn ($v) => is_string($v) && $v !== '') + ['tax_trn' => $country === self::VAT_COUNTRY ? $trn : $tenant->tax_trn])->save());
+        if ($countryChanged) {
+            $this->applyTaxToSubscription($tenant); // VAT follows the billing country (no-op with Stripe Tax)
+        }
     }
 
     /**
@@ -891,6 +900,9 @@ final class StripeBilling
             $this->syncCustomerDetails($session['customer']);
         }
         $this->syncSubscription($this->stripe->get('subscriptions/'.$session['subscription']));
+        // The address entered on Checkout may be in another country than the one set beforehand:
+        // renewals then carry the right VAT (no-op with Stripe Tax).
+        $this->applyTaxToSubscription($this->context->bypass(fn () => $tenant->refresh()));
     }
 
     /**

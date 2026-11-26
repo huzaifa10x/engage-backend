@@ -99,7 +99,8 @@ final class BillingController extends Controller
                 'tax_trn' => $tenant->tax_trn,
                 'billing_email' => $tenant->billing_email,
             ],
-            'vat' => ['applies' => $vat, 'percent' => $percent, 'country' => StripeBilling::VAT_COUNTRY],
+            // automatic: Stripe Tax works VAT out at Checkout; otherwise the billing country must be set first.
+            'vat' => ['applies' => $vat, 'percent' => $percent, 'country' => StripeBilling::VAT_COUNTRY, 'automatic' => (bool) config('engage.stripe.automatic_tax')],
             'has_payment_history' => $tenant->stripe_customer_id !== null,
             // A trial can move to Free at once; a paid plan is cancelled in the portal (flow "cancel").
             'can_switch_to_free' => $subscription !== null && $currentKey !== $fallback && $subscription->status === SubscriptionStatus::Trialing,
