@@ -25,7 +25,7 @@ final class ManageContacts
         private readonly TagCatalog $tags,
     ) {}
 
-    /** @param array{phone: string, name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, tags?: ?array<int, string>, opted_in?: bool} $data */
+    /** @param array{phone?: ?string, name?: ?string, email?: ?string, attributes?: ?array<string, mixed>, tags?: ?array<int, string>, opted_in?: bool, owner_membership_id?: ?string, source_detail?: ?string} $data */
     public function create(array $data): Contact
     {
         $waId = ($data['phone'] ?? null) !== null && trim((string) $data['phone']) !== '' ? Contact::checkedPhone($data['phone']) : null;

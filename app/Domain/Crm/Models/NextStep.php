@@ -50,7 +50,10 @@ class NextStep extends Model
         return $this->done_at === null && $this->cancelled_at === null;
     }
 
-    /** @param array<string, string> $names membership id → name */
+    /**
+     * @param  array<string, string>  $names  membership id → name
+     * @return array<string, mixed>
+     */
     public function summary(array $names = []): array
     {
         return [

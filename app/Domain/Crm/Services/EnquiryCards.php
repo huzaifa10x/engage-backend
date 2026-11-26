@@ -62,7 +62,7 @@ final class EnquiryCards
             }
             $paid = array_values(array_filter($payments, fn (array $p) => $p['paid']));
             $stage = $e->stage_id !== null ? ($stages[$e->stage_id] ?? null) : null;
-            $group = $stage?->group ?? CrmStage::OPEN;
+            $group = $stage !== null ? $stage->group : CrmStage::OPEN;
             $next = $steps->get($e->id)?->first();
             $w = $won[$e->id] ?? null;
             $row = [

@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Pagination\AbstractPaginator;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /** @mixin Contact */
@@ -84,7 +85,8 @@ final class ContactResource extends JsonResource
      */
     public static function collection($resource)
     {
-        $items = $resource instanceof AbstractPaginator ? $resource->getCollection() : collect($resource);
+        /** @var Collection<array-key, mixed> $items */
+        $items = $resource instanceof AbstractPaginator ? $resource->getCollection() : collect(is_iterable($resource) ? $resource : []);
         self::recordFor(request())->preload($items->filter(fn ($c) => $c instanceof Contact));
 
         return parent::collection($resource);

@@ -13,6 +13,7 @@ use App\Domain\Tenancy\Models\TenantMembership;
 use App\Domain\Tenancy\TenantContext;
 use App\Domain\WhatsApp\Models\PhoneNumber;
 use App\Infrastructure\Meta\GraphClient;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -83,7 +84,10 @@ final class WaitAlert extends TeamAlert
         $ids = $withRole(SystemRole::Manager)->pluck('id')->all();
         $managers = $ids === [] ? collect() : $this->leads($conversation, $ids);
 
-        return ($managers->isNotEmpty() ? $managers : $this->leads($conversation, []))->load('user');
+        /** @var EloquentCollection<int, TenantMembership> $leads */
+        $leads = new EloquentCollection(($managers->isNotEmpty() ? $managers : $this->leads($conversation, []))->values()->all());
+
+        return $leads->load('user');
     }
 
     /** The Owner's WhatsApp alert: an approved template from the chat's number. Returns why it was not sent. */

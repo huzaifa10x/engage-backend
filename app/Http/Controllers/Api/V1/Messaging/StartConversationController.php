@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Messaging;
 
-use App\Application\WhatsApp\NumberAccess;
 use App\Domain\Access\PhoneVisibility;
 use App\Domain\Crm\Services\ContactRecord;
 use App\Domain\Messaging\Models\Contact;
@@ -23,7 +22,7 @@ use Illuminate\Support\Facades\DB;
  */
 final class StartConversationController extends Controller
 {
-    public function __construct(private readonly TenantContext $context, private readonly NumberAccess $access) {}
+    public function __construct(private readonly TenantContext $context) {}
 
     public function search(Request $request, ContactRecord $record): JsonResponse
     {

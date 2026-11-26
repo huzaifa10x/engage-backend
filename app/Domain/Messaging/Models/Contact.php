@@ -45,6 +45,8 @@ use Illuminate\Validation\ValidationException;
  * @property ?string $stage_id
  * @property ?Carbon $stage_changed_at
  * @property ?CrmStage $stage
+ * @property ?array<string, mixed> $contact_permission how the person agreed to be contacted (3.5)
+ * @property-read mixed $last_activity_at selected by the Contacts list query (latest activity)
  */
 class Contact extends Model
 {

@@ -129,6 +129,7 @@ final class ConversationResource extends JsonResource
         ];
     }
 
+    /** @return array<string, string> membership id → name */
     private static function memberNames(Request $request): array
     {
         if (! $request->attributes->has('inbox.member_names')) {

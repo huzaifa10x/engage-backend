@@ -77,7 +77,10 @@ final class Resolutions
         return true;
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * @param  array<string, string>  $names  membership id → name
+     * @return array<string, mixed>
+     */
     public static function present(object $r, array $names): array
     {
         return [

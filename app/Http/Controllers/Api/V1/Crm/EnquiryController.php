@@ -151,7 +151,7 @@ final class EnquiryController extends Controller
     public function setCurrent(Request $request, Contact $contact, AuditLogger $audit): JsonResponse
     {
         $id = $request->validate(['enquiry_id' => ['required', 'uuid']])['enquiry_id'];
-        $enquiry = Enquiry::query()->where('contact_id', $contact->id)->findOrFail($id);
+        $enquiry = Enquiry::query()->where('contact_id', $contact->id)->whereKey($id)->firstOrFail();
         DB::table('contacts')->where('id', $contact->id)->update(['current_enquiry_id' => $enquiry->id]);
         $audit->record('enquiry.made_current', $enquiry);
 

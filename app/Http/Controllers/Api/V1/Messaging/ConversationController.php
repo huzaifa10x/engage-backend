@@ -288,7 +288,7 @@ final class ConversationController extends Controller
         }
         usort($out, fn ($a, $b) => strcmp($a['at'], $b['at']));
 
-        return response()->json(['data' => array_values($out)]);
+        return response()->json(['data' => $out]);
     }
 
     /** Open / close and (re)assign. Assignment needs inbox.assign; anyone with access may close. */
