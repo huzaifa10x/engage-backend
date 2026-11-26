@@ -64,6 +64,8 @@ final class MessageResource extends JsonResource
             'sent_at' => $this->getAttribute('sent_at')?->toIso8601String(),
             'delivered_at' => $this->getAttribute('delivered_at')?->toIso8601String(),
             'read_at' => $this->getAttribute('read_at')?->toIso8601String(),
+            // Voice notes: when the customer first played it.
+            'played_at' => $this->getAttribute('played_at')?->toIso8601String(),
             'edited_at' => $this->getAttribute('edited_at')?->toIso8601String(),
             'revoked_at' => $this->getAttribute('revoked_at')?->toIso8601String(),
             // Content removed by the workspace's retention policy (the delivery record remains).

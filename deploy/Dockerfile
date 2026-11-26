@@ -14,7 +14,7 @@ RUN npm run build
 FROM dunglas/frankenphp:1-php8.4-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git unzip \
+    && apt-get install -y --no-install-recommends git unzip ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && install-php-extensions pdo_pgsql pgsql redis pcntl posix intl zip bcmath opcache \
     && cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"

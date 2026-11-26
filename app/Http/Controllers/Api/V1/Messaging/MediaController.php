@@ -9,6 +9,7 @@ use App\Domain\Messaging\Models\Conversation;
 use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\MediaStorage;
+use App\Domain\Messaging\Services\VoiceNotes;
 use App\Domain\Plans\Entitlements\EntitlementService;
 use App\Domain\Plans\FeatureKey;
 use App\Domain\Tenancy\TenantContext;
@@ -24,7 +25,7 @@ final class MediaController extends Controller
     private const SHOWN_IN_BROWSER = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/3gpp', 'application/pdf'];
 
     /** Upload an attachment before sending it. Validated against Cloud API type/size limits. */
-    public function store(Request $request, MediaStorage $storage, TenantContext $context, EntitlementService $entitlements): JsonResponse
+    public function store(Request $request, MediaStorage $storage, TenantContext $context, EntitlementService $entitlements, VoiceNotes $voiceNotes): JsonResponse
     {
         $request->validate(['file' => ['required', 'file', 'max:'.(100 * 1024)]]);
         // Plan storage allowance (uploads only: media your customers send is always received).
@@ -34,6 +35,21 @@ final class MediaController extends Controller
             throw ValidationException::withMessages(['file' => 'The file could not be uploaded. It may be larger than the server allows.']);
         }
         $mime = Media::canonicalMime((string) $file->getMimeType(), $file->getClientMimeType(), $file->getClientOriginalExtension());
+        $path = (string) $file->getRealPath();
+        $filename = mb_substr($file->getClientOriginalName(), 0, 240);
+        $converted = null;
+
+        // A recording from the composer's mic: always sent as a WhatsApp voice note (OGG / Opus mono),
+        // whatever the browser recorded (Chrome WebM, Safari MP4 / AAC, Firefox OGG).
+        if ($request->boolean('voice') && (str_starts_with($mime, 'audio/') || in_array($mime, ['video/webm', 'video/mp4', 'application/octet-stream'], true))) {
+            $converted = $voiceNotes->toOggOpus($path);
+            if ($converted === null && $mime !== 'audio/ogg') {
+                throw ValidationException::withMessages(['file' => 'This recording could not be turned into a WhatsApp voice note. Try again, or attach an audio file instead.']);
+            }
+            if ($converted !== null) {
+                [$path, $mime, $filename] = [$converted, 'audio/ogg', 'voice-message.ogg'];
+            }
+        }
         $type = Media::whatsappTypeFor($mime);
 
         if ($type === null) {
@@ -45,21 +61,25 @@ final class MediaController extends Controller
                 default => "WhatsApp does not accept {$mime} files. Send a PDF, Word, Excel, PowerPoint or text document instead.",
             }]);
         }
+        $size = (int) filesize($path);
         $max = (int) config("engage.messaging.media_limits.{$type}.max");
-        if ($file->getSize() > $max) {
+        if ($size > $max) {
             throw ValidationException::withMessages(['file' => sprintf('%s files can be at most %s MB on WhatsApp.', ucfirst($type), round($max / 1048576, 1))]);
         }
 
         $media = Media::query()->create([
             'direction' => 'outbound',
             'mime_type' => $mime,
-            'filename' => mb_substr($file->getClientOriginalName(), 0, 240),
-            'file_size' => $file->getSize(),
-            'sha256' => hash_file('sha256', $file->getRealPath()),
+            'filename' => $filename,
+            'file_size' => $size,
+            'sha256' => hash_file('sha256', $path),
             'status' => 'pending',
             'created_by_membership_id' => $context->membership()?->id,
         ]);
-        $media->forceFill(['disk' => $storage->disk(), 'path' => $storage->put($media, (string) file_get_contents($file->getRealPath())), 'status' => 'ready'])->save();
+        $media->forceFill(['disk' => $storage->disk(), 'path' => $storage->put($media, (string) file_get_contents($path)), 'status' => 'ready'])->save();
+        if ($converted !== null) {
+            @unlink($converted);
+        }
 
         return response()->json(['data' => [
             'id' => $media->id,
@@ -67,6 +87,9 @@ final class MediaController extends Controller
             'mime_type' => $media->mime_type,
             'filename' => $media->filename,
             'file_size' => $media->file_size,
+            // A converted recording is a voice note; over 512 KB WhatsApp shows a download arrow instead of play.
+            'voice' => $converted !== null || ($request->boolean('voice') && $mime === 'audio/ogg'),
+            'playable' => $media->file_size <= VoiceNotes::PLAYABLE_BYTES,
         ]], 201);
     }
 

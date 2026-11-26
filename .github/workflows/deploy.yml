@@ -35,6 +35,9 @@ jobs:
       - name: Database roles (same as local dev — app role is NOT superuser, so RLS applies)
         run: PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -f docker/postgres/init/01-engage.sql
 
+      - name: ffmpeg (voice notes are converted to OGG / Opus)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+
       - uses: shivammathur/setup-php@v2
         with:
           php-version: "8.4"

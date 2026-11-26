@@ -10,7 +10,9 @@ use App\Domain\Messaging\Enums\MessageStatus;
 use App\Domain\Messaging\Jobs\SendWhatsappMessage;
 use App\Domain\Messaging\Models\Contact;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Models\Media;
 use App\Domain\Messaging\Models\Message;
+use App\Domain\Messaging\Services\VoiceNotes;
 use App\Domain\Templates\Models\MessageTemplate;
 use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -18,6 +20,7 @@ use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use Tests\Concerns\InteractsWithWhatsapp;
 use Tests\TestCase;
@@ -297,6 +300,46 @@ final class OutboundMessagingTest extends TestCase
 
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/media') && $r->isMultipart());
         Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && $r['image']['id'] === 'META-MEDIA-1' && $r['image']['caption'] === 'Here it is');
+    }
+
+    public function test_phone_recordings_are_converted_and_sent_as_whatsapp_voice_notes(): void
+    {
+        if (! app(VoiceNotes::class)->available()) {
+            $this->markTestSkipped('ffmpeg is not installed.');
+        }
+        Storage::fake('local');
+        $conversation = $this->thread();
+        Http::fake([
+            'graph.facebook.com/v27.0/106540352242922/media*' => Http::response(['id' => 'META-VOICE']),
+            self::SEND => fn () => Http::response(['messaging_product' => 'whatsapp', 'messages' => [['id' => 'wamid.V'.bin2hex(random_bytes(4))]]]),
+        ]);
+        $this->actingAsMember($this->owner);
+
+        // What Chrome (WebM / Opus) and Safari (MP4 / AAC) record: three seconds of tone.
+        foreach (['webm' => ['libopus', 'audio/webm'], 'm4a' => ['aac', 'audio/mp4']] as $extension => [$codec, $clientType]) {
+            $recording = tempnam(sys_get_temp_dir(), 'rec').'.'.$extension;
+            Process::run(['ffmpeg', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3', '-ac', '2', '-c:a', $codec, $recording])->throw();
+
+            $upload = $this->post('/api/v1/media', ['voice' => '1', 'file' => new UploadedFile($recording, "voice-message.{$extension}", $clientType, null, true)], ['Accept' => 'application/json'])
+                ->assertCreated()->assertJsonPath('data.type', 'audio')->assertJsonPath('data.mime_type', 'audio/ogg')
+                ->assertJsonPath('data.voice', true)->assertJsonPath('data.playable', true);
+            $media = $this->tenantContext()->run($this->tenant, fn () => Media::query()->findOrFail($upload->json('data.id')));
+            $stored = Storage::disk($media->disk)->get((string) $media->path);
+            $this->assertStringStartsWith('OggS', (string) $stored);                       // OGG container
+            $this->assertStringContainsString('OpusHead', substr((string) $stored, 0, 200)); // Opus codec
+            $this->assertSame(1, ord(substr((string) $stored, (int) strpos((string) $stored, 'OpusHead') + 9, 1))); // mono
+
+            $this->postJson("/api/v1/conversations/{$conversation->id}/messages", ['type' => 'audio', 'media_id' => $media->id, 'content' => ['voice' => true]])->assertStatus(202);
+            @unlink($recording);
+        }
+        Http::assertSentCount(4); // per recording: one upload to Meta and one send
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), '/messages') && ($r['audio']['voice'] ?? null) === true && $r['audio']['id'] === 'META-VOICE');
+
+        // A file someone attaches (not recorded) stays an ordinary audio file, and a WebM file is still refused.
+        $webm = tempnam(sys_get_temp_dir(), 'rec').'.webm';
+        Process::run(['ffmpeg', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'libopus', $webm])->throw();
+        $this->post('/api/v1/media', ['file' => new UploadedFile($webm, 'clip.webm', 'audio/webm', null, true)], ['Accept' => 'application/json'])->assertStatus(422);
+        @unlink($webm);
     }
 
     public function test_starting_a_conversation_by_phone_with_a_template(): void

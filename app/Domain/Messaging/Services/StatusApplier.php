@@ -82,6 +82,10 @@ final class StatusApplier
             MessageStatus::Read => $updates['read_at'] = $message->getAttribute('read_at') ?? $at,
             default => null,
         };
+        // Voice notes: Meta sends "played" the first time the customer listens (it also counts as read).
+        if (strtolower((string) ($status['status'] ?? '')) === 'played') {
+            $updates['played_at'] = $message->getAttribute('played_at') ?? $at;
+        }
 
         if (isset($status['pricing']) && is_array($status['pricing'])) {
             $updates['pricing'] = $status['pricing'];

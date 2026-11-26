@@ -168,6 +168,12 @@ return [
         'start_keywords' => ['start', 'subscribe', 'unstop', 'opt in', 'optin', 'اشتراك'],
         'media_disk' => env('ENGAGE_MEDIA_DISK', 'local'),
         // Cloud API limits (bytes) per media type — enforced before upload.
+        // Voice notes: recordings are converted to OGG / Opus mono with ffmpeg (VoiceNotes).
+        'voice' => [
+            'ffmpeg' => env('FFMPEG_BINARY', 'ffmpeg'),
+            'bitrate' => '32k',
+            'timeout' => 60,
+        ],
         'media_limits' => [
             'image' => ['max' => 5 * 1024 * 1024, 'mimes' => ['image/jpeg', 'image/png']],
             'video' => ['max' => 16 * 1024 * 1024, 'mimes' => ['video/mp4', 'video/3gpp']],

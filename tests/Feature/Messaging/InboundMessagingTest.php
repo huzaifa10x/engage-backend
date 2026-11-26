@@ -162,6 +162,15 @@ final class InboundMessagingTest extends TestCase
             $this->assertNotNull($m->getAttribute('read_at'));
             $this->assertSame('service', $m->getAttribute('pricing')['category']);
             $this->assertSame(3, MessageStatusEvent::query()->where('message_id', $m->id)->count());
+            $this->assertNull($m->getAttribute('played_at'));
+        });
+
+        // A voice note the customer listened to: Meta sends "played", shown as a played tick.
+        $this->postWebhook($this->webhookBody('messages', $status('played', 1767225900)))->assertOk();
+        $this->inTenant(function () use ($out) {
+            $m = Message::query()->findOrFail($out->id);
+            $this->assertSame(MessageStatus::Read, $m->status);
+            $this->assertSame(1767225900, $m->getAttribute('played_at')?->getTimestamp());
         });
     }
 
