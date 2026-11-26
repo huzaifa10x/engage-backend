@@ -17,7 +17,7 @@ use Symfony\Component\Mailer\SentMessage;
 use Symfony\Component\Mime\Email;
 use Tests\TestCase;
 
-/** Settings › Email notifications: everything on by default, each category can be switched off, OTP never. */
+/** Settings › Email notifications: on by default except reply-time alerts (opt-in), each can be switched, OTP never off. */
 final class EmailPreferencesTest extends TestCase
 {
     private Tenant $tenant;
@@ -53,12 +53,12 @@ final class EmailPreferencesTest extends TestCase
         app(InboxTools::class)->notify($member, $type, $title, null, '/inbox', email: true);
     }
 
-    public function test_every_email_is_on_by_default_and_security_is_locked(): void
+    public function test_every_email_but_reply_time_alerts_is_on_by_default_and_security_is_locked(): void
     {
         $data = $this->actingAsMember($this->owner)->getJson('/api/v1/me/email-preferences')->assertOk()->json('data');
         $this->assertSame(['security', 'inbox_assigned', 'inbox_mentions', 'inbox_alerts', 'chatbot_reviews', 'whatsapp_numbers', 'templates', 'developer', 'billing'], array_column($data, 'key'));
         foreach ($data as $row) {
-            $this->assertTrue($row['enabled'], $row['key']);
+            $this->assertSame($row['key'] !== 'inbox_alerts', $row['enabled'], $row['key']);
             $this->assertSame($row['key'] === 'security', $row['locked'], $row['key']);
         }
     }
@@ -83,6 +83,28 @@ final class EmailPreferencesTest extends TestCase
         $this->assertNull($this->owner->user()->firstOrFail()->email_preferences);
         $this->inboxAlert($this->owner, 'mention', 'Omar mentioned you in a note');
         $this->assertStringContainsString('Omar mentioned you', implode(' | ', $this->mailTo($this->owner->user()->firstOrFail()->email)));
+    }
+
+    public function test_reply_time_alerts_are_only_emailed_to_people_who_switch_them_on(): void
+    {
+        $email = $this->owner->user()->firstOrFail()->email;
+
+        // Default: the 15 / 30 / 45 / 60-minute and window-closing alerts show in the app only.
+        $this->inboxAlert($this->owner, 'reply_overdue', 'Sara has waited 15 min for a reply');
+        $this->inboxAlert($this->owner, 'window_closing', 'Reply to Sara within 1 hour');
+        $this->assertSame([], $this->mailTo($email));
+        $this->assertSame(2, app(TenantContext::class)->bypass(fn () => MemberNotification::query()->where('membership_id', $this->owner->id)->count()));
+
+        // Switched on in Settings: emailed.
+        $this->actingAsMember($this->owner)->putJson('/api/v1/me/email-preferences', ['preferences' => ['inbox_alerts' => true]])->assertOk()
+            ->assertJsonPath('data.3.key', 'inbox_alerts')->assertJsonPath('data.3.enabled', true);
+        $this->assertSame(['inbox_alerts' => true], $this->owner->user()->firstOrFail()->email_preferences);
+        $this->inboxAlert($this->owner, 'reply_overdue', 'Omar has waited 30 min for a reply');
+        $this->assertStringContainsString('Omar has waited 30 min', implode(' | ', $this->mailTo($email)));
+
+        // Off again: back to the default, nothing stored.
+        $this->actingAsMember($this->owner)->putJson('/api/v1/me/email-preferences', ['preferences' => ['inbox_alerts' => false]])->assertOk();
+        $this->assertNull($this->owner->user()->firstOrFail()->email_preferences);
     }
 
     public function test_workspace_emails_follow_each_owners_choice(): void

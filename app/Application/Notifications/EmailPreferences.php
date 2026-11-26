@@ -11,8 +11,9 @@ use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Which emails each person receives. Everything is on by default; only the categories a person
- * switches off are stored (users.email_preferences = {"inbox_mentions": false}).
+ * Which emails each person receives. Every category is on by default except reply-time alerts,
+ * which each person switches on in their settings. Only choices that differ from the default are
+ * stored (users.email_preferences = {"inbox_mentions": false, "inbox_alerts": true}).
  *
  * Enforced in one place, when an email is about to be sent (NotificationSending), so a queued email
  * follows the preference at the moment it goes out. Workspace emails are addressed to an email
@@ -23,7 +24,7 @@ final class EmailPreferences
 {
     public const SECURITY = 'security';
 
-    /** @var array<string, array{label: string, description: string, group: string, owners_only?: bool, locked?: bool}> */
+    /** @var array<string, array{label: string, description: string, group: string, owners_only?: bool, locked?: bool, default?: bool}> */
     public const CATEGORIES = [
         self::SECURITY => [
             'label' => 'Sign-in and security',
@@ -43,8 +44,10 @@ final class EmailPreferences
         ],
         'inbox_alerts' => [
             'label' => 'Reply-time alerts',
-            'description' => 'A customer’s 24-hour window is about to close, or a conversation was escalated because nobody replied.',
+            'description' => 'A customer has waited for a reply (the 15, 30, 45 and 60-minute alerts), their 24-hour window is about to close, or a conversation was escalated because nobody replied. Off unless you switch it on; the alerts always show in the app.',
             'group' => 'Inbox',
+            // Off by default: these come often, so each person opts in to receive them by email.
+            'default' => false,
         ],
         'chatbot_reviews' => [
             'label' => 'Chatbot reviews',
@@ -94,8 +97,9 @@ final class EmailPreferences
             return true;
         }
         $stored = $user->getAttribute('email_preferences');
+        $choice = is_array($stored) ? ($stored[$category] ?? null) : null;
 
-        return ! (is_array($stored) && ($stored[$category] ?? true) === false);
+        return is_bool($choice) ? $choice : (self::CATEGORIES[$category]['default'] ?? true);
     }
 
     /** @return list<array{key: string, label: string, description: string, group: string, owners_only: bool, locked: bool, enabled: bool}> */
@@ -136,10 +140,10 @@ final class EmailPreferences
 
                 continue;
             }
-            if ($on) {
+            if ((bool) $on === (self::CATEGORIES[$key]['default'] ?? true)) {
                 unset($stored[$key]);
             } else {
-                $stored[$key] = false;
+                $stored[$key] = (bool) $on;
             }
         }
         $user->forceFill(['email_preferences' => $stored === [] ? null : $stored])->save();
