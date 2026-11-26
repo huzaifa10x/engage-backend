@@ -12,6 +12,7 @@ use App\Domain\Billing\Models\Invoice;
 use App\Domain\Billing\Models\Subscription;
 use App\Domain\Billing\SubscriptionService;
 use App\Domain\Plans\Models\Plan;
+use App\Domain\Tenancy\Models\Tenant;
 use App\Domain\Tenancy\TenantContext;
 use App\Http\Controllers\Controller;
 use App\Infrastructure\Stripe\StripeClient;
@@ -69,7 +70,8 @@ final class BillingController extends Controller
                 ];
             })->filter()->values();
 
-        $selfServe = $subscription !== null && $subscription->provider === BillingProvider::Stripe && $subscription->provider_subscription_id !== null;
+        $selfServe = $subscription !== null && $subscription->provider === BillingProvider::Stripe && $subscription->provider_subscription_id !== null
+            && $this->knownToStripe($tenant);
 
         return response()->json(['data' => [
             'stripe_configured' => $this->stripe->configured(),
@@ -261,6 +263,24 @@ final class BillingController extends Controller
         }
 
         return response()->json(['data' => ['url' => $url]]);
+    }
+
+    /**
+     * Whether the workspace's Stripe subscription exists with the keys in use. One made with other
+     * keys (test ↔ live, another Stripe account) cannot be managed in the portal: the page offers
+     * Checkout instead, and the new subscription replaces it. If Stripe cannot be reached, the
+     * stored state is trusted so the page still loads.
+     */
+    private function knownToStripe(Tenant $tenant): bool
+    {
+        if (! $this->stripe->configured()) {
+            return false;
+        }
+        try {
+            return $this->billing->liveStripeSubscription($tenant) !== null;
+        } catch (StripeException) {
+            return true;
+        }
     }
 
     private function ensureConfigured(): void

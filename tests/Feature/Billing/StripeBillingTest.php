@@ -535,7 +535,11 @@ final class StripeBillingTest extends TestCase
         $bypass = fn (callable $q) => app(TenantContext::class)->bypass($q);
         $bypass(fn () => Subscription::query()->where('provider_subscription_id', 'sub_1')->update(['provider_subscription_id' => 'sub_other_mode']));
 
-        // Stripe no longer knows it: Checkout is offered again, and the new subscription replaces it.
+        // Stripe no longer knows it: the page does not offer the portal (which would refuse), but
+        // Checkout, and the new subscription replaces the stale one.
+        $this->getJson('/api/v1/billing/summary')->assertJsonPath('data.plan.key', 'starter')
+            ->assertJsonPath('data.subscription.provider', 'stripe')->assertJsonPath('data.subscription.self_serve', false);
+        $this->postJson('/api/v1/billing/portal', ['flow' => 'manage'])->assertStatus(422);
         $this->postJson('/api/v1/billing/checkout', ['plan' => 'growth', 'interval' => 'monthly'])->assertOk();
         $session = (string) array_key_last($this->sessions);
         $this->payCheckout($session);
