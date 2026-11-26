@@ -34,6 +34,12 @@ final class LoginVerification
     /** Until when this session's sign-in stays valid (a remembered device: 30 days from its code). */
     public const SESSION_UNTIL = 'auth.login_verified_until';
 
+    /** Session key: the installed-app device this session belongs to. */
+    public const SESSION_DEVICE = 'auth.app_device';
+
+    /** Sent by the installed phone app on every request: its own random device key. */
+    public const DEVICE_HEADER = 'X-Engage-Device';
+
     public const CODE_MINUTES = 10;
 
     public static function enabled(): bool
@@ -46,6 +52,22 @@ final class LoginVerification
         return max(1, (int) config('engage.login_otp.window_hours', 24));
     }
 
+    public static function appDays(): int
+    {
+        return max(1, (int) config('engage.login_otp.app_days', 90));
+    }
+
+    /**
+     * The installed app's device key, when this request comes from the installed app. Browsers (and
+     * the app in a normal tab) send none.
+     */
+    public static function appDevice(Request $request): ?string
+    {
+        $key = $request->header(self::DEVICE_HEADER);
+
+        return is_string($key) && preg_match('/^[A-Za-z0-9-]{16,64}$/', $key) === 1 ? $key : null;
+    }
+
     public static function rememberDays(): int
     {
         return max(1, (int) config('engage.login_otp.remember_days', 30));
@@ -54,7 +76,7 @@ final class LoginVerification
     /**
      * When this browser last entered a code for this user and until when that counts, if it still does.
      *
-     * @return ?array{at: int, until: int, remembered: bool}
+     * @return ?array{at: int, until: int, remembered: bool, device: ?string}
      */
     public function trusted(Request $request, User $user): ?array
     {
@@ -76,6 +98,12 @@ final class LoginVerification
         if ($until <= now()->timestamp) {
             return null;
         }
+        // The installed app's 90 days hold only in that app, and only while it is the person's app
+        // phone (a sign-in to the app on another phone ends it).
+        $device = $stored['device'] ?? null;
+        if (is_string($device) && ($device !== self::appDevice($request) || $device !== $user->getAttribute('app_device_id'))) {
+            return null;
+        }
         // Remembered devices end with a password reset, "Sign out everywhere" or "Forget remembered devices".
         foreach (['login_trust_reset_at', 'sessions_revoked_at'] as $column) {
             $reset = $user->getAttribute($column);
@@ -84,28 +112,39 @@ final class LoginVerification
             }
         }
 
-        return ['at' => $at, 'until' => $until, 'remembered' => (bool) ($stored['remembered'] ?? false)];
+        return ['at' => $at, 'until' => $until, 'remembered' => (bool) ($stored['remembered'] ?? false), 'device' => is_string($device) ? $device : null];
     }
 
     /**
      * Marks this browser as verified now and returns the cookie that proves it: for the 24-hour
      * window, or for 30 days when the person ticked "Remember this device".
      */
-    public function trust(User $user, bool $remember = false): Cookie
+    public function trust(User $user, bool $remember = false, ?string $device = null): Cookie
     {
         $token = Str::random(64);
-        $minutes = $remember ? self::rememberDays() * 1440 : self::windowHours() * 60;
+        $minutes = $device !== null ? self::appDays() * 1440 : ($remember ? self::rememberDays() * 1440 : self::windowHours() * 60);
         $until = now()->addMinutes($minutes);
-        Cache::put($this->trustKey($user, $token), ['at' => now()->timestamp, 'until' => $until->timestamp, 'remembered' => $remember], $until);
+        Cache::put($this->trustKey($user, $token), ['at' => now()->timestamp, 'until' => $until->timestamp, 'remembered' => $remember || $device !== null, 'device' => $device], $until);
+        if ($device !== null && $device !== $user->getAttribute('app_device_id')) {
+            // This phone is now the person's app phone: the app on any other phone is signed out.
+            $user->forceFill(['app_device_id' => $device, 'app_device_at' => now()])->saveQuietly();
+        }
 
         return cookie(self::COOKIE, $token, $minutes, '/', null, (bool) config('session.secure'), true, false, 'lax');
     }
 
+    /** Until when a sign-in verified now stays valid: 90 days in the installed app, 30 on a remembered browser. */
+    public static function validUntil(bool $remember, ?string $device): ?int
+    {
+        return $device !== null ? now()->addDays(self::appDays())->timestamp : ($remember ? now()->addDays(self::rememberDays())->timestamp : null);
+    }
+
     /** Puts the verified sign-in on the session: since when, and until when it stays valid. */
-    public static function stamp(Request $request, int $at, ?int $until = null): void
+    public static function stamp(Request $request, int $at, ?int $until = null, ?string $device = null): void
     {
         $request->session()->put(self::SESSION_STAMP, $at);
         $until !== null ? $request->session()->put(self::SESSION_UNTIL, $until) : $request->session()->forget(self::SESSION_UNTIL);
+        $device !== null ? $request->session()->put(self::SESSION_DEVICE, $device) : $request->session()->forget(self::SESSION_DEVICE);
     }
 
     /** "Forget remembered devices": every browser must enter a code at its next sign-in. */

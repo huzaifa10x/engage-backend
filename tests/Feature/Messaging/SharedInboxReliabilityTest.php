@@ -70,8 +70,8 @@ final class SharedInboxReliabilityTest extends TestCase
         $this->patchJson("/api/v1/conversations/{$c->id}", ['assigned_membership_id' => $sara->id, 'expected_assigned_membership_id' => null])->assertOk();
         $this->actingAsMember($this->owner);
         $this->patchJson("/api/v1/conversations/{$c->id}", ['assigned_membership_id' => $this->owner->id, 'expected_assigned_membership_id' => null])
-            ->assertStatus(409)->assertJsonPath('code', 'assignment_changed')->assertJsonPath('assigned_membership_id', $sara->id)
-            ->assertJsonPath('message', 'Sara Haddad has just been given this chat. Open it to reassign if you need to.');
+            ->assertStatus(409)->assertJsonPath('error.code', 'assignment_changed')->assertJsonPath('error.details.assigned_membership_id', $sara->id)
+            ->assertJsonPath('error.message', 'Sara Haddad has just been given this chat. Open it to reassign if you need to.');
         $this->assertSame($sara->id, $this->tenantContext()->run($this->tenant, fn () => Conversation::query()->findOrFail($c->id))->assigned_membership_id);
 
         // Reassigning on purpose, having seen that Sara has it, works; so does repeating your own take.

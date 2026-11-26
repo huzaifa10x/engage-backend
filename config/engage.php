@@ -54,6 +54,8 @@ return [
         'window_hours' => (int) env('LOGIN_OTP_WINDOW_HOURS', 24),
         // "Remember this device" at sign-in: no code on that browser for this many days.
         'remember_days' => (int) env('LOGIN_REMEMBER_DAYS', 30),
+        // The installed phone app: signed in this many days after its code, on one phone at a time.
+        'app_days' => (int) env('LOGIN_APP_DAYS', 90),
     ],
 
     // Demo and contact requests from the public website are emailed here.

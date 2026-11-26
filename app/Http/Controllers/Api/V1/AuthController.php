@@ -89,11 +89,53 @@ final class AuthController extends Controller
             return $this->sendLoginCode($user, $verification);
         }
 
+        // The installed app keeps its session through idle time (its 90 days are checked on every request).
+        if (($trusted['device'] ?? null) !== null) {
+            Auth::guard('web')->login($user, true);
+        }
         $request->session()->regenerate();
-        LoginVerification::stamp($request, $trusted['at'], $trusted['until']);
+        LoginVerification::stamp($request, $trusted['at'], $trusted['until'], $trusted['device'] ?? null);
         $user->forceFill(['last_login_at' => now()])->saveQuietly();
 
         return $me->payload($user, $user->last_active_tenant_id);
+    }
+
+    /**
+     * Sign in with a code instead of a password (mobile brief): the code is emailed to the address
+     * if it belongs to an account. The answer is the same either way, so it never tells anyone
+     * whether an address has an account. Two-factor sign-in still asks for the authenticator code.
+     */
+    public function loginCode(Request $request, LoginVerification $verification): JsonResponse
+    {
+        $this->ensureStateful($request);
+        $data = $request->validate(['email' => ['required', 'string', 'email', 'max:190'], 'remember_device' => ['sometimes', 'boolean']]);
+        $email = mb_strtolower(trim($data['email']));
+        foreach (['login-code-ip:'.$request->ip() => 20, 'login-code-email:'.sha1($email) => 6] as $key => $max) {
+            if (RateLimiter::tooManyAttempts($key, $max)) {
+                throw ValidationException::withMessages(['email' => 'Too many codes requested. Try again in '.(int) ceil(RateLimiter::availableIn($key) / 60).' minute(s).']);
+            }
+            RateLimiter::hit($key, 900);
+        }
+
+        Auth::guard('web')->logout();
+        $request->session()->regenerate();
+        $user = User::query()->whereRaw('lower(email) = ?', [$email])->first();
+        $pending = ['remember' => true, 'remember_device' => $request->boolean('remember_device'), 'at' => now()->timestamp, 'passwordless' => true];
+        if (! $user instanceof User || $user->isDisabled() || $user->isReviewAccount()) {
+            // No account: the same answer as for one, and no code exists to match.
+            $request->session()->put(self::PENDING, $pending + ['id' => null]);
+            [$name, $domain] = array_pad(explode('@', $email, 2), 2, '');
+
+            return response()->json(['data' => [
+                'otp_required' => true,
+                'email' => mb_substr($name, 0, 2).str_repeat('•', max(1, mb_strlen($name) - 2)).'@'.$domain,
+                'retry_in' => 60,
+                'expires_in' => LoginVerification::CODE_MINUTES * 60,
+            ]], 202);
+        }
+        $request->session()->put(self::PENDING, $pending + ['id' => $user->id]);
+
+        return $this->sendLoginCode($user, $verification);
     }
 
     /**
@@ -127,11 +169,18 @@ final class AuthController extends Controller
         RateLimiter::clear('login-otp-verify:'.$user->id);
 
         $pending = (array) $request->session()->pull(self::PENDING);
+        // Signed in with a code alone and two-factor sign-in is on: the authenticator code comes next.
+        if (($pending['passwordless'] ?? false) && $user->hasTwoFactor()) {
+            $request->session()->put(self::PENDING, ['id' => $user->id, 'remember' => true, 'at' => now()->timestamp, 'two_factor' => true]);
+
+            return response()->json(['data' => ['two_factor_required' => true]], 202);
+        }
         $rememberDevice = $request->has('remember_device') ? $request->boolean('remember_device') : (bool) ($pending['remember_device'] ?? false);
-        Auth::guard('web')->login($user, (bool) ($pending['remember'] ?? false));
+        $device = LoginVerification::appDevice($request);
+        Auth::guard('web')->login($user, $device !== null || (bool) ($pending['remember'] ?? false));
         $request->session()->regenerate();
-        $cookie = $verification->trust($user, $rememberDevice);
-        LoginVerification::stamp($request, now()->timestamp, $rememberDevice ? now()->addDays(LoginVerification::rememberDays())->timestamp : null);
+        $cookie = $verification->trust($user, $rememberDevice, $device);
+        LoginVerification::stamp($request, now()->timestamp, LoginVerification::validUntil($rememberDevice, $device), $device);
         // A code read from the inbox also proves the address belongs to them.
         $user->forceFill(['last_login_at' => now(), 'email_verified_at' => $user->getAttribute('email_verified_at') ?? now()])->saveQuietly();
         if ($rememberDevice) {
@@ -173,9 +222,15 @@ final class AuthController extends Controller
         RateLimiter::clear('login-2fa:'.$user->id);
 
         $pending = (array) $request->session()->pull(self::PENDING);
-        Auth::guard('web')->login($user, (bool) ($pending['remember'] ?? false));
+        $device = LoginVerification::appDevice($request);
+        Auth::guard('web')->login($user, $device !== null || (bool) ($pending['remember'] ?? false));
         $request->session()->regenerate();
         $request->session()->put(LoginVerification::SESSION_STAMP, now()->timestamp);
+        // The installed app: 90 days on this phone, as with the emailed code.
+        $cookie = $device !== null ? $verification->trust($user, true, $device) : null;
+        if ($device !== null) {
+            LoginVerification::stamp($request, now()->timestamp, LoginVerification::validUntil(true, $device), $device);
+        }
         $user->forceFill(['last_login_at' => now()])->saveQuietly();
         if ($method === 'recovery' || $method === 'email') {
             // Probably a lost phone: for a short while this session may replace the authenticator without another code.
@@ -191,8 +246,9 @@ final class AuthController extends Controller
                 }
             }
         }
+        $response = $me->payload($user, $user->last_active_tenant_id);
 
-        return $me->payload($user, $user->last_active_tenant_id);
+        return $cookie !== null ? $response->withCookie($cookie) : $response;
     }
 
     /**
@@ -216,6 +272,10 @@ final class AuthController extends Controller
     public function loginResend(Request $request, LoginVerification $verification): JsonResponse
     {
         $this->ensureStateful($request);
+        $pending = $request->session()->get(self::PENDING);
+        if (is_array($pending) && ($pending['passwordless'] ?? false) && ($pending['id'] ?? null) === null) {
+            return response()->json(['data' => ['otp_required' => true, 'retry_in' => 60, 'expires_in' => LoginVerification::CODE_MINUTES * 60]], 202);
+        }
 
         return $this->sendLoginCode($this->pendingUser($request), $verification, resend: true);
     }
@@ -252,6 +312,10 @@ final class AuthController extends Controller
         $pending = $request->session()->get(self::PENDING);
         $user = is_array($pending) && (now()->timestamp - (int) ($pending['at'] ?? 0)) <= 900 ? User::query()->find($pending['id'] ?? null) : null;
 
+        if (is_array($pending) && ($pending['passwordless'] ?? false) && ($pending['id'] ?? null) === null && (now()->timestamp - (int) ($pending['at'] ?? 0)) <= 900) {
+            // A code asked for an address with no account: it fails like a wrong code.
+            throw ValidationException::withMessages(['code' => 'That code is not correct. Check the latest email and try again.']);
+        }
         if (! $user instanceof User || $user->isDisabled()) {
             throw ValidationException::withMessages(['code' => 'Your sign-in has expired. Enter your email and password again.']);
         }

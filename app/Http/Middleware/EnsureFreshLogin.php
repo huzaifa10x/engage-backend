@@ -14,7 +14,8 @@ use Symfony\Component\HttpFoundation\Response;
 /**
  * The 24-hour sign-in window, enforced on the server: a browser session is valid for the window
  * since its last one-time code (30 days on a device the person chose to remember). After that it is signed out (401) and the next sign-in asks for
- * a new code. Token-authenticated requests (no browser session) are not affected.
+ * a new code. The installed phone app stays signed in for 90 days, on one phone at a time.
+ * Token-authenticated requests (no browser session) are not affected.
  */
 final class EnsureFreshLogin
 {
@@ -30,13 +31,38 @@ final class EnsureFreshLogin
             return response()->json(['error' => ['code' => 'session_expired', 'message' => 'You were signed out. Please sign in again.']], 401);
         }
 
-        if (! LoginVerification::enabled() || $user === null) {
+        if ($user === null) {
+            return $next($request);
+        }
+
+        // The installed app on one phone at a time: signing in to the app on another phone ends this one.
+        $device = $request->session()->get(LoginVerification::SESSION_DEVICE);
+        if (is_string($device) && $device !== $user->getAttribute('app_device_id')) {
+            Auth::guard('web')->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return response()->json(['error' => [
+                'code' => 'app_signed_in_elsewhere',
+                'message' => 'You signed in to the engageX app on another phone, so it was signed out here. Sign in again to use it on this phone.',
+            ]], 401);
+        }
+
+        if (! LoginVerification::enabled()) {
             return $next($request);
         }
 
         $session = $request->session();
         $at = $session->get(LoginVerification::SESSION_STAMP);
         if (! is_numeric($at)) {
+            // The session itself expired and "keep me signed in" brought the person back: the
+            // browser's (or installed app's) verified sign-in carries on, with its own end date.
+            $trusted = app(LoginVerification::class)->trusted($request, $user);
+            if ($trusted !== null) {
+                LoginVerification::stamp($request, $trusted['at'], $trusted['remembered'] ? $trusted['until'] : null, $trusted['device']);
+
+                return $next($request);
+            }
             // A session from before this feature (or an admin impersonation): its window starts now.
             $session->put(LoginVerification::SESSION_STAMP, now()->timestamp);
 

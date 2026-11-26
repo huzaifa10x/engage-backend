@@ -87,6 +87,7 @@ Route::middleware('throttle:auth')->prefix('auth')->name('auth.')->group(functio
     Route::post('register', [AuthController::class, 'register'])->name('register');
     Route::post('login', [AuthController::class, 'login'])->name('login');
     Route::post('login/verify', [AuthController::class, 'loginVerify'])->name('login.verify');
+    Route::post('login/code', [AuthController::class, 'loginCode'])->name('login.code');
     Route::post('login/two-factor', [AuthController::class, 'loginTwoFactor'])->name('login.two-factor');
     Route::post('login/two-factor/email', [AuthController::class, 'loginTwoFactorEmail'])->name('login.two-factor.email');
     Route::post('login/resend', [AuthController::class, 'loginResend'])->name('login.resend');

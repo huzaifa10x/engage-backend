@@ -371,13 +371,13 @@ final class ConversationController extends Controller
                 if ($claimed === 0) {
                     $current = Conversation::query()->whereKey($conversation->id)->value('assigned_membership_id');
                     $holder = $current !== null ? (TenantMembership::query()->with('user')->find($current)?->user->name ?? 'A teammate') : null;
-                    abort(response()->json([
+                    abort(response()->json(['error' => [
+                        'code' => 'assignment_changed',
                         'message' => $holder !== null
                             ? "{$holder} has just been given this chat. Open it to reassign if you need to."
                             : 'This chat was just moved to Unassigned. Refresh and try again.',
-                        'code' => 'assignment_changed',
-                        'assigned_membership_id' => $current,
-                    ], 409));
+                        'details' => ['assigned_membership_id' => $current],
+                    ]], 409));
                 }
             }
             $conversation->assigned_membership_id = $data['assigned_membership_id'];
