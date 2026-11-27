@@ -112,10 +112,13 @@ final class ReplyAlertPresetsTest extends TestCase
     public function test_the_first_reply_of_a_conversation_carries_the_agents_name(): void
     {
         $c = $this->customer();
+        // The agent sees the line before sending (audit APP-023): exactly what the customer will get.
+        $name = $this->number->verified_name ?: 'Desert Drive';
+        $this->getJson("/api/v1/conversations/{$c->id}")->assertJsonPath('data.intro_preview', "Waqar here from {$name} 👋");
         $this->postJson("/api/v1/conversations/{$c->id}/messages", ['type' => 'text', 'body' => 'Yes, it is free.'])->assertStatus(202);
+        $this->getJson("/api/v1/conversations/{$c->id}")->assertJsonPath('data.intro_preview', null);
         $this->postJson("/api/v1/conversations/{$c->id}/messages", ['type' => 'text', 'body' => 'Shall I book it?'])->assertStatus(202);
 
-        $name = $this->number->verified_name ?: 'Desert Drive';
         $this->assertSame(["Waqar here from {$name} 👋\nYes, it is free.", 'Shall I book it?'], $this->texts());
 
         // Switched off: replies go as typed.

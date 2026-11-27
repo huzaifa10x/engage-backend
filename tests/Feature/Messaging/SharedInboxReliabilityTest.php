@@ -116,4 +116,22 @@ final class SharedInboxReliabilityTest extends TestCase
         $this->postJson("/api/v1/conversations/{$c->id}/messages/{$id}/retry")->assertStatus(202);
         $this->assertSame(MessageStatus::Accepted, $this->tenantContext()->run($this->tenant, fn () => Message::query()->findOrFail($id))->status);
     }
+
+    public function test_an_answered_chat_has_the_same_state_in_the_list_search_and_counts(): void
+    {
+        $c = $this->customer();
+        $this->getJson('/api/v1/conversations?state=needs_reply')->assertJsonCount(1, 'data');
+        $this->getJson('/api/v1/conversations/counts')->assertJsonPath('data.needs_reply', 1);
+
+        // A human reply that WhatsApp accepted answers the customer.
+        $this->postJson("/api/v1/conversations/{$c->id}/messages", ['type' => 'text', 'body' => 'Here you go'])->assertStatus(202);
+
+        $this->getJson('/api/v1/conversations?state=needs_reply')->assertJsonCount(0, 'data');
+        $this->getJson('/api/v1/conversations/counts')->assertJsonPath('data.needs_reply', 0);
+        $this->getJson('/api/v1/dashboard/summary')->assertJsonPath('data.needs_reply', 0);
+        $phone = $this->tenantContext()->run($this->tenant, fn () => $c->contact()->value('wa_id'));
+        // Search covers every queue and reports the same state as everywhere else.
+        $this->getJson('/api/v1/conversations?state=needs_reply&q='.$phone)->assertJsonCount(1, 'data')->assertJsonPath('data.0.state', 'waiting');
+        $this->getJson("/api/v1/conversations/{$c->id}")->assertJsonPath('data.state', 'waiting');
+    }
 }

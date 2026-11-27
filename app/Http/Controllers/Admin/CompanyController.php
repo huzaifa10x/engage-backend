@@ -102,7 +102,7 @@ final class CompanyController extends Controller
         $overrides = TenantEntitlementOverride::query()->where('tenant_id', $tenant->id)->with('feature')->get()
             ->keyBy(fn (TenantEntitlementOverride $o) => $o->feature?->key);
 
-        $features = collect(FeatureKey::cases())->map(function (FeatureKey $key) use ($set, $planValues, $overrides) {
+        $features = collect(FeatureKey::offeredCases())->map(function (FeatureKey $key) use ($set, $planValues, $overrides) {
             $plan = $planValues->get($key->value);
             $override = $overrides->get($key->value);
             $effective = $set->get($key);

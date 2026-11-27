@@ -38,7 +38,7 @@ final class PublicSiteController extends Controller
                 $rows = PlanVersionFeature::query()->where('plan_version_id', $version->id)->with('feature')->get()->keyBy(fn (PlanVersionFeature $r) => $r->feature?->key);
 
                 $features = [];
-                foreach (FeatureKey::cases() as $key) {
+                foreach (FeatureKey::offeredCases() as $key) {
                     $row = $rows[$key->value] ?? null;
                     $type = $key->type()->value;
                     $counted = in_array($type, ['limit', 'metered'], true);

@@ -20,6 +20,7 @@ use App\Domain\Messaging\Models\Message;
 use App\Domain\Messaging\Services\InboxCounts;
 use App\Domain\Messaging\Services\InboxHealth;
 use App\Domain\Messaging\Services\InboxTools;
+use App\Domain\Messaging\Services\ReplyPromise;
 use App\Domain\Messaging\Services\ReplyState;
 use App\Domain\Messaging\Services\Resolutions;
 use App\Domain\Tenancy\Models\TenantMembership;
@@ -233,6 +234,9 @@ final class ConversationController extends Controller
 
         $conversation->setAttribute('last_sender', Message::query()->where('conversation_id', $conversation->id)->orderByDesc('created_at')
             ->selectRaw("concat(origin, ':', coalesce(sent_by_membership_id::text, '')) AS s")->value('s'));
+
+        // What the first reply will start with, shown above the reply box before sending.
+        $conversation->setAttribute('intro_preview', ReplyPromise::introLine($conversation, $this->membership()));
 
         return ConversationResource::make($conversation->load(['contact.stage', 'phoneNumber']));
     }

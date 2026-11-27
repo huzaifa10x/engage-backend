@@ -129,7 +129,7 @@ final class PlanController extends Controller
             'features.*.limit' => ['nullable', 'integer', 'min:0', 'max:2000000000'],
             'features.*.config' => ['nullable', 'array'],
         ]);
-        $data['features'] = array_intersect_key($data['features'], array_flip(array_map(fn (FeatureKey $k) => $k->value, FeatureKey::cases())));
+        $data['features'] = array_intersect_key($data['features'], array_flip(array_map(fn (FeatureKey $k) => $k->value, FeatureKey::offeredCases())));
 
         return $data;
     }
@@ -154,6 +154,6 @@ final class PlanController extends Controller
                 'unlimited' => $quantified && $value !== null && $value->enabled && $value->limit_value === null,
                 'config' => (object) ($value->config ?? []),
             ];
-        }, FeatureKey::cases());
+        }, FeatureKey::offeredCases());
     }
 }

@@ -174,9 +174,10 @@ final class PlanCatalogSeeder extends Seeder
                 ['level' => 'priority', 'sla' => '4 business hours'],
                 ['level' => 'dedicated_csm', 'sla' => 'custom'],
             ],
-            'sso' => [false, false, false, false, true],
-            'white_label' => [false, false, false, false, true],
-            'sub_accounts' => [false, false, false, false, true],
+            // Not offered (pilot decision): kept in the catalogue, switched off on every plan.
+            'sso' => [false, false, false, false, false],
+            'white_label' => [false, false, false, false, false],
+            'sub_accounts' => [false, false, false, false, false],
         ];
 
         $column = fn (int $i): array => array_map(fn (array $row) => $row[$i], $matrix);
@@ -191,7 +192,7 @@ final class PlanCatalogSeeder extends Seeder
             ['key' => 'pro', 'name' => 'Pro', 'monthly' => 13900, 'features' => $column(3),
                 'description' => 'Multi-number operation needing API, webhooks, ticketing, and advanced analytics.'],
             ['key' => 'enterprise', 'name' => 'Enterprise', 'monthly' => null, 'features' => $column(4),
-                'description' => 'Large orgs and agencies needing SSO/SAML, custom retention, SLA, and a dedicated CSM.'],
+                'description' => 'Large orgs and agencies needing custom retention, an SLA and a dedicated account manager.'],
         ];
     }
 }

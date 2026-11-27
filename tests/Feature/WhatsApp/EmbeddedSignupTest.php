@@ -213,7 +213,7 @@ final class EmbeddedSignupTest extends TestCase
         $this->postWebhook($this->webhookBody('messages', $this->inboundValue()))->assertOk();
         $this->actingAsMember($oldOwner);
         $wabaRow = $this->getJson('/api/v1/whatsapp/accounts')->json('data.0.id');
-        $this->deleteJson("/api/v1/whatsapp/accounts/{$wabaRow}")->assertSuccessful();
+        $this->deleteJson("/api/v1/whatsapp/accounts/{$wabaRow}", ['confirm' => substr((string) preg_replace('/\D/', '', $oldNumber->display_phone_number), -4)])->assertSuccessful();
 
         // The same business now connects it to a new workspace: no "already connected to another workspace".
         $this->actingAsMember($this->owner());
@@ -440,7 +440,10 @@ final class EmbeddedSignupTest extends TestCase
         $number = $this->connectNumber($this->tenant);
         $this->actingAsMember($owner);
 
-        $this->deleteJson("/api/v1/whatsapp/accounts/{$number->waba_account_id}")->assertNoContent();
+        // Never one click: the last 4 digits are required (audit APP-013).
+        $this->deleteJson("/api/v1/whatsapp/accounts/{$number->waba_account_id}")->assertStatus(422)->assertJsonPath('error.details.fields.confirm.0', 'Type the last 4 digits of the number to confirm.');
+        $this->deleteJson("/api/v1/whatsapp/accounts/{$number->waba_account_id}", ['confirm' => '0000'])->assertStatus(422);
+        $this->deleteJson("/api/v1/whatsapp/accounts/{$number->waba_account_id}", ['confirm' => substr((string) preg_replace('/\D/', '', $number->display_phone_number), -4)])->assertNoContent();
 
         $this->assertSame(PhoneNumberStatus::Disconnected, $this->tenantContext()->bypass(fn () => PhoneNumber::query()->find($number->id))?->status);
         $this->assertTrue($this->tenantContext()->bypass(fn () => DB::table('secrets')->whereNotNull('destroyed_at')->where('ciphertext', '')->exists()));

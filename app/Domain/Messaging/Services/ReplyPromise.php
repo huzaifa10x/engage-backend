@@ -4,9 +4,15 @@ declare(strict_types=1);
 
 namespace App\Domain\Messaging\Services;
 
+use App\Domain\Messaging\Enums\MessageOrigin;
 use App\Domain\Messaging\Models\Conversation;
+use App\Domain\Messaging\Models\Message;
 use App\Domain\Tenancy\Models\Tenant;
+use App\Domain\Tenancy\Models\TenantMembership;
+use App\Domain\Tenancy\TenantContext;
+use App\Domain\WhatsApp\Models\PhoneNumber;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 
 /**
  * The reply promise (Inbox & CRM 3.3, A3, the pilot kit), tenants.settings.promise:
@@ -125,5 +131,23 @@ final class ReplyPromise
             // The inbox colours the wait: amber from the first step, red from the second (Fast: 5 and 15).
             'alert_minutes' => array_values(array_map(fn (array $step) => $step['minutes'], $settings['ladder'])),
         ];
+    }
+
+    /**
+     * The line the first reply of a conversation starts with ("Sara here from Desert Drive 👋"), or
+     * null when the intro is off or the team already replied in this conversation.
+     */
+    public static function introLine(Conversation $conversation, TenantMembership $sender, ?PhoneNumber $number = null): ?string
+    {
+        $tenant = app(TenantContext::class)->tenant();
+        if (! self::settings($tenant)['intro']
+            || Message::query()->where('conversation_id', $conversation->id)->where('origin', MessageOrigin::Agent->value)->exists()) {
+            return null;
+        }
+        $first = (string) Str::of((string) $sender->user()->value('name'))->trim()->before(' ');
+        $number ??= PhoneNumber::query()->find($conversation->phone_number_id);
+        $business = $number?->verified_name ?: $tenant->name;
+
+        return $first !== '' ? "{$first} here from {$business} 👋" : null;
     }
 }

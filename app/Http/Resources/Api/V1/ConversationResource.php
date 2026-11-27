@@ -56,6 +56,8 @@ final class ConversationResource extends JsonResource
             'ad_lead' => (bool) $this->getAttribute('ad_lead'),
             // The reply promise (3.3, A3): business time waited and left on the limit, paused outside hours.
             'promise' => ReplyPromise::clock(app(TenantContext::class)->tenantOrNull(), $this->resource),
+            // One conversation only: the name intro the next (first) reply will start with, or null.
+            'intro_preview' => $this->when($this->resource->offsetExists('intro_preview'), fn () => $this->resource->getAttribute('intro_preview')),
             // Closed: who resolved it, when and why (3.5).
             'resolution' => $this->status === ConversationStatus::Closed ? (($r = Resolutions::current((string) $this->id)) !== null ? Resolutions::present($r, self::memberNames($request)) : null) : null,
             // Who wrote the last message, for the card's "You:", "Auto:", "Sara:" prefix (3.5).

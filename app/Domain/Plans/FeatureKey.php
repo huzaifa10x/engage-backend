@@ -151,4 +151,20 @@ enum FeatureKey: string
             self::SubAccounts => 'Reseller sub-accounts',
         };
     }
+
+    /**
+     * Features that are not offered (decided for the pilot): SSO / SAML, white-label and reseller
+     * sub-accounts. They stay in the catalogue so old plan versions still load, but no plan list,
+     * comparison or plan editor shows them.
+     */
+    public function offered(): bool
+    {
+        return ! in_array($this, [self::Sso, self::WhiteLabel, self::SubAccounts], true);
+    }
+
+    /** @return list<self> */
+    public static function offeredCases(): array
+    {
+        return array_values(array_filter(self::cases(), fn (self $k) => $k->offered()));
+    }
 }

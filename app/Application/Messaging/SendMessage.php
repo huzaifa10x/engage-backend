@@ -66,13 +66,12 @@ final class SendMessage
             }
         }
         // The agent's name in the first reply of each conversation (reply alerts: "Sara here from Desert Drive 👋").
-        if ($origin === MessageOrigin::Agent && $sender !== null && $data['type'] === 'text' && trim((string) ($data['body'] ?? '')) !== ''
-            && ReplyPromise::settings(app(TenantContext::class)->tenant())['intro']
-            && ! Message::query()->where('conversation_id', $conversation->id)->where('origin', MessageOrigin::Agent->value)->exists()) {
-            $first = (string) Str::of((string) $sender->user()->value('name'))->trim()->before(' ');
-            $business = $number->verified_name ?: app(TenantContext::class)->tenant()->name;
-            if ($first !== '' && ! Str::startsWith(Str::lower((string) $data['body']), Str::lower($first))) {
-                $data['body'] = "{$first} here from {$business} 👋\n".$data['body'];
+        // The inbox shows the same line above the reply box before the agent sends (ReplyPromise::introLine).
+        if ($origin === MessageOrigin::Agent && $sender !== null && $data['type'] === 'text' && trim((string) ($data['body'] ?? '')) !== '') {
+            $intro = ReplyPromise::introLine($conversation, $sender, $number);
+            $first = $intro !== null ? (string) Str::of($intro)->before(' here from') : '';
+            if ($intro !== null && ! Str::startsWith(Str::lower((string) $data['body']), Str::lower($first))) {
+                $data['body'] = "{$intro}\n".$data['body'];
             }
         }
         $freeForm = in_array($data['type'], self::FREE_FORM, true);

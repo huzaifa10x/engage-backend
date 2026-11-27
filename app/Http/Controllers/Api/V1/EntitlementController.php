@@ -19,7 +19,7 @@ final class EntitlementController extends Controller
         $set = $entitlements->for($tenant);
 
         $features = [];
-        foreach (FeatureKey::cases() as $key) {
+        foreach (FeatureKey::offeredCases() as $key) {
             $entitlement = $set->get($key);
             $features[$key->value] = [
                 'label' => $key->label(),

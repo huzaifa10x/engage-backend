@@ -14,6 +14,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
+use Illuminate\Validation\ValidationException;
 
 /** Channels screen: connected WhatsApp Business Accounts and their numbers. */
 final class AccountController extends Controller
@@ -58,7 +59,17 @@ final class AccountController extends Controller
 
     public function destroy(Request $request, WabaAccount $account, ManageChannels $channels): Response
     {
-        $data = $request->validate(['reason' => ['nullable', 'string', 'max:500']]);
+        $data = $request->validate(['reason' => ['nullable', 'string', 'max:500'], 'confirm' => ['nullable', 'string', 'max:20']]);
+        // Audit APP-013: never one click. The person types the last 4 digits of one of the account's
+        // numbers (or "disconnect" when it has none) before the numbers stop reaching engageX.
+        $answers = $account->phoneNumbers()->pluck('display_phone_number')
+            ->map(fn ($n) => substr((string) preg_replace('/\D/', '', (string) $n), -4))->filter()->values();
+        $typed = strtolower(trim((string) ($data['confirm'] ?? '')));
+        if ($answers->isEmpty() ? $typed !== 'disconnect' : ! $answers->contains($typed)) {
+            throw ValidationException::withMessages(['confirm' => $answers->isEmpty()
+                ? 'Type "disconnect" to confirm.'
+                : 'Type the last 4 digits of the number to confirm.']);
+        }
         $channels->disconnect($account, $data['reason'] ?? 'Disconnected by workspace');
 
         return response()->noContent();
