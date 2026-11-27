@@ -10,7 +10,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-/** For the 10X Engage team only (ENGAGE_ALERTS_EMAIL): something to look into, never sent to clients. */
+/** For the engageX team only (ENGAGE_ALERTS_EMAIL): something to look into, never sent to clients. */
 final class InternalAlertNotification extends Notification implements ShouldQueue
 {
     use Queueable;
@@ -30,7 +30,7 @@ final class InternalAlertNotification extends Notification implements ShouldQueu
 
     public function toMail(object $notifiable): MailMessage
     {
-        $mail = (new MailMessage)->subject('[10X Engage] '.$this->subject)->greeting($this->subject)->line($this->summary);
+        $mail = (new MailMessage)->subject('[engageX] '.$this->subject)->greeting($this->subject)->line($this->summary);
         $mail->line('Details: '.json_encode($this->context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
         return $mail->action('Open Super Admin', rtrim((string) config('engage.admin_url', config('app.url')), '/').'/admin/numbers');

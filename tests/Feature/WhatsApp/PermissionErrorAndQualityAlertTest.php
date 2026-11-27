@@ -85,7 +85,7 @@ final class PermissionErrorAndQualityAlertTest extends TestCase
             ->assertJsonPath('error.details.meta_code', 200)
             ->assertJsonPath('error.details.meta_subcode', 2494013)
             ->json('error.message');
-        $this->assertStringStartsWith('Meta hasn’t given 10X Engage permission to manage this WhatsApp account. Reconnect it', $error);
+        $this->assertStringStartsWith('Meta hasn’t given engageX permission to manage this WhatsApp account. Reconnect it', $error);
         $this->assertStringNotContainsString('#200', $error, 'Meta’s raw text is not shown');
         $this->assertStringNotContainsString('OAuthException', $error);
 

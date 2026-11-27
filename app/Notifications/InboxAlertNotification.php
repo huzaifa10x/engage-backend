@@ -41,6 +41,6 @@ final class InboxAlertNotification extends Notification implements HasEmailCateg
             $mail->line("“{$this->body}”");
         }
 
-        return $mail->action('Open the conversation', $this->url)->line('You get this email because of your role in a 10X Engage workspace.');
+        return $mail->action('Open the conversation', $this->url)->line('You get this email because of your role in a engageX workspace.');
     }
 }

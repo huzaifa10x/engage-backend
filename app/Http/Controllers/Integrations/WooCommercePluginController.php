@@ -24,7 +24,7 @@ use Throwable;
 use ZipArchive;
 
 /**
- * What the "10X Engage for WooCommerce" plugin calls. Not signed in by a person: connect proves
+ * What the "engageX for WooCommerce" plugin calls. Not signed in by a person: connect proves
  * itself with the one-time workspace key, everything after that with the store's signature.
  *
  *  POST woocommerce/plugin/connect          key + store address → store ID, signing secret, tracker
@@ -170,7 +170,7 @@ final class WooCommercePluginController extends Controller
         /** @var ?Integration $integration */
         $integration = $this->context->bypass(fn () => Integration::query()->where('provider', Integration::WOOCOMMERCE)->where('public_id', $publicId)->first());
         if ($integration === null || ! $integration->viaPlugin()) {
-            return response()->json(['message' => 'This store is not connected to 10X Engage. Connect it again with a new key.'], 410);
+            return response()->json(['message' => 'This store is not connected to engageX. Connect it again with a new key.'], 410);
         }
         if (! $this->plugin->verify($integration, $request)) {
             return response()->json(['message' => 'Invalid or expired signature.'], 401);

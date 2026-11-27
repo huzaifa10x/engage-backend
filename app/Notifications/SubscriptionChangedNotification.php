@@ -66,7 +66,7 @@ final class SubscriptionChangedNotification extends Notification implements HasE
         $on = $this->date !== null ? " on {$this->date}" : '';
 
         return match ($this->kind) {
-            'started' => $mail->subject("Welcome to 10X Engage {$this->plan}")
+            'started' => $mail->subject("Welcome to engageX {$this->plan}")
                 ->greeting("You're on {$this->plan}")
                 ->line("{$this->workspace} is now on {$this->plan}. Chatbots, automations, reply alerts, campaigns and your extra team seats are switched on.")
                 ->line($this->date !== null ? "Your plan renews automatically on {$this->date}." : 'Your plan renews automatically.')
@@ -82,21 +82,21 @@ final class SubscriptionChangedNotification extends Notification implements HasE
                 ->line("{$this->workspace} stays on ".($this->from ?? 'its current plan')." until the end of the period you have paid for, then moves to {$this->plan}{$on}.")
                 ->line('Nothing is refunded and nothing more is charged until then.')
                 ->action('View billing', $billing),
-            'cancelled' => $mail->subject('Your 10X Engage plan will not renew')
+            'cancelled' => $mail->subject('Your engageX plan will not renew')
                 ->greeting('Your plan is cancelled')
                 ->line("{$this->workspace} keeps {$this->plan} until the end of the period you have paid for".($this->date !== null ? ", {$this->date}" : '').'. It will not renew, and nothing more is charged.')
                 ->line('After that the workspace moves to the Free plan. Your chats, contacts and settings stay, and you can upgrade again at any time.')
                 ->action('View billing', $billing),
-            'resumed' => $mail->subject('Your 10X Engage plan will renew')
+            'resumed' => $mail->subject('Your engageX plan will renew')
                 ->greeting('Your plan will renew')
                 ->line("{$this->workspace} stays on {$this->plan}. It renews automatically".($this->date !== null ? " on {$this->date}" : '').'.')
                 ->action('View billing', $billing),
-            'paused' => $mail->error()->subject('Paid features are paused on 10X Engage')
+            'paused' => $mail->error()->subject('Paid features are paused on engageX')
                 ->greeting('Paid features are paused')
                 ->line("The renewal payment for {$this->workspace} did not go through, so chatbots, automations, reply alerts, campaigns and extra team seats are paused. Sending and receiving messages keep working.")
                 ->line('Stripe has emailed you about the payment. Update your card and the unpaid invoice is paid straight away: everything comes back within seconds.')
                 ->action('Update card and pay', $billing),
-            'restored' => $mail->subject('Paid features are back on 10X Engage')
+            'restored' => $mail->subject('Paid features are back on engageX')
                 ->greeting('Everything is back on')
                 ->line("Thank you: the payment for {$this->workspace} went through and {$this->plan} is fully active again.")
                 ->action('View billing', $billing),

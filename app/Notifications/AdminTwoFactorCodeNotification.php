@@ -21,9 +21,9 @@ final class AdminTwoFactorCodeNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject("{$this->code} is your 10X Engage admin code")
+            ->subject("{$this->code} is your engageX admin code")
             ->greeting('Your verification code')
-            ->line("Use this code to {$this->purpose} to the 10X Engage admin panel:")
+            ->line("Use this code to {$this->purpose} to the engageX admin panel:")
             ->line("**{$this->code}**")
             ->line("It expires in {$this->minutes} minutes and can be used once.")
             ->line('If you did not request this, someone knows your password. Change it and tell your platform owner.');

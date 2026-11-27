@@ -55,7 +55,7 @@ class WooCommerceConnector
         $webhookIds = [];
         foreach (self::TOPICS as $topic => $label) {
             $response = $this->client($consumerKey, $consumerSecret)->post($base.'/wp-json/wc/v3/webhooks', [
-                'name' => '10X Engage – '.$label, 'topic' => $topic, 'delivery_url' => $this->deliveryUrl($publicId), 'secret' => $webhookSecret, 'status' => 'active',
+                'name' => 'engageX – '.$label, 'topic' => $topic, 'delivery_url' => $this->deliveryUrl($publicId), 'secret' => $webhookSecret, 'status' => 'active',
             ]);
             if (! $response->successful() || ! is_numeric($response->json('id'))) {
                 $this->remove($base, $consumerKey, $consumerSecret, $webhookIds);

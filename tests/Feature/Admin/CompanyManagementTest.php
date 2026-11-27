@@ -38,7 +38,7 @@ final class CompanyManagementTest extends TestCase
             ->where('company.name', 'Nova Fitness')
             ->where('subscription.plan_key', 'growth')
             ->has('members', 1)
-            ->has('features', count(FeatureKey::cases())));
+            ->has('features', count(FeatureKey::offeredCases())));
     }
 
     public function test_change_plan_updates_entitlements_and_is_audited_as_the_admin(): void

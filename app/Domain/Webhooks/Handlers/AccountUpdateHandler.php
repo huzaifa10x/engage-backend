@@ -59,7 +59,7 @@ final class AccountUpdateHandler implements WebhookHandler
 
         switch ($event) {
             // The customer took our access away, or took the number off the platform:
-            //   PARTNER_REMOVED          10X Engage removed as a partner (Meta Business Settings), API or coexistence
+            //   PARTNER_REMOVED          engageX removed as a partner (Meta Business Settings), API or coexistence
             //   PARTNER_APP_UNINSTALLED  our app removed from the business
             //   ACCOUNT_OFFBOARDED       coexistence: disconnected inside the WhatsApp Business app
             //   ACCOUNT_DELETED          the WhatsApp Business account itself was deleted

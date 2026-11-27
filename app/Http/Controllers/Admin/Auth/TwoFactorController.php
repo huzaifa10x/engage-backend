@@ -119,7 +119,7 @@ final class TwoFactorController extends Controller
         return Inertia::render('auth/TwoFactorSetup', [
             'email' => $admin->email,
             'secret' => trim(chunk_split($secret, 4, ' ')),
-            'otpauth_uri' => Totp::provisioningUri($secret, $admin->email, '10X Engage Admin'),
+            'otpauth_uri' => Totp::provisioningUri($secret, $admin->email, 'engageX Admin'),
             'email_pending' => $request->session()->get(self::SETUP_EMAIL) === true,
         ]);
     }

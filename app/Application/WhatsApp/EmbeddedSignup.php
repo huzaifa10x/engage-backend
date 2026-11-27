@@ -185,7 +185,7 @@ final class EmbeddedSignup
         // 2. The token must actually grant this WABA — never trust asset IDs from the browser.
         if (($debug['is_valid'] ?? false) !== true || ! $this->grantsWaba($debug, $data['waba_id'])) {
             $attempt->fail('Business token does not grant access to the submitted WABA.', 'waba_not_granted');
-            throw WhatsappException::signupInvalid('The WhatsApp account you selected was not shared with 10X Engage. Start again and select it in the popup.');
+            throw WhatsappException::signupInvalid('The WhatsApp account you selected was not shared with engageX. Start again and select it in the popup.');
         }
 
         // 3. The WABA must not still be subscribed to another provider's app. Checked server-side
@@ -331,7 +331,7 @@ final class EmbeddedSignup
         $sameApp = false;
 
         // Our own Meta app is already subscribed, but this installation has never connected the
-        // account: another 10X Engage environment sharing the app (production / staging) owns it.
+        // account: another engageX environment sharing the app (production / staging) owns it.
         if ($conflicts === [] && config('engage.meta.block_other_environments', true) && ! $this->knownHere($wabaId)) {
             $conflicts = array_values(array_filter($apps, fn (array $app) => $app['id'] === $this->graph->appId()));
             $sameApp = $conflicts !== [];

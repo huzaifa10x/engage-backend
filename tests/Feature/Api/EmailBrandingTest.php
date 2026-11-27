@@ -19,7 +19,7 @@ final class EmailBrandingTest extends TestCase
 
         $this->assertStringContainsString('482913', $html);                       // content untouched
         $this->assertStringContainsString('/brand/engage-logo-email.png', $html); // Engage logo instead of the Laravel logo
-        $this->assertStringContainsString('alt="10X Engage"', $html);             // readable when images are blocked
+        $this->assertStringContainsString('alt="engageX"', $html);             // readable when images are blocked
         $this->assertStringNotContainsString('laravel.com/img', $html);
         $this->assertStringContainsString('border-top: 4px solid #a9e324', $html); // lime accent on the card
         $this->assertStringContainsString('10X Digital', $html);                  // branded footer

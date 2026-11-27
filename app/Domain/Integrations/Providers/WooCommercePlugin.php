@@ -21,7 +21,7 @@ use RuntimeException;
 use Throwable;
 
 /**
- * The "10X Engage for WooCommerce" plugin (Engagement Plan v4 §V.1).
+ * The "engageX for WooCommerce" plugin (Engagement Plan v4 §V.1).
  *
  * Connecting is one screen: Integrations gives a workspace key (valid 7 days, used once); the store
  * owner pastes it into the plugin, which calls connect() with the store's address. We answer with
@@ -76,7 +76,7 @@ final class WooCommercePlugin
      */
     public function connect(string $key, string $siteUrl, array $meta): array
     {
-        $decoded = self::decode($key) ?? throw new RuntimeException('This is not a 10X Engage workspace key. Copy it again from Integrations → WooCommerce.');
+        $decoded = self::decode($key) ?? throw new RuntimeException('This is not a engageX workspace key. Copy it again from Integrations → WooCommerce.');
         $host = Sites::normalizeDomain($siteUrl) ?? throw new RuntimeException('The store address could not be read. Check Settings → General → Site Address in WordPress.');
 
         /** @var ?Integration $integration */
@@ -100,7 +100,7 @@ final class WooCommercePlugin
             /** @var ?Integration $same */
             $same = $this->context->bypass(fn () => Integration::query()->where('provider', Integration::WOOCOMMERCE)->whereIn('external_id', [$bare, 'www.'.$bare])->whereKeyNot($integration->id)->first());
             if ($same !== null && $same->tenant_id !== $integration->tenant_id) {
-                throw new RuntimeException('This store is connected to another 10X Engage workspace. Disconnect it there first.');
+                throw new RuntimeException('This store is connected to another engageX workspace. Disconnect it there first.');
             }
             if ($same !== null) {
                 $integration->delete();

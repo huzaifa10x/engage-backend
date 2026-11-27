@@ -79,7 +79,7 @@ final class ReconnectWebhooksAndRegistrationTest extends TestCase
         $this->assertFalse($this->waba()->is_subscribed_to_webhooks);
 
         // Now Meta lists us.
-        $this->apps[] = ['id' => '1234567890', 'name' => '10X Engage'];
+        $this->apps[] = ['id' => '1234567890', 'name' => 'engageX'];
         $this->calls = [];
         $this->postJson("/api/v1/whatsapp/accounts/{$waba->id}/webhooks")->assertOk()->assertJsonPath('data.is_subscribed_to_webhooks', true);
         $this->assertSame(['POST /v27.0/102290129340398/subscribed_apps', 'GET /v27.0/102290129340398/subscribed_apps'], array_map(fn ($c) => preg_replace('#/v\d+\.\d+/#', '/v27.0/', $c), $this->calls));

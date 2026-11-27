@@ -1,4 +1,4 @@
-/*! 10X Engage website tracker v1.0.0 — measures taps on WhatsApp buttons. No cookies, no visitor IDs. */
+/*! engageX website tracker v1.0.0 — measures taps on WhatsApp buttons. No cookies, no visitor IDs. */
 /* Source of resources/growth/tracker.min.js (served at /sdk/v1/e.min.js). After a change:
    npx terser@5.31.0 resources/growth/tracker.js -c -m --comments '/^!/' -o resources/growth/tracker.min.js */
 (function (w, d) {

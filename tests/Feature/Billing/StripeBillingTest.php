@@ -199,7 +199,7 @@ final class StripeBillingTest extends TestCase
             'subtotal' => 7900, 'tax' => 395, 'total' => 8295, 'amount_paid' => 0, 'created' => now()->timestamp, 'attempt_count' => 1,
             'hosted_invoice_url' => 'https://invoice.stripe.com/i/1', 'invoice_pdf' => 'https://pay.stripe.com/invoice/1/pdf?s=old',
             'status_transitions' => ['finalized_at' => now()->timestamp, 'paid_at' => null],
-            'lines' => ['data' => [['description' => '1 × 10X Engage Growth', 'period' => ['start' => now()->timestamp, 'end' => now()->addMonth()->timestamp]]]],
+            'lines' => ['data' => [['description' => '1 × engageX Growth', 'period' => ['start' => now()->timestamp, 'end' => now()->addMonth()->timestamp]]]],
             'charge' => ['id' => 'ch_1', 'amount_refunded' => 0],
         ];
     }

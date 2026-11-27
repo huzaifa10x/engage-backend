@@ -22,7 +22,7 @@ final class EnsureEmailVerified
         if ($user !== null && $user->getAttribute('email_verified_at') === null) {
             return response()->json(['error' => [
                 'code' => 'email_unverified',
-                'message' => 'Verify your email address to use 10X Engage. Enter the code we emailed you.',
+                'message' => 'Verify your email address to use engageX. Enter the code we emailed you.',
             ]], 403);
         }
 

@@ -14,7 +14,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Erases what 10X Engage holds about a Facebook Login user (the person who ran Embedded
+ * Erases what engageX holds about a Facebook Login user (the person who ran Embedded
  * Signup): the app-scoped user id and raw session data on signup attempts. Business assets
  * (WABA, numbers, business tokens) belong to the business, not the person, and are governed
  * by PARTNER_REMOVED / workspace deletion instead. End-customer WhatsApp history is out of scope.

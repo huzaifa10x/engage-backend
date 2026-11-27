@@ -124,7 +124,7 @@ return [
     |
     | Every system email (verification codes, password reset, invitations, WhatsApp
     | number and template notices, receipts, admin 2FA codes) is rendered with the
-    | 10X Engage brand theme in resources/views/vendor/mail.
+    | engageX brand theme in resources/views/vendor/mail.
     |
     */
 

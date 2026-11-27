@@ -137,7 +137,7 @@ class ShopifyConnector
         }
         $elsewhere = $this->context->bypass(fn () => Integration::query()->where('provider', Integration::SHOPIFY)->where('external_id', $shop)->where('tenant_id', '!=', $tenant->id)->exists());
         if ($elsewhere) {
-            throw new RuntimeException('This store is already connected to another 10X Engage workspace. Disconnect it there first.');
+            throw new RuntimeException('This store is already connected to another engageX workspace. Disconnect it there first.');
         }
 
         return $this->context->run($tenant, function () use ($shop, $name, $note, $token): Integration {

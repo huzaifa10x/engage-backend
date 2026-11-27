@@ -93,7 +93,7 @@ final class ManageChannels
     /**
      * "Reconnect webhooks" on Channels: subscribe our app to the account's webhooks again
      * (POST /<WABA_ID>/subscribed_apps) and check Meta actually lists it. Without the subscription
-     * no message, status or quality update reaches 10X Engage.
+     * no message, status or quality update reaches engageX.
      */
     public function reconnectWebhooks(WabaAccount $waba): WabaAccount
     {
@@ -109,7 +109,7 @@ final class ManageChannels
         $waba->forceFill(['is_subscribed_to_webhooks' => $subscribed])->save();
         $this->audit->record($subscribed ? 'whatsapp.webhooks_reconnected' : 'whatsapp.webhooks_reconnect_failed', $waba);
         if (! $subscribed) {
-            throw WhatsappException::meta('Meta accepted the request but doesn’t list 10X Engage on this account yet. Try again in a few minutes.', null, null);
+            throw WhatsappException::meta('Meta accepted the request but doesn’t list engageX on this account yet. Try again in a few minutes.', null, null);
         }
 
         return $waba->refresh()->load('phoneNumbers');

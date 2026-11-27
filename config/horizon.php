@@ -29,7 +29,7 @@ $supervisor = static fn (array $queues, int $min, int $max, int $timeout = 60, i
 
 return [
 
-    'name' => env('HORIZON_NAME', '10X Engage'),
+    'name' => env('HORIZON_NAME', 'engageX'),
 
     'domain' => env('HORIZON_DOMAIN', env('ADMIN_DOMAIN')),
 

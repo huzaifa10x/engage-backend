@@ -3,10 +3,10 @@
 /**
  * The chat link token (?xl=…) and the website tracker.
  *
- * Links sent from a 10X Engage chat carry a signed token. When a visitor arrives with one, it is
+ * Links sent from a engageX chat carry a signed token. When a visitor arrives with one, it is
  * kept in the WooCommerce session and in a first-party cookie, so it survives logging in, the cart
  * and redirects to a payment page and back. At checkout (classic or block checkout) it is saved on
- * the order. 10X Engage checks it: it only attaches an order in its own workspace, once, before it
+ * the order. engageX checks it: it only attaches an order in its own workspace, once, before it
  * expires, and only when the order's phone matches the chat.
  */
 defined('ABSPATH') || exit;
@@ -36,7 +36,7 @@ final class XEWC_Link
         add_action('woocommerce_thankyou', [__CLASS__, 'forget'], 20);
     }
 
-    /** The parameter name, from 10X Engage (xl). */
+    /** The parameter name, from engageX (xl). */
     public static function param()
     {
         $c = XEWC_Client::connection();

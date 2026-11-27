@@ -63,12 +63,12 @@ final class ApiSpec
         $base = rtrim($baseUrl ?? (string) config('app.url'), '/').'/api/public/'.self::VERSION;
 
         return [
-            'title' => '10X Engage API',
+            'title' => 'engageX API',
             'version' => self::VERSION,
             'base_url' => $base,
-            'introduction' => 'Send WhatsApp messages, manage contacts and follow conversations from your own systems. The API is JSON over HTTPS, works inside one workspace per key, and applies the same WhatsApp rules as the 10X Engage inbox.',
+            'introduction' => 'Send WhatsApp messages, manage contacts and follow conversations from your own systems. The API is JSON over HTTPS, works inside one workspace per key, and applies the same WhatsApp rules as the engageX inbox.',
             'authentication' => [
-                'summary' => 'Create a key in 10X Engage under Developer → API keys, and send it in the Authorization header of every request.',
+                'summary' => 'Create a key in engageX under Developer → API keys, and send it in the Authorization header of every request.',
                 'header' => 'Authorization: Bearer eng_live_YOUR_KEY',
                 'notes' => [
                     'A key belongs to one workspace. Nothing in a request can reach another workspace.',
@@ -204,7 +204,7 @@ final class ApiSpec
                         ['name' => 'name', 'type' => 'string', 'required' => false, 'description' => 'Up to 190 characters.'],
                         ['name' => 'email', 'type' => 'string', 'required' => false, 'description' => 'A valid email address.'],
                         ['name' => 'tags', 'type' => 'array of strings', 'required' => false, 'description' => 'Up to 50 tags of at most 40 characters.'],
-                        ['name' => 'attributes', 'type' => 'object', 'required' => false, 'description' => 'Your own fields, for example {"city": "Dubai"}. Up to 50. Keys that match a custom field defined in 10X Engage are checked against its type and rules (a number field must get a number, a required field must be filled); a value that does not fit is refused with 422 and the field named in details.fields as "attributes.<key>".'],
+                        ['name' => 'attributes', 'type' => 'object', 'required' => false, 'description' => 'Your own fields, for example {"city": "Dubai"}. Up to 50. Keys that match a custom field defined in engageX are checked against its type and rules (a number field must get a number, a required field must be filled); a value that does not fit is refused with 422 and the field named in details.fields as "attributes.<key>".'],
                         ['name' => 'opted_in', 'type' => 'boolean', 'required' => false, 'description' => 'true records that the contact agreed to receive messages.'],
                     ],
                     'request' => ['example' => ['phone' => '+971501234567', 'name' => 'Sara Ahmed', 'email' => 'sara@example.com', 'tags' => ['vip'], 'attributes' => ['city' => 'Dubai'], 'opted_in' => true]],

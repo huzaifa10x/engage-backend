@@ -12,7 +12,7 @@ export function Logo({
         <svg
             viewBox={WORDMARK.viewBox}
             role="img"
-            aria-label="10X Engage"
+            aria-label="engageX"
             className={className}
         >
             <path fill={ink} d={WORDMARK.ink} />

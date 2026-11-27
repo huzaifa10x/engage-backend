@@ -40,7 +40,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 function Detail({ inquiry, canManage, onClose }: { inquiry: Inquiry; canManage: boolean; onClose: () => void }) {
     const form = useForm({ status: inquiry.status, admin_note: inquiry.admin_note ?? '' });
     const errors = form.errors as Record<string, string | undefined>;
-    const subject = encodeURIComponent(`Re: your ${inquiry.topic === 'contact' ? 'message' : 'request'} to 10X Engage`);
+    const subject = encodeURIComponent(`Re: your ${inquiry.topic === 'contact' ? 'message' : 'request'} to engageX`);
 
     const submit = (e: FormEvent) => {
         e.preventDefault();

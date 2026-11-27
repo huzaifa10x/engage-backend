@@ -30,8 +30,8 @@ final class ResetPasswordNotification extends Notification implements ShouldQueu
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject('Reset your 10X Engage password')
-            ->line('We received a request to reset the password for your 10X Engage account.')
+            ->subject('Reset your engageX password')
+            ->line('We received a request to reset the password for your engageX account.')
             ->action('Choose a new password', $this->url)
             ->line("This link works for {$this->minutes} minutes and can be used once.")
             ->line('If you did not ask for this, no action is needed: your password stays the same.');

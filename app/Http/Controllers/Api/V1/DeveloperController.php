@@ -155,7 +155,7 @@ final class DeveloperController extends Controller
     public function testEndpoint(WebhookEndpoint $endpoint, WebhookDispatcher $webhooks): JsonResponse
     {
         $payload = $webhooks->envelope($endpoint->tenant_id, 'message.received', [
-            'id' => (string) Str::uuid(), 'direction' => 'inbound', 'type' => 'text', 'status' => 'received', 'text' => 'This is a test event from 10X Engage.',
+            'id' => (string) Str::uuid(), 'direction' => 'inbound', 'type' => 'text', 'status' => 'received', 'text' => 'This is a test event from engageX.',
             'contact' => ['id' => (string) Str::uuid(), 'phone' => '+971500000000', 'name' => 'Test Contact'],
         ]) + ['test' => true];
 

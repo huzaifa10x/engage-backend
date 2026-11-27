@@ -32,11 +32,11 @@ final class ManageContacts
 
         $existing = $waId !== null ? Contact::query()->withTrashed()->where('wa_id', $waId)->first() : null;
         if ($existing !== null && ! $existing->trashed()) {
-            throw ValidationException::withMessages(['phone' => 'Already in Engage as '.$existing->displayName().'.']);
+            throw ValidationException::withMessages(['phone' => 'Already in engageX as '.$existing->displayName().'.']);
         }
         $email = isset($data['email']) ? mb_strtolower(trim((string) $data['email'])) : '';
         if ($email !== '' && ($same = Contact::query()->whereRaw('lower(email) = ?', [$email])->first()) !== null) {
-            throw ValidationException::withMessages(['email' => 'Already in Engage as '.$same->displayName().'.']);
+            throw ValidationException::withMessages(['email' => 'Already in engageX as '.$same->displayName().'.']);
         }
         if (($data['owner_membership_id'] ?? null) !== null && ! TenantMembership::query()->active()->whereKey($data['owner_membership_id'])->exists()) {
             throw ValidationException::withMessages(['owner_membership_id' => 'Pick someone on the team.']);

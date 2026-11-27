@@ -21,9 +21,9 @@ final class LoginCodeNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject("{$this->code} is your 10X Engage sign-in code")
+            ->subject("{$this->code} is your engageX sign-in code")
             ->greeting('Your sign-in code')
-            ->line('Enter this code to finish signing in to 10X Engage:')
+            ->line('Enter this code to finish signing in to engageX:')
             ->line("**{$this->code}**")
             ->line("It expires in {$this->minutes} minutes and can be used once.")
             ->line('If you did not try to sign in, someone has your password. Reset it now and do not share this code.');

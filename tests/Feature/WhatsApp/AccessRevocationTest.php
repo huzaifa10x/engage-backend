@@ -141,7 +141,7 @@ final class AccessRevocationTest extends TestCase
         $this->actingAsMember($this->owner);
         $conversation = $this->getJson('/api/v1/conversations')->json('data.0.id');
 
-        // The customer removed 10X Engage in Meta Business Settings: Meta now refuses the token (error 190).
+        // The customer removed engageX in Meta Business Settings: Meta now refuses the token (error 190).
         $this->meta(['graph.facebook.com/*' => $this->authError(190, 460)]);
         $this->postJson("/api/v1/conversations/{$conversation}/messages", ['type' => 'text', 'body' => 'Hello'])->assertStatus(202);
 

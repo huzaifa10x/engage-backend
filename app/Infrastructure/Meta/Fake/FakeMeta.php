@@ -59,7 +59,7 @@ final class FakeMeta
 
         // GET /{waba-id}/subscribed_apps — our app is subscribed (Refresh / Reconnect webhooks check it).
         if (str_ends_with($path, '/subscribed_apps') && $request->method() === 'GET') {
-            return Http::response(['data' => [['whatsapp_business_api_data' => ['id' => (string) config('engage.meta.app_id'), 'name' => '10X Engage (local)']]]]);
+            return Http::response(['data' => [['whatsapp_business_api_data' => ['id' => (string) config('engage.meta.app_id'), 'name' => 'engageX (local)']]]]);
         }
 
         // Marketing Messages: local accounts count as onboarded, so the MM API route can be tried offline.

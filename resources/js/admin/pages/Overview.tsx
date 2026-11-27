@@ -15,7 +15,7 @@ export default function Overview({ kpis, planMix, latestSignups, trialsEnding, p
 
     return (
         <AdminLayout title="Overview">
-            <PageHeader title="Platform overview" description="Every company on 10X Engage, at a glance." />
+            <PageHeader title="Platform overview" description="Every company on engageX, at a glance." />
 
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 <Kpi label="Monthly recurring revenue" value={money(kpis.mrr_minor)} hint={`${kpis.paying} paying companies`} />

@@ -38,7 +38,7 @@ final class NumberConnectedNotification extends Notification implements HasEmail
         return (new MailMessage)
             ->subject("WhatsApp number {$this->number} is connected")
             ->greeting('Your number is live')
-            ->line(($this->displayName ? "{$this->displayName} ({$this->number})" : $this->number)." is now connected to {$this->workspace} on 10X Engage.")
+            ->line(($this->displayName ? "{$this->displayName} ({$this->number})" : $this->number)." is now connected to {$this->workspace} on engageX.")
             ->line('You can receive and reply to customer messages in the Team Inbox, and send approved templates.')
             ->action('Open the inbox', config('engage.frontend_url').'/inbox')
             ->line('WhatsApp conversation fees are billed by Meta directly to your business account.');

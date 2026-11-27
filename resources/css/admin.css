@@ -2,7 +2,7 @@
 
 @source '../js/admin';
 
-/* Design tokens from the 10X Engage prototype (v2). */
+/* Design tokens from the engageX prototype (v2). */
 @theme {
     --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;

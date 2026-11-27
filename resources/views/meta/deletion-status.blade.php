@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex">
-    <title>Data deletion status · 10X Engage</title>
+    <title>Data deletion status · engageX</title>
     <link rel="icon" href="/favicon.ico" sizes="any">
     <link rel="icon" href="/icon.svg" type="image/svg+xml">
     <style>
@@ -22,13 +22,13 @@
 </head>
 <body>
 <main>
-    <img class="logo" src="/brand/engage-logo.svg" alt="10X Engage">
+    <img class="logo" src="/brand/engage-logo.svg" alt="engageX">
     <div class="card">
         <h1>Data deletion request</h1>
         @if ($deletion)
             <p>
                 @if ($deletion->status === 'completed')
-                    Your request has been completed. 10X Engage no longer holds the Facebook account data linked to this request.
+                    Your request has been completed. engageX no longer holds the Facebook account data linked to this request.
                 @else
                     We received your request and are processing it. This usually finishes within a few minutes.
                 @endif

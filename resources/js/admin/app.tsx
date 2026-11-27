@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 const pages = import.meta.glob<{ default: ResolvedComponent }>('./pages/**/*.tsx');
 
 createInertiaApp({
-    title: (title) => (title ? `${title} · 10X Engage Admin` : '10X Engage Admin'),
+    title: (title) => (title ? `${title} · engageX Admin` : 'engageX Admin'),
     resolve: async (name) => {
         const page = pages[`./pages/${name}.tsx`];
         if (!page) throw new Error(`Admin page not found: ${name}`);

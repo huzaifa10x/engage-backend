@@ -1,6 +1,6 @@
 <?php
 /**
- * WooCommerce → 10X Engage: paste the workspace key, see the connection.
+ * WooCommerce → engageX: paste the workspace key, see the connection.
  */
 defined('ABSPATH') || exit;
 
@@ -17,7 +17,7 @@ final class XEWC_Admin
 
     public static function menu()
     {
-        add_submenu_page('woocommerce', __('10X Engage', 'xewc'), __('10X Engage', 'xewc'), 'manage_woocommerce', 'xewc', [__CLASS__, 'page']);
+        add_submenu_page('woocommerce', __('engageX', 'xewc'), __('engageX', 'xewc'), 'manage_woocommerce', 'xewc', [__CLASS__, 'page']);
     }
 
     public static function links($links)
@@ -42,13 +42,13 @@ final class XEWC_Admin
             : 0;
         ?>
 		<div class="wrap">
-			<h1><?php esc_html_e('10X Engage', 'xewc'); ?></h1>
-			<p><?php esc_html_e('See which WhatsApp chats became orders. Links sent from a 10X Engage chat carry a token that is saved on the order at checkout, and every order change is sent to 10X Engage, signed.', 'xewc'); ?></p>
+			<h1><?php esc_html_e('engageX', 'xewc'); ?></h1>
+			<p><?php esc_html_e('See which WhatsApp chats became orders. Links sent from a engageX chat carry a token that is saved on the order at checkout, and every order change is sent to engageX, signed.', 'xewc'); ?></p>
 
 			<?php if ($error) { ?>
 				<div class="notice notice-error"><p><?php echo esc_html($error); ?></p></div>
 			<?php } elseif ($notice === 'connected') { ?>
-				<div class="notice notice-success"><p><?php esc_html_e('Connected. The store now shows as Connected in 10X Engage → Integrations.', 'xewc'); ?></p></div>
+				<div class="notice notice-success"><p><?php esc_html_e('Connected. The store now shows as Connected in engageX → Integrations.', 'xewc'); ?></p></div>
 			<?php } elseif ($notice === 'synced') { ?>
 				<div class="notice notice-success"><p><?php esc_html_e('Recent orders are being checked and any missing ones sent again.', 'xewc'); ?></p></div>
 			<?php } ?>
@@ -56,7 +56,7 @@ final class XEWC_Admin
 			<?php if ($c === null) { ?>
 				<h2><?php esc_html_e('Connect', 'xewc'); ?></h2>
 				<ol>
-					<li><?php esc_html_e('In 10X Engage, open Integrations → WooCommerce and choose “Get workspace key”.', 'xewc'); ?></li>
+					<li><?php esc_html_e('In engageX, open Integrations → WooCommerce and choose “Get workspace key”.', 'xewc'); ?></li>
 					<li><?php esc_html_e('Paste the key here and choose Connect.', 'xewc'); ?></li>
 				</ol>
 				<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
@@ -72,7 +72,7 @@ final class XEWC_Admin
 							<?php
                             $state = isset($status['state']) ? $status['state'] : 'ok';
 			    if ($state === 'disconnected') {
-			        echo '<strong style="color:#b32d2e">'.esc_html__('Disconnected in 10X Engage', 'xewc').'</strong> — '.esc_html($status['message']);
+			        echo '<strong style="color:#b32d2e">'.esc_html__('Disconnected in engageX', 'xewc').'</strong> — '.esc_html($status['message']);
 			    } elseif ($state === 'error') {
 			        echo '<strong style="color:#996800">'.esc_html__('Retrying', 'xewc').'</strong> — '.esc_html($status['message']);
 			    } else {
@@ -94,7 +94,7 @@ final class XEWC_Admin
 						<input type="hidden" name="action" value="xewc_sync" />
 						<?php submit_button(__('Check recent orders now', 'xewc'), 'secondary', 'submit', false); ?>
 					</form>
-					<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" onsubmit="return confirm('<?php echo esc_js(__('Disconnect this store from 10X Engage?', 'xewc')); ?>');">
+					<form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" onsubmit="return confirm('<?php echo esc_js(__('Disconnect this store from engageX?', 'xewc')); ?>');">
 						<?php wp_nonce_field('xewc_disconnect'); ?>
 						<input type="hidden" name="action" value="xewc_disconnect" />
 						<?php submit_button(__('Disconnect', 'xewc'), 'delete', 'submit', false); ?>

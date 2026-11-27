@@ -39,7 +39,7 @@ final class ReconnectRequiredNotification extends Notification implements HasEma
             ->error()
             ->subject("Action needed: reconnect WhatsApp number {$this->number}")
             ->greeting('Your WhatsApp number is disconnected')
-            ->line("{$this->number} is no longer connected to {$this->workspace}. Until it is reconnected, messages cannot be sent or received through 10X Engage.")
+            ->line("{$this->number} is no longer connected to {$this->workspace}. Until it is reconnected, messages cannot be sent or received through engageX.")
             ->line("Reason: {$this->reason}")
             ->action('Reconnect the number', config('engage.frontend_url').'/channels')
             ->line('Your contacts, conversations and templates are kept and will be available again once the number is reconnected.');

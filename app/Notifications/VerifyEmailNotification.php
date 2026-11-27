@@ -30,9 +30,9 @@ final class VerifyEmailNotification extends Notification implements ShouldQueue
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
-            ->subject("{$this->code} is your 10X Engage verification code")
+            ->subject("{$this->code} is your engageX verification code")
             ->greeting("Welcome, {$this->name}")
-            ->line('Enter this code in 10X Engage to verify your email address and activate your account:')
+            ->line('Enter this code in engageX to verify your email address and activate your account:')
             ->line("**{$this->code}**")
             ->line("The code expires in {$this->minutes} minutes and can be used once.")
             ->line('If you did not create an account, you can ignore this email. Never share this code with anyone.');

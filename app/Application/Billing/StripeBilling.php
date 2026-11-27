@@ -426,7 +426,7 @@ final class StripeBilling
                 $products[$product][] = $price;
             }
             $params = [
-                'business_profile' => ['headline' => '10X Engage billing'],
+                'business_profile' => ['headline' => 'engageX billing'],
                 'default_return_url' => (string) config('engage.frontend_url').'/billing',
                 'features' => [
                     'customer_update' => ['enabled' => 'true', 'allowed_updates' => ['name', 'email', 'address', 'tax_id']],
@@ -1007,7 +1007,7 @@ final class StripeBilling
             'recurring' => ['interval' => $interval === 'yearly' ? 'year' : 'month'],
             'tax_behavior' => 'exclusive',
             'lookup_key' => $lookup,
-            'product_data' => ['name' => "10X Engage {$plan->name}", 'metadata' => ['plan' => $plan->key]],
+            'product_data' => ['name' => "engageX {$plan->name}", 'metadata' => ['plan' => $plan->key]],
         ], "price:{$lookup}")['id'];
 
         $version->forceFill([$column => (string) $id])->save();

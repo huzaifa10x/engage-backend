@@ -99,7 +99,7 @@ final class ConversionsController extends Controller
         }
         $result = $reporting->enable($this->context->tenant(), $account);
         if ($result === ConversionReporting::NOT_ENABLED) {
-            throw ValidationException::withMessages(['enabled' => 'Not enabled: this WhatsApp account hasn’t given 10X Engage permission to send conversion events. Reconnect it from Channels (Reconnect to enable), then try again.']);
+            throw ValidationException::withMessages(['enabled' => 'Not enabled: this WhatsApp account hasn’t given engageX permission to send conversion events. Reconnect it from Channels (Reconnect to enable), then try again.']);
         }
 
         return response()->json(['data' => ['result' => $result, 'dataset_id' => $reporting->datasetFor($account->waba_id)?->dataset_id]]);

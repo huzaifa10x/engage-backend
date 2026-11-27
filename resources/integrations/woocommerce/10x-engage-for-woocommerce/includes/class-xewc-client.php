@@ -4,12 +4,12 @@
 use Automattic\WooCommerce\Utilities\OrderUtil;
 
 /**
- * Talks to 10X Engage: connect with the workspace key, then signed requests.
+ * Talks to engageX: connect with the workspace key, then signed requests.
  *
  * Every request after connecting is signed with the store's own secret:
  *   X-Engage-Timestamp: unix time
  *   X-Engage-Signature: base64( HMAC-SHA256( timestamp + "." + body, secret ) )
- * 10X Engage refuses requests older than five minutes and ignores repeated events.
+ * engageX refuses requests older than five minutes and ignores repeated events.
  */
 defined('ABSPATH') || exit;
 
@@ -58,7 +58,7 @@ final class XEWC_Client
     {
         $decoded = self::decode_key($key);
         if ($decoded === null) {
-            return new WP_Error('xewc_key', __('This is not a 10X Engage workspace key. Copy it again from Integrations → WooCommerce in 10X Engage.', 'xewc'));
+            return new WP_Error('xewc_key', __('This is not a engageX workspace key. Copy it again from Integrations → WooCommerce in engageX.', 'xewc'));
         }
         $body = wp_json_encode(
             [
@@ -82,12 +82,12 @@ final class XEWC_Client
             ]
         );
         if (is_wp_error($response)) {
-            return new WP_Error('xewc_network', sprintf( /* translators: %s: error */ __('10X Engage could not be reached: %s', 'xewc'), $response->get_error_message()));
+            return new WP_Error('xewc_network', sprintf( /* translators: %s: error */ __('engageX could not be reached: %s', 'xewc'), $response->get_error_message()));
         }
         $code = (int) wp_remote_retrieve_response_code($response);
         $data = json_decode((string) wp_remote_retrieve_body($response), true);
         if ($code !== 201 || empty($data['data']['store_id']) || empty($data['data']['secret'])) {
-            $message = is_array($data) && ! empty($data['message']) ? $data['message'] : sprintf( /* translators: %d: HTTP status */ __('10X Engage answered with an error (%d).', 'xewc'), $code);
+            $message = is_array($data) && ! empty($data['message']) ? $data['message'] : sprintf( /* translators: %d: HTTP status */ __('engageX answered with an error (%d).', 'xewc'), $code);
 
             return new WP_Error('xewc_connect', $message);
         }
@@ -125,7 +125,7 @@ final class XEWC_Client
     {
         $c = self::connection();
         if ($c === null) {
-            return new WP_Error('xewc_not_connected', __('Not connected to 10X Engage.', 'xewc'));
+            return new WP_Error('xewc_not_connected', __('Not connected to engageX.', 'xewc'));
         }
         $body = wp_json_encode($payload);
         $timestamp = (string) time();
@@ -151,8 +151,8 @@ final class XEWC_Client
         $code = (int) wp_remote_retrieve_response_code($response);
         $data = json_decode((string) wp_remote_retrieve_body($response), true);
         if ($code === 410) {
-            // Disconnected in 10X Engage: stop sending until connected again.
-            self::status('disconnected', is_array($data) && ! empty($data['message']) ? $data['message'] : __('The store was disconnected in 10X Engage.', 'xewc'));
+            // Disconnected in engageX: stop sending until connected again.
+            self::status('disconnected', is_array($data) && ! empty($data['message']) ? $data['message'] : __('The store was disconnected in engageX.', 'xewc'));
         } elseif ($code >= 200 && $code < 300) {
             self::status('ok', '');
             if (is_array($data) && isset($data['data']) && is_array($data['data'])) {
@@ -162,13 +162,13 @@ final class XEWC_Client
             self::status('error', sprintf('HTTP %d', $code));
         }
 
-        // 429 / 503: 10X Engage says when to come back.
+        // 429 / 503: engageX says when to come back.
         $retry = (int) wp_remote_retrieve_header($response, 'retry-after');
 
         return ['code' => $code, 'data' => is_array($data) && array_key_exists('data', $data) ? $data['data'] : null, 'retry_after' => max(0, min(3600, $retry))];
     }
 
-    /** The tracker and link settings come back with heartbeats, so changes in 10X Engage reach the store. */
+    /** The tracker and link settings come back with heartbeats, so changes in engageX reach the store. */
     public static function sync_settings(array $d)
     {
         $c = self::connection();

@@ -62,7 +62,7 @@ final class SecurityController extends Controller
             ],
             'appSetup' => is_string($secret) ? [
                 'secret' => trim(chunk_split($secret, 4, ' ')),
-                'otpauth_uri' => Totp::provisioningUri($secret, $admin->email, '10X Engage Admin'),
+                'otpauth_uri' => Totp::provisioningUri($secret, $admin->email, 'engageX Admin'),
             ] : null,
             'emailPending' => $request->session()->get(self::EMAIL_PENDING) === true,
             'seesEveryone' => $admin->isSuperAdmin(),
@@ -264,9 +264,9 @@ final class SecurityController extends Controller
         RateLimiter::hit($key, 60);
 
         try {
-            $html = (string) (new MailMessage)->subject('10X Engage: test email')->greeting('It works')
-                ->line('This is a test message from the 10X Engage admin panel. Your email settings are working.')->render();
-            Mail::html($html, fn ($message) => $message->to($admin->email)->subject('10X Engage: test email'));
+            $html = (string) (new MailMessage)->subject('engageX: test email')->greeting('It works')
+                ->line('This is a test message from the engageX admin panel. Your email settings are working.')->render();
+            Mail::html($html, fn ($message) => $message->to($admin->email)->subject('engageX: test email'));
         } catch (Throwable $e) {
             Log::error('Admin test email failed', ['error' => $e->getMessage()]);
 

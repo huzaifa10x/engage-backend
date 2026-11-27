@@ -16,7 +16,7 @@ use Throwable;
 /**
  * Every 15 minutes (it uses our shared Meta call budget for every client): asks Meta, for every connected WhatsApp account, whether it and its numbers are still ours,
  * and brings back numbers that were marked offboarded once Meta answers normally for them again.
- * Catches the quiet cases: a customer removes 10X Engage in Meta Business Settings and no webhook
+ * Catches the quiet cases: a customer removes engageX in Meta Business Settings and no webhook
  * tells us, and the workspace happens not to send anything that would hit an error.
  */
 final class VerifyWhatsappAccess extends Command

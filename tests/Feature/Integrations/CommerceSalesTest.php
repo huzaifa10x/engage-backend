@@ -279,7 +279,7 @@ final class CommerceSalesTest extends TestCase
         // The same store cannot be connected to two workspaces.
         $key2 = (string) $this->postJson('/api/v1/integrations/woocommerce/plugin-key')->assertCreated()->json('data.key');
         $this->postJson('/api/integrations/woocommerce/plugin/connect', ['key' => $key2, 'site_url' => 'https://palm.example'])->assertStatus(422)
-            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'another 10X Engage workspace'));
+            ->assertJsonPath('message', fn ($msg) => str_contains($msg, 'another engageX workspace'));
     }
 
     public function test_catch_up_names_missing_orders_and_a_paid_order_can_move_the_stage(): void

@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\Notification;
  *     always before raw events are deleted; no personal data in them;
  *  4. retention: unmatched raw taps 30 days, matched taps 90 days, evidence 12 months (the
  *     contact's source, with its Google / Meta click IDs, stays on the CRM record);
- *  5. alerts for the 10X Engage team: match rate below 95 % (≥ 30 eligible messages in 24 h),
+ *  5. alerts for the engageX team: match rate below 95 % (≥ 30 eligible messages in 24 h),
  *     reference collisions, a tracker that stopped reporting on a site with traffic.
  */
 final class GrowthWebsiteMaintenance extends Command

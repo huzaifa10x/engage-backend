@@ -41,6 +41,6 @@ final class NumberQualityNotification extends Notification implements HasEmailCa
             ->greeting($this->title)
             ->line($this->body)
             ->action('Open Channels', config('engage.frontend_url').'/channels')
-            ->line("You get this email because you are an Owner of {$this->workspace} on 10X Engage.");
+            ->line("You get this email because you are an Owner of {$this->workspace} on engageX.");
     }
 }

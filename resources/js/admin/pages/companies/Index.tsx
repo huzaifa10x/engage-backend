@@ -28,7 +28,7 @@ export default function CompaniesIndex({ companies, filters, plans }: Props) {
 
     return (
         <AdminLayout title="Companies">
-            <PageHeader title="Companies" description={`${companies.total} businesses on 10X Engage. Open one to manage its plan, members and access.`} />
+            <PageHeader title="Companies" description={`${companies.total} businesses on engageX. Open one to manage its plan, members and access.`} />
 
             <div className="mb-3 flex flex-wrap items-center gap-2">
                 <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Status">

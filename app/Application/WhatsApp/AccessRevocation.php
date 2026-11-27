@@ -40,7 +40,7 @@ use Throwable;
  * never for a single number.
  *
  * Polling (every 10 minutes, and after a refused API call) only raises SUSPICION: a number or an
- * account is marked "needs attention", the 10X Engage team is alerted, and nothing stops working.
+ * account is marked "needs attention", the engageX team is alerted, and nothing stops working.
  * Only after ATTENTION_AFTER_CHECKS failed checks in a row, spanning at least ATTENTION_AFTER_MINUTES,
  * with no webhook from that number (or account) in that time. Every detection stores Meta's actual
  * response. A healthy answer clears the warning.
@@ -50,9 +50,9 @@ use Throwable;
 final class AccessRevocation
 {
     public const REASONS = [
-        'partner_removed' => '10X Engage was removed as a partner on your WhatsApp Business account.',
+        'partner_removed' => 'engageX was removed as a partner on your WhatsApp Business account.',
         'offboarded' => 'The number was disconnected from the WhatsApp Business app.',
-        'access_revoked' => 'Meta no longer accepts our access to your WhatsApp Business account. This happens when 10X Engage is removed in Meta Business Settings, or its access expires.',
+        'access_revoked' => 'Meta no longer accepts our access to your WhatsApp Business account. This happens when engageX is removed in Meta Business Settings, or its access expires.',
         'manual' => 'The account was disconnected from Channels.',
     ];
 
@@ -231,7 +231,7 @@ final class AccessRevocation
         $this->audit->record('whatsapp.attention_cleared', $waba, meta: ['reason' => $was] + ($subject instanceof PhoneNumber ? ['numbers' => [$subject->phone_number_id]] : []));
     }
 
-    /** The 10X Engage team, not the workspace: a warning is ours to look into, not the client's to fix. */
+    /** The engageX team, not the workspace: a warning is ours to look into, not the client's to fix. */
     /** @param array<string, mixed> $detail */
     private function alertTeam(PhoneNumber|WabaAccount $subject, WabaAccount $waba, string $reason, array $detail): void
     {

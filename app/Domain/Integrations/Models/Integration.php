@@ -82,7 +82,7 @@ class Integration extends Model
         return $this->settings[$key] ?? $default;
     }
 
-    /** The "10X Engage for WooCommerce" plugin is installed and connected (orders, chat links, tracker). */
+    /** The "engageX for WooCommerce" plugin is installed and connected (orders, chat links, tracker). */
     public function viaPlugin(): bool
     {
         return $this->provider === self::WOOCOMMERCE && $this->plugin_secret !== null && $this->plugin_secret !== '';

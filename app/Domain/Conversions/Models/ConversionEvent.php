@@ -51,7 +51,7 @@ class ConversionEvent extends Model
     public const SKIP_REASONS = [
         'no_click_id' => 'The chat did not start from a Meta ad (no click ID), so Meta cannot match it.',
         'test_run' => 'A test run of a flow: test runs never report conversions.',
-        'missing_permission' => 'The WhatsApp account has not given 10X Engage permission to send conversion events. Reconnect it.',
+        'missing_permission' => 'The WhatsApp account has not given engageX permission to send conversion events. Reconnect it.',
         'reporting_off' => 'Conversion reporting is off for this WhatsApp account.',
     ];
 

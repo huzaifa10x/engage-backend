@@ -23,12 +23,12 @@ final class WhatsappException extends DomainException
 
     public static function wabaOwnedByAnotherWorkspace(): self
     {
-        return new self('This WhatsApp Business Account is already connected to another 10X Engage workspace.', ErrorCode::WabaAlreadyConnected, 409);
+        return new self('This WhatsApp Business Account is already connected to another engageX workspace.', ErrorCode::WabaAlreadyConnected, 409);
     }
 
     /**
      * The WABA (and so the number) is still subscribed to another provider's app — or to our own
-     * app from another 10X Engage environment ($sameApp).
+     * app from another engageX environment ($sameApp).
      *
      * @param  list<array{id: string, name: ?string, link: ?string}>  $apps
      */
@@ -44,10 +44,10 @@ final class WhatsappException extends DomainException
         $suffix = $names === [] ? '' : ' ('.implode(', ', $names).')';
 
         if ($sameApp) {
-            return "This WhatsApp number is already connected to another 10X Engage environment{$suffix}. Disconnect it there first, then connect it here again.";
+            return "This WhatsApp number is already connected to another engageX environment{$suffix}. Disconnect it there first, then connect it here again.";
         }
 
-        return "This WhatsApp number is already registered with another application{$suffix}. Disconnect it from that application first, then connect it to 10X Engage again.";
+        return "This WhatsApp number is already registered with another application{$suffix}. Disconnect it from that application first, then connect it to engageX again.";
     }
 
     public static function signupInvalid(string $message = 'This signup session has expired. Start again from Connect WhatsApp.'): self
@@ -68,13 +68,13 @@ final class WhatsappException extends DomainException
     /**
      * Meta refused the call. A permission error (code 200–299, or 10) gets a plain-language
      * message and a "reconnect" action instead of Meta's own text: the business has to grant
-     * 10X Engage access to this WhatsApp account again through Connect WhatsApp.
+     * engageX access to this WhatsApp account again through Connect WhatsApp.
      */
     public static function meta(string $message, ?int $code, ?string $fbtrace, ?int $subcode = null): self
     {
         if (self::isPermissionError($code)) {
             return new self(
-                'Meta hasn’t given 10X Engage permission to manage this WhatsApp account. Reconnect it: open Connect WhatsApp, sign in with the Facebook account that manages this business, choose the same business and WhatsApp account, and allow every permission it asks for.',
+                'Meta hasn’t given engageX permission to manage this WhatsApp account. Reconnect it: open Connect WhatsApp, sign in with the Facebook account that manages this business, choose the same business and WhatsApp account, and allow every permission it asks for.',
                 ErrorCode::MetaPermissionMissing,
                 403,
                 array_filter(['action' => 'reconnect', 'meta_code' => $code, 'meta_subcode' => $subcode, 'fbtrace_id' => $fbtrace], fn ($v) => $v !== null),

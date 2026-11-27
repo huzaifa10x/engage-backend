@@ -128,7 +128,7 @@ final class ConversionRecordingTest extends TestCase
 
         $this->assertSame([
             ['skipped', 'The chat did not start from a Meta ad (no click ID), so Meta cannot match it.'],
-            ['skipped', 'The WhatsApp account has not given 10X Engage permission to send conversion events. Reconnect it.'],
+            ['skipped', 'The WhatsApp account has not given engageX permission to send conversion events. Reconnect it.'],
             ['skipped', 'Conversion reporting is off for this WhatsApp account.'],
         ], array_map(fn ($e) => [$e['status'], $e['error_reason']], $this->events()));
     }

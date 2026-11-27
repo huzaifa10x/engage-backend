@@ -217,7 +217,7 @@ return [
     ],
 
     /*
-    | Integrations → Shopify. The 10X Engage app is created once in Shopify's Dev Dashboard; its
+    | Integrations → Shopify. The engageX app is created once in Shopify's Dev Dashboard; its
     | Client ID and secret go here. Redirect URL to allow there: <APP_URL>/api/integrations/shopify/callback
     | Webhooks (and the three compliance webhooks) go to: <APP_URL>/api/integrations/shopify/webhook
     */
@@ -268,7 +268,7 @@ return [
     ],
 
     'alerts' => [
-        // Internal alerts for the 10X Engage team (e.g. a WhatsApp number that needs attention). Empty = server log only.
+        // Internal alerts for the engageX team (e.g. a WhatsApp number that needs attention). Empty = server log only.
         'email' => env('ENGAGE_ALERTS_EMAIL'),
     ],
 ];

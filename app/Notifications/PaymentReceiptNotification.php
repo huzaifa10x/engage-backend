@@ -36,7 +36,7 @@ final class PaymentReceiptNotification extends Notification implements HasEmailC
     public function toMail(object $notifiable): MailMessage
     {
         $mail = (new MailMessage)
-            ->subject('Payment receipt'.($this->number !== null ? " {$this->number}" : '').' from 10X Engage')
+            ->subject('Payment receipt'.($this->number !== null ? " {$this->number}" : '').' from engageX')
             ->greeting('Thank you for your payment')
             ->line("We received your payment for {$this->workspace}.")
             ->line("Amount: {$this->subtotal}")

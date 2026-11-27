@@ -223,7 +223,7 @@ final class TwoFactorController extends Controller
 
         return [
             'secret' => trim(chunk_split($secret, 4, ' ')),
-            'otpauth_uri' => Totp::provisioningUri($secret, (string) $user->email, '10X Engage'),
+            'otpauth_uri' => Totp::provisioningUri($secret, (string) $user->email, 'engageX'),
         ];
     }
 

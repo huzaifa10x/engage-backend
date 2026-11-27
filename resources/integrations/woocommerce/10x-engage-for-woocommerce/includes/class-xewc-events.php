@@ -1,13 +1,13 @@
 <?php
 
 /**
- * Signed order events to 10X Engage, with retries and a nightly catch-up.
+ * Signed order events to engageX, with retries and a nightly catch-up.
  *
  * Every change to an order is queued (WooCommerce's Action Scheduler) and sent with the order's
  * latest state: created, paid, completed, refunded (full or partial), cancelled, failed, pending
- * and edits (items or totals). If 10X Engage cannot be reached the event is retried with growing
- * delays for about a day; 10X Engage ignores duplicates (order + event + time). Every night the
- * store's recent orders are compared with what 10X Engage has, and any gaps are sent again.
+ * and edits (items or totals). If engageX cannot be reached the event is retried with growing
+ * delays for about a day; engageX ignores duplicates (order + event + time). Every night the
+ * store's recent orders are compared with what engageX has, and any gaps are sent again.
  *
  * Read-only towards the store: the plugin reads orders and products and never changes them
  * (apart from saving the chat link token on the order at checkout).
@@ -152,9 +152,9 @@ final class XEWC_Events
             return;
         }
         if ($code === 410 || $code === 422) {
-            return; // disconnected, or an event 10X Engage can never accept
+            return; // disconnected, or an event engageX can never accept
         }
-        // Too busy (429) or briefly down (503): wait as long as 10X Engage asks, never less than the
+        // Too busy (429) or briefly down (503): wait as long as engageX asks, never less than the
         // backoff; a rate-limit answer does not use up a retry, so a flash sale never loses an order.
         $retryAfter = is_wp_error($result) ? 0 : (int) ($result['retry_after'] ?? 0);
         $limited = $code === 429;
@@ -166,7 +166,7 @@ final class XEWC_Events
         // After the last retry the nightly catch-up still fills the gap.
     }
 
-    /** The order as 10X Engage reads it: totals, currency, billing phone, line items, the chat token. */
+    /** The order as engageX reads it: totals, currency, billing phone, line items, the chat token. */
     public static function payload(WC_Order $order)
     {
         $items = [];
@@ -217,7 +217,7 @@ final class XEWC_Events
             ],
             'line_items' => $items,
             'xl' => (string) $order->get_meta(XEWC_Link::META),
-            // WooCommerce's own order attribution, kept apart by 10X Engage (never overwritten).
+            // WooCommerce's own order attribution, kept apart by engageX (never overwritten).
             'attribution' => [
                 'source_type' => $meta('_wc_order_attribution_source_type'),
                 'utm_source' => $meta('_wc_order_attribution_utm_source'),
@@ -259,7 +259,7 @@ final class XEWC_Events
         );
     }
 
-    /** Nightly catch-up: orders changed in the last three days that 10X Engage is missing or has older. */
+    /** Nightly catch-up: orders changed in the last three days that engageX is missing or has older. */
     public static function reconcile()
     {
         $ids = wc_get_orders(

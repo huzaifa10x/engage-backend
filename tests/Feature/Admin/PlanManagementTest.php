@@ -53,7 +53,7 @@ final class PlanManagementTest extends TestCase
         $growth = Plan::byKey('growth');
         $this->get("/admin/plans/{$growth->id}")->assertOk()->assertInertia(fn (AssertableInertia $page) => $page->component('plans/Edit')
             ->where('plan.key', 'growth')->where('plan.subscribers', 1)
-            ->has('features', count(FeatureKey::cases())));
+            ->has('features', count(FeatureKey::offeredCases())));
     }
 
     public function test_editing_a_plan_publishes_a_new_version_and_moves_subscribers_to_the_new_limits(): void

@@ -139,7 +139,7 @@ final class EmbeddedSignupTest extends TestCase
     public function test_number_connected_by_another_environment_of_our_app_is_blocked(): void
     {
         // Production and staging share one Meta app: the app is subscribed, but not by us.
-        $this->fakeGraph(subscribedApps: [['id' => '1234567890', 'name' => '10X Engage']]);
+        $this->fakeGraph(subscribedApps: [['id' => '1234567890', 'name' => 'engageX']]);
         $this->actingAsMember($this->owner());
 
         $attempt = $this->postJson('/api/v1/whatsapp/signups')->json('data.attempt.id');
@@ -148,7 +148,7 @@ final class EmbeddedSignupTest extends TestCase
             ->assertStatus(409)
             ->assertJsonPath('error.code', 'number_subscribed_elsewhere')
             ->assertJsonPath('error.details.same_app', true)
-            ->assertJsonPath('error.details.apps.0.name', '10X Engage');
+            ->assertJsonPath('error.details.apps.0.name', 'engageX');
 
         $this->assertFalse($this->tenantContext()->bypass(fn () => WabaAccount::query()->exists()));
         $this->assertFalse($this->tenantContext()->bypass(fn () => PhoneNumber::query()->exists()));
@@ -163,7 +163,7 @@ final class EmbeddedSignupTest extends TestCase
     public function test_rerunning_signup_for_a_number_connected_here_still_works(): void
     {
         // Our app is subscribed because THIS installation connected the account (token refresh).
-        $this->fakeGraph(subscribedApps: [['id' => '1234567890', 'name' => '10X Engage']]);
+        $this->fakeGraph(subscribedApps: [['id' => '1234567890', 'name' => 'engageX']]);
         $owner = $this->owner();
         $this->connectNumber($this->tenant, self::WABA, self::PHONE);
         $this->actingAsMember($owner);

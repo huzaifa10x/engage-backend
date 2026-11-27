@@ -74,7 +74,7 @@ trait InteractsWithWhatsapp
 
             $apps = array_values(array_filter($apps, fn (array $app) => $app['id'] !== '1234567890'));
             if ($request->method() === 'POST') {
-                $apps[] = ['id' => '1234567890', 'name' => '10X Engage'];
+                $apps[] = ['id' => '1234567890', 'name' => 'engageX'];
             }
 
             return Http::response(['success' => true]);
